@@ -1,9 +1,15 @@
 import React,{useState,useEffect,useRef,useCallback,useMemo} from 'react';
 import * as api from './api';
-import {T,S} from './uiTheme';
+import {T,S,shadowCard} from './uiTheme';
 import {parseZoneGeometry,pointInGeom,svgPolygonPoints} from './zoneGeom';
 import {isPdfFile,rasterizePdfFirstPageToJpeg} from './pdfDrawing';
-import {actColor,PROJECT_PROGRAMME_TAB} from './constants';
+import {
+  actColor,
+  PROJECT_PROGRAMME_TAB,
+  GW_SEQUENCE,
+  INT_SEQUENCE,
+  parseZoneNameForActivity,
+} from './constants';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 
 function sortZoneActs(z){
@@ -266,15 +272,28 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   const filteredActs=activities.filter(a=>a.type===typeTab);
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
   const nameToAct=useMemo(()=>new Map(filteredActs.map(a=>[a.name,a])),[filteredActs]);
+  /** Sequence used to parse zone names (tower | activity patterns, etc.). */
+  const activitySeqForParse=useMemo(()=>{
+    if(typeTab==='groundworks')return GW_SEQUENCE;
+    if(typeTab==='internals')return INT_SEQUENCE;
+    return filteredActs.map((a)=>a.name);
+  },[typeTab,filteredActs]);
+  /** Activities present on this drawing’s zones (stack + legacy activity_id) — legend + layer filter. */
   const drawingActivityStrip=useMemo(()=>{
     const seen=new Map();
     for(const z of zones){
       for(const a of sortZoneActs(z)){
-        if(!seen.has(a.activity_id))seen.set(a.activity_id,{activity_id:a.activity_id,name:a.name});
+        const aid=Number(a.activity_id);
+        if(!seen.has(aid))seen.set(aid,{activity_id:aid,name:String(a.name||'').trim()||`Activity ${aid}`});
+      }
+      const lid=z.activity_id!=null?Number(z.activity_id):null;
+      if(lid!=null&&!Number.isNaN(lid)&&!seen.has(lid)){
+        const nm=activities.find((x)=>Number(x.id)===lid)?.name;
+        if(nm)seen.set(lid,{activity_id:lid,name:String(nm)});
       }
     }
-    return[...seen.values()];
-  },[zones]);
+    return[...seen.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  },[zones,activities]);
   const selectedZone=useMemo(()=>zones.find(z=>sameZoneId(z.id,selectedId)),[zones,selectedId]);
 
   useEffect(()=>{toolRef.current=tool},[tool]);
@@ -861,8 +880,9 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
       {drawData?.image_data&&drawingActivityStrip.length>0&&(
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,overflowX:'auto',flexShrink:0,flexWrap:'nowrap'}}>
-          <span style={{fontSize:10,color:T.muted,flexShrink:0,fontWeight:600}}>Activity layers</span>
-          <button type="button" onClick={()=>setLayerFilterActId(null)} style={{...S.btn,padding:'4px 10px',fontSize:10,flexShrink:0,whiteSpace:'nowrap',...(layerFilterActId==null?S.btnAct:{})}} title="Colour zones by first activity in sequence">Default</button>
+          <span style={{fontSize:10,color:T.muted,flexShrink:0,fontWeight:600}}>Layer filter</span>
+          <span style={{fontSize:9,color:T.faint,flexShrink:0}}>Key on map ↗</span>
+          <button type="button" onClick={()=>setLayerFilterActId(null)} style={{...S.btn,padding:'4px 10px',fontSize:10,flexShrink:0,whiteSpace:'nowrap',...(layerFilterActId==null?S.btnAct:{})}} title="Colour each zone by its first programme activity">All layers</button>
           {drawingActivityStrip.map((a)=>(
             <button key={a.activity_id} type="button" onClick={()=>setLayerFilterActId(Number(layerFilterActId)===Number(a.activity_id)?null:a.activity_id)} style={{...S.btn,padding:'4px 10px',fontSize:10,whiteSpace:'nowrap',flexShrink:0,maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',...(Number(layerFilterActId)===Number(a.activity_id)?S.btnAct:{})}} title={a.name}>{a.name}</button>
           ))}
@@ -923,10 +943,83 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         >
           {drawData?.image_data?(
             <>
-              <div style={{position:'absolute',top:10,right:10,zIndex:15,display:'flex',flexDirection:'column',gap:6,alignItems:'stretch'}}>
-                <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(0.1)}}>+</button>
-                <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(-0.1)}}>−</button>
-                <button type="button" style={{...zoomBtnStyle,fontSize:11}} onClick={e=>{e.stopPropagation();resetView()}}>Reset</button>
+              <div
+                style={{
+                  position:'absolute',
+                  top:10,
+                  right:10,
+                  zIndex:15,
+                  display:'flex',
+                  flexDirection:'row-reverse',
+                  gap:10,
+                  alignItems:'flex-start',
+                  maxWidth:'calc(100% - 20px)',
+                  pointerEvents:'none',
+                }}
+              >
+                <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'stretch',pointerEvents:'auto'}}>
+                  <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(0.1)}}>+</button>
+                  <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(-0.1)}}>−</button>
+                  <button type="button" style={{...zoomBtnStyle,fontSize:11}} onClick={e=>{e.stopPropagation();resetView()}}>Reset</button>
+                </div>
+                {drawingActivityStrip.length>0&&(
+                  <div
+                    style={{
+                      pointerEvents:'auto',
+                      background:'rgba(255,255,255,0.93)',
+                      backdropFilter:'blur(10px)',
+                      WebkitBackdropFilter:'blur(10px)',
+                      borderRadius:12,
+                      border:`1px solid ${T.hairline}`,
+                      boxShadow:shadowCard,
+                      padding:'10px 10px 8px',
+                      minWidth:168,
+                      maxWidth:236,
+                      maxHeight:'min(40vh,300px)',
+                      overflowY:'auto',
+                    }}
+                  >
+                    <div style={{fontSize:9,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.14em',marginBottom:8}}>Programme key</div>
+                    <button
+                      type="button"
+                      onClick={(e)=>{e.stopPropagation();setLayerFilterActId(null)}}
+                      style={{
+                        display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
+                        border:'none',borderRadius:8,cursor:'pointer',padding:'6px 8px',marginBottom:4,
+                        background:layerFilterActId==null?'rgba(66,133,244,0.14)':'transparent',
+                        color:T.text,fontSize:11,fontWeight:600,
+                      }}
+                      title="Fill colour from first activity in each zone’s stack"
+                    >
+                      <span style={{width:12,height:12,borderRadius:3,flexShrink:0,background:'linear-gradient(135deg,rgba(120,120,130,0.35),rgba(160,160,170,0.2))',border:`1px solid ${T.hairline}`}} aria-hidden/>
+                      <span style={{flex:1,lineHeight:1.25}}>Default stack colours</span>
+                    </button>
+                    {drawingActivityStrip.map((a)=>{
+                      const on=Number(layerFilterActId)===Number(a.activity_id);
+                      return (
+                      <button
+                        key={a.activity_id}
+                        type="button"
+                        onClick={(e)=>{e.stopPropagation();setLayerFilterActId(on?null:a.activity_id)}}
+                        style={{
+                          display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
+                          border:'none',borderRadius:8,cursor:'pointer',padding:'6px 8px',marginBottom:3,
+                          background:on?'rgba(66,133,244,0.16)':'transparent',
+                          color:T.text,fontSize:11,fontWeight:600,
+                        }}
+                        title={`Highlight zones where this activity appears in the stack — click again to clear`}
+                      >
+                        <span style={{
+                          width:12,height:12,borderRadius:3,flexShrink:0,
+                          background:actColor(a.name,0.82),
+                          boxShadow:`inset 0 0 0 1px ${actColor(a.name,0.35)}`,
+                        }} aria-hidden/>
+                        <span style={{flex:1,lineHeight:1.25,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span>
+                      </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               <div
                 ref={plateRef}
@@ -953,18 +1046,36 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                     const {cx,cy}=zoneLabelAnchor(g,z);
                     const d=paint.disp;
                     const hasSub=Boolean(d.activityLine);
-                    const title=`${z.tower||''} ${z.name||''}`.trim();
+                    const parsed=parseZoneNameForActivity(z.name,activitySeqForParse);
+                    const towerStr=(z.tower||'').trim();
+                    const zoneTitle=(parsed.zoneLabel||z.name||'').trim()||'Zone';
                     const subFill=d.muted||!d.colorName?'rgba(100,100,110,0.95)':actColor(d.colorName,0.93);
+                    const labelLines=[];
+                    if(towerStr)labelLines.push({text:towerStr,fs:1.18,fill:'rgba(26,26,46,0.55)',weight:700});
+                    labelLines.push({text:zoneTitle,fs:1.88,fill:'rgba(26,26,46,0.96)',weight:800});
+                    if(hasSub)labelLines.push({text:d.activityLine,fs:1.34,fill:subFill,weight:650});
+                    const mid=(labelLines.length-1)/2;
                     return<g key={z.id}>
                       {g.kind==='rect'?(
                         <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={0.35}/>
                       ):(
                         <polygon points={svgPolygonPoints(g)} fill={paint.fill} stroke={paint.stroke} strokeWidth={0.35}/>
                       )}
-                      <text x={cx} y={cy+(hasSub?-0.95:0)} textAnchor="middle" dominantBaseline="middle" fill="rgba(26,26,46,0.94)" fontSize={1.85} fontWeight={700} style={{pointerEvents:'none',textShadow:'0 0 4px #fff,0 0 8px #fff,0 0 2px #fff'}}>{title}</text>
-                      {hasSub&&(
-                        <text x={cx} y={cy+1.05} textAnchor="middle" dominantBaseline="middle" fill={subFill} fontSize={1.42} fontWeight={600} style={{pointerEvents:'none',textShadow:'0 0 3px #fff,0 0 6px #fff'}}>{d.activityLine}</text>
-                      )}
+                      {labelLines.map((L,i)=>(
+                        <text
+                          key={i}
+                          x={cx}
+                          y={cy+(i-mid)*1.32}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fill={L.fill}
+                          fontSize={L.fs}
+                          fontWeight={L.weight}
+                          style={{pointerEvents:'none',textShadow:'0 0 4px #fff,0 0 10px #fff,0 0 2px #fff'}}
+                        >
+                          {L.text}
+                        </text>
+                      ))}
                     </g>;
                   })}
                   {tool==='select'&&selectedId!=null&&(()=>{
