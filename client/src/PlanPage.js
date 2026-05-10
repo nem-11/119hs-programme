@@ -167,8 +167,8 @@ export default function PlanPage({ userTabs, isAdmin }) {
   const [startDate, setStartDate] = useState(() => dateKey(todayRef.current));
   const [endDate, setEndDate] = useState(() => dateKey(defaultEnd));
 
-  /** null = all permitted drawing tabs; otherwise Set of drawing_tab values (same idea as towers). */
-  const [scopeWhitelist, setScopeWhitelist] = useState(null);
+  /** Same model as Gantt: explicit list of drawing tabs included (never rely on null + Set + effect fighting row reloads). */
+  const [selectedScopeTabs, setSelectedScopeTabs] = useState([]);
   /** null = all towers; otherwise whitelist */
   const [towerWhitelist, setTowerWhitelist] = useState(null);
 
@@ -238,15 +238,26 @@ export default function PlanPage({ userTabs, isAdmin }) {
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [isAdmin, userTabs, rows]);
 
+  const permittedTabsKey = useMemo(() => permittedTabs.join('|'), [permittedTabs]);
+
+  /** Only when the allowed tab *set* changes — not when `rows` reload changes `permittedTabs` array identity (fixes scope toggles snapping back). */
   useEffect(() => {
-    setScopeWhitelist((prev) => {
-      if (prev === null) return null;
+    if (!permittedTabs.length) return;
+    setSelectedScopeTabs((prev) => {
       const allowed = new Set(permittedTabs);
-      const next = new Set([...prev].filter((t) => allowed.has(t)));
-      if (next.size === 0 || next.size === allowed.size) return null;
-      return next;
+      if (prev.length === 0) return [...permittedTabs];
+      const filtered = prev.filter((t) => allowed.has(t));
+      if (filtered.length === 0) return [...permittedTabs];
+      return filtered;
     });
-  }, [permittedTabs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: permittedTabsKey captures tab membership; `permittedTabs` reference churns every fetch
+  }, [permittedTabsKey]);
+
+  const scopeSelectedSet = useMemo(() => {
+    if (!permittedTabs.length) return new Set();
+    if (!selectedScopeTabs.length) return new Set(permittedTabs);
+    return new Set(selectedScopeTabs);
+  }, [selectedScopeTabs, permittedTabs]);
 
   const applyPreset = useCallback((p) => {
     const t0 = new Date();
@@ -262,10 +273,10 @@ export default function PlanPage({ userTabs, isAdmin }) {
   const rowsForScope = useMemo(() => {
     return rows.filter((r) => {
       if (!permittedTabs.includes(r.drawing_tab)) return false;
-      if (scopeWhitelist !== null && !scopeWhitelist.has(r.drawing_tab)) return false;
+      if (!scopeSelectedSet.has(r.drawing_tab)) return false;
       return true;
     });
-  }, [rows, permittedTabs, scopeWhitelist]);
+  }, [rows, permittedTabs, scopeSelectedSet]);
 
   const filteredRows = useMemo(() => {
     return rowsForScope.filter((r) => {
@@ -365,10 +376,10 @@ export default function PlanPage({ userTabs, isAdmin }) {
   const drawingOptions = useMemo(() => {
     return (drawings || []).filter((d) => {
       if (!permittedTabs.includes(d.tab)) return false;
-      if (scopeWhitelist !== null && !scopeWhitelist.has(d.tab)) return false;
+      if (!scopeSelectedSet.has(d.tab)) return false;
       return true;
     });
-  }, [drawings, permittedTabs, scopeWhitelist]);
+  }, [drawings, permittedTabs, scopeSelectedSet]);
 
   useEffect(() => {
     if (!drawingOptions.length) {
@@ -458,18 +469,21 @@ export default function PlanPage({ userTabs, isAdmin }) {
   }
 
   function toggleScopeTab(t) {
-    setScopeWhitelist((prev) => {
+    setSelectedScopeTabs((prev) => {
       const full = new Set(permittedTabs);
-      const cur = prev === null ? full : new Set(prev);
-      if (cur.has(t)) cur.delete(t);
-      else cur.add(t);
-      if (cur.size === full.size) return null;
-      return cur;
+      const cur = new Set(prev.length ? prev : [...permittedTabs]);
+      if (cur.has(t)) {
+        cur.delete(t);
+        if (cur.size === 0) return [t];
+      } else {
+        cur.add(t);
+      }
+      return permittedTabs.filter((x) => cur.has(x));
     });
   }
 
   function selectAllScopes() {
-    setScopeWhitelist(null);
+    setSelectedScopeTabs([...permittedTabs]);
   }
 
   function countWorkingDaysInclusive(startKey, endKey) {
@@ -765,50 +779,46 @@ export default function PlanPage({ userTabs, isAdmin }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Scope</span>
-          <button
-            type="button"
-            disabled={permittedTabs.length === 0}
-            onClick={selectAllScopes}
-            title="Show every programme scope you have access to"
-            style={{
-              ...S.btn,
-              ...(scopeWhitelist === null ? S.btnAct : {}),
-              padding: '6px 10px',
-              fontSize: 11,
-              opacity: permittedTabs.length === 0 ? 0.4 : 1,
-            }}
-          >
-            All
-          </button>
-          {permittedTabs.map((t) => {
-            const active = scopeWhitelist === null || scopeWhitelist.has(t);
-            return (
+        {permittedTabs.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Scope</span>
+            <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
+            {permittedTabs.length > 1 && (
               <button
-                key={t}
                 type="button"
-                onClick={() => toggleScopeTab(t)}
-                title={
-                  scopeWhitelist === null
-                    ? 'Click to hide this scope (others stay on)'
-                    : active
-                      ? 'Click to hide'
-                      : 'Click to include'
-                }
-                style={{
-                  ...S.btn,
-                  ...(active ? S.btnAct : {}),
-                  padding: '6px 10px',
-                  fontSize: 11,
-                  opacity: active ? 1 : 0.55,
-                }}
+                onClick={selectAllScopes}
+                title="Show every programme scope you have access to"
+                style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}
               >
-                {drawingTabLabel(t)}
+                All tabs
               </button>
-            );
-          })}
-        </div>
+            )}
+            {permittedTabs.map((t) => {
+              const on = scopeSelectedSet.has(t);
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => toggleScopeTab(t)}
+                  title={on ? 'Click to hide from this plan' : 'Click to include on this plan'}
+                  style={{
+                    ...S.btn,
+                    ...(on ? S.btnAct : {}),
+                    padding: '6px 12px',
+                    fontSize: 11,
+                    opacity: on ? 1 : 0.55,
+                    boxShadow: on ? undefined : 'inset 0 0 0 1px rgba(26,26,46,0.08)',
+                  }}
+                >
+                  <span style={{ marginRight: 6, opacity: 0.85 }} aria-hidden>
+                    {on ? '✓' : '○'}
+                  </span>
+                  {drawingTabLabel(t)}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {towersInView.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
