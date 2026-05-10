@@ -240,12 +240,15 @@ function LoginPage({onLogin}){
     setLoading(false);
   }
   return<div className="login-landing">
-    <div className="login-landing__left">
-      <div className="login-landing__brand">
-        <Wordmark119HS/>
-        <div className="login-landing__tagline">Programme management</div>
-      </div>
-      <div className="login-landing__form-wrap">
+    {photoUrl
+      ?<img className="login-landing__bg" src={photoUrl} alt="" decoding="async"/>
+      :<div className="login-landing__fallback" aria-hidden/>}
+    <div className="login-landing__overlay">
+      <div className="login-landing__card">
+        <div className="login-landing__brand">
+          <Wordmark119HS/>
+          <div className="login-landing__tagline">Programme management</div>
+        </div>
         <div className="login-landing__form">
           <input className="login-landing__field" value={u} onChange={e=>{setU(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Username" autoComplete="username"/>
           <input className="login-landing__field" type="password" value={p} onChange={e=>{setP(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Password" autoComplete="current-password"/>
@@ -253,9 +256,6 @@ function LoginPage({onLogin}){
           <button type="button" className="login-landing__submit" onClick={()=>void go()} disabled={loading}>{loading?'Signing in...':'Sign In'}</button>
         </div>
       </div>
-    </div>
-    <div className="login-landing__right" style={photoUrl?{backgroundImage:`url(${photoUrl})`}:undefined}>
-      {!photoUrl&&<div className="login-landing__fallback" aria-hidden/>}
     </div>
   </div>;
 }
