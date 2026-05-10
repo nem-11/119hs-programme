@@ -99,10 +99,7 @@ function assertDrawingTabAllowed(db, user, drawingId) {
 function assertZoneTabAllowed(db, user, zoneId) {
   const zid = Number(zoneId);
   if (!zid) return { ok: false };
-  const row = db.get(
-    `SELECT z.id, d.tab FROM zones z JOIN drawings d ON d.id = z.drawing_id WHERE z.id = ?`,
-    [zid]
-  );
+  const row = db.getZoneDrawingTab(zid);
   if (!row) return { ok: false };
   if (isAdminRole(user.role)) return { ok: true, tab: row.tab };
   if (!userTabsSet(user).has(row.tab)) return { ok: false };

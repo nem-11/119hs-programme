@@ -628,6 +628,12 @@ module.exports = {
       all('SELECT z.*, d.tab, d.floor FROM zones z JOIN drawings d ON z.drawing_id=d.id')
     ),
   getZoneById: (id) => get('SELECT * FROM zones WHERE id=?', [id]),
+  /** Zone id + drawing tab (RBAC checks). */
+  getZoneDrawingTab: (id) =>
+    get(
+      'SELECT z.id, d.tab FROM zones z JOIN drawings d ON d.id = z.drawing_id WHERE z.id = ?',
+      [id]
+    ),
   getZoneIdsWithProgrammeItems: () =>
     all('SELECT DISTINCT zone_id FROM programme_items').map((r) => Number(r.zone_id)),
   logProgrammeCommand: ({ username, command_text, parsed_action, phase, error_message }) => {
