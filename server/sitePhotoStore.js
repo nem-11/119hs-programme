@@ -1,7 +1,7 @@
 /**
- * Site login hero image stored on local disk under server/public/uploads/.
- * On Render Starter, disk persists across deploys; if you move to ephemeral hosts or want CDN,
- * replace POST /api/admin/site-photo + this module with S3 (or similar) uploads and signed URLs.
+ * Site login hero image stored under server/public/uploads/.
+ * On Render, mount persistent disk at …/server/public/uploads (same folder as DATABASE_PATH / 119hs.db).
+ * For CDN-only hosting, replace POST /api/admin/site-photo + this module with S3 (or similar).
  */
 const fs = require('fs');
 const path = require('path');

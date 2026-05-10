@@ -1,18 +1,18 @@
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
+const { resolveDatabasePath } = require('./databasePath');
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
-
-function resolveDatabasePath() {
-  const raw = process.env.DATABASE_PATH || path.join('data', '119hs.db');
-  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
-}
 
 const DB_PATH = resolveDatabasePath();
 
 async function main() {
   const SQL = await initSqlJs();
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
   if (!fs.existsSync(DB_PATH)) {
     console.error('Database not found:', DB_PATH);
     process.exit(1);

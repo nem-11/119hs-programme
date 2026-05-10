@@ -5,12 +5,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { dateKeysBetween, bboxFromGeom } = require('./programmeSync');
 const schedule = require('./programmeSchedule');
-
-/** Resolved after optional DATABASE_PATH from env (load dotenv in server/index.js before requiring db). */
-function resolveDatabasePath() {
-  const raw = process.env.DATABASE_PATH || path.join('data', '119hs.db');
-  return path.isAbsolute(raw) ? raw : path.resolve(process.cwd(), raw);
-}
+const { resolveDatabasePath } = require('./databasePath');
 
 const GW_NAMES = [
   'Pile Mat',
