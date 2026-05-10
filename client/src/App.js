@@ -2,6 +2,14 @@ import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'rea
 import * as api from './api';
 import './loginLanding.css';
 import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
+import {
+  bottomNavItemsForRole,
+  allowedPageIdsForRole,
+  canTick as roleCanTick,
+  canEditZonesProgramme,
+  showGantt as roleShowGantt,
+  isAdmin as roleIsAdmin,
+} from './userPermissions';
 import {T,S} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
@@ -1267,39 +1275,36 @@ function MainApp({user,onLogout}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[loading,setLoading]=useState(true);
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(new Date(2026,4,1));
   const loadData=useCallback(async()=>{
-    const[g,i,c]=await Promise.all([api.getSchedule('groundworks'),api.getSchedule('internals'),api.getCompletions()]);
-    setGw(g||{});setInt(i||{});
-    if((user.tabs||[]).includes(PROJECT_PROGRAMME_TAB)){
-      try{const p=await api.getSchedule(PROJECT_PROGRAMME_TAB);setProjectSched(p||{});}catch(_){setProjectSched({});}
-    }else setProjectSched({});
-    setComp(c||{});setLoading(false);
+    const tabs=user.tabs||[];
+    try{
+      const[g,i,c,p]=await Promise.all([
+        tabs.includes('groundworks')?api.getSchedule('groundworks'):Promise.resolve({}),
+        tabs.includes('internals')?api.getSchedule('internals'):Promise.resolve({}),
+        api.getCompletions(),
+        tabs.includes(PROJECT_PROGRAMME_TAB)?api.getSchedule(PROJECT_PROGRAMME_TAB):Promise.resolve({}),
+      ]);
+      setGw(g||{});setInt(i||{});setProjectSched(p||{});setComp(c||{});
+    }catch(e){
+      console.error(e);
+      setGw({});setInt({});setProjectSched({});setComp({});
+    }
+    setLoading(false);
   },[user.tabs]);
   useEffect(()=>{loadData()},[loadData]);
   useEffect(()=>{
-    if(user.role!=='viewer')return;
-    if(['zones','programme','templates'].includes(page))setPage('dashboard');
+    const allowed=allowedPageIdsForRole(user.role);
+    if(!allowed.has(page))setPage('dashboard');
   },[page,user.role]);
   useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan','gantt'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
-  const canSee=t=>user.tabs.includes(t),isAdmin=user.role==='admin',canTick=user.role!=='viewer',canEdit=canTick;
+  const canSee=t=>user.tabs.includes(t);
+  const isAdmin=roleIsAdmin(user.role);
+  const canTick=roleCanTick(user.role);
+  const canEditZp=canEditZonesProgramme(user.role);
   const showDateNav=['update','lookahead'].includes(page);
   const sched=tab==='groundworks'?gw:tab==='internals'?int_s:tab===PROJECT_PROGRAMME_TAB?project_s:{};
-  const navItems=[
-    {id:'dashboard',label:'Dash',icon:'▣'},
-    {id:'update',label:'Update',icon:'✓'},
-    {id:'lookahead',label:'Ahead',icon:'▶'},
-    {id:'plan',label:'Plan',icon:'▦'},
-    {id:'gantt',label:'Gantt',icon:'▤'},
-    ...(canEdit?[
-      {id:'zones',label:'Zones',icon:'◇'},
-      {id:'programme',label:'Programme',icon:'◎'},
-    ]:[]),
-    ...(isAdmin?[
-      {id:'templates',label:'Templates',icon:'⧉'},
-      {id:'settings',label:'Settings',icon:'⚙'},
-    ]:[]),
-  ];
+  const navItems=bottomNavItemsForRole(user.role);
 
   return<div style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <div className="app-header-bar" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 14px',borderBottom:`1px solid ${T.hairline}`,flexShrink:0,background:T.surface}}>
@@ -1315,9 +1320,9 @@ function MainApp({user,onLogout}){
       {page==='update'&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
-      {page==='gantt'&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
-      {page==='zones'&&canEdit&&<ZoneSetupPage tab={tab} canEdit={canEdit} isAdmin={isAdmin}/>}
-      {page==='programme'&&canEdit&&<ProgrammePage tab={tab} canEdit={canEdit} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEdit} onGoToZoneSetup={()=>setPage('zones')}/>}
+      {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
+      {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
+      {page==='programme'&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>

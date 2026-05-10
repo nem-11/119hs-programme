@@ -145,12 +145,17 @@ function seedProjectProgrammeActivities() {
   });
 }
 
-/** Add project_programme tab to every user who doesn’t have it yet (existing databases). */
+function roleGetsProjectProgrammeTab(role) {
+  return role === 'admin' || role === 'site_editor' || role === 'editor';
+}
+
+/** Add project_programme tab only for roles that should manage milestones (admin/site). */
 function migrateUserTabsProjectProgramme() {
   const users = all('SELECT id, tabs, role FROM users');
   const tab = 'project_programme';
   const sortKey = (x) => ({ groundworks: 0, internals: 1, project_programme: 2 }[x] ?? 99);
   for (const u of users) {
+    if (!roleGetsProjectProgrammeTab(u.role)) continue;
     let t = [];
     try {
       t = JSON.parse(u.tabs || '[]');
@@ -160,6 +165,23 @@ function migrateUserTabsProjectProgramme() {
     t.push(tab);
     t.sort((a, b) => sortKey(a) - sortKey(b) || String(a).localeCompare(String(b)));
     run('UPDATE users SET tabs=? WHERE id=?', [JSON.stringify(t), u.id]);
+  }
+  save();
+}
+
+/** Sync role + tabs for standard programme accounts from defaultUsers.js (live RBAC matrix). */
+function migrateDefaultUserRoles() {
+  const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
+  const byUser = new Map(DEFAULT_BOOTSTRAP_USERS.map((u) => [u.username, u]));
+  const rows = all('SELECT id, username FROM users');
+  for (const row of rows) {
+    const spec = byUser.get(row.username);
+    if (!spec) continue;
+    run('UPDATE users SET role=?, tabs=? WHERE id=?', [
+      spec.role,
+      JSON.stringify(spec.tabs),
+      row.id,
+    ]);
   }
   save();
 }
@@ -230,39 +252,73 @@ function attachActivitiesToZones(zoneRows) {
   }));
 }
 
-/** First boot on an empty database: admin user + starter templates (no demo schedule). */
+/**
+ * Older production boots only inserted `admin`. Add site / DBs / IKEW / board if they are missing (idempotent).
+ * Does not change existing passwords or overwrite admin.
+ */
+function ensureStandardProgrammeUsers() {
+  const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
+  for (const row of DEFAULT_BOOTSTRAP_USERS) {
+    if (row.username === 'admin' || !row.passwordPlain) continue;
+    const existing = get('SELECT id FROM users WHERE username=?', [row.username]);
+    if (existing) continue;
+    try {
+      run('INSERT INTO users (username,password_hash,name,role,tabs) VALUES (?,?,?,?,?)', [
+        row.username,
+        bcrypt.hashSync(row.passwordPlain, 10),
+        row.name,
+        row.role,
+        JSON.stringify(row.tabs),
+      ]);
+      console.log('[119HS] Added missing programme user:', row.username);
+    } catch (e) {
+      console.error('[119HS] Could not add user', row.username, e.message);
+    }
+  }
+}
+
+/** First boot on an empty database: all standard programme users + starter templates (no demo schedule). */
 function bootstrapEmptyDatabase() {
   const cnt = get('SELECT COUNT(*) as c FROM users');
   if (cnt && Number(cnt.c) > 0) return;
 
   const isProd = process.env.NODE_ENV === 'production';
   const fromEnv = process.env.SEED_ADMIN_PASSWORD && String(process.env.SEED_ADMIN_PASSWORD).trim();
-  let pw = fromEnv;
-  if (!pw) {
+  let adminPw = fromEnv;
+  if (!adminPw) {
     if (isProd) {
       console.error(
         '[119HS] Empty database: set SEED_ADMIN_PASSWORD in the environment for the first admin user, then restart. No default password is used in production.'
       );
       process.exit(1);
     }
-    pw = '119hs';
-    console.log('[119HS] Bootstrap (dev only): admin user — username: admin  password: 119hs');
+    adminPw = '119hs';
+    console.log('[119HS] Bootstrap (dev only): admin password 119hs; creating standard programme users.');
   } else if (isProd) {
-    console.log('[119HS] Bootstrap: initial admin user created.');
+    console.log('[119HS] Bootstrap: creating admin + standard programme users (site, DBs, IKEW, board).');
   } else {
-    console.log('[119HS] Bootstrap: admin user created from SEED_ADMIN_PASSWORD.');
+    console.log('[119HS] Bootstrap: admin from SEED_ADMIN_PASSWORD; creating standard programme users.');
   }
 
+  const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
+
   try {
-    run('INSERT INTO users (username,password_hash,name,role,tabs) VALUES (?,?,?,?,?)', [
-      'admin',
-      bcrypt.hashSync(pw, 10),
-      'Admin',
-      'admin',
-      JSON.stringify(['groundworks', 'internals', 'project_programme']),
-    ]);
+    for (const row of DEFAULT_BOOTSTRAP_USERS) {
+      const plain = row.username === 'admin' ? adminPw : row.passwordPlain;
+      if (!plain) {
+        console.error('[119HS] Bootstrap: skipped user with no password:', row.username);
+        continue;
+      }
+      run('INSERT INTO users (username,password_hash,name,role,tabs) VALUES (?,?,?,?,?)', [
+        row.username,
+        bcrypt.hashSync(plain, 10),
+        row.name,
+        row.role,
+        JSON.stringify(row.tabs),
+      ]);
+    }
   } catch (e) {
-    console.error('[119HS] Bootstrap admin user failed:', e.message);
+    console.error('[119HS] Bootstrap users failed:', e.message);
     return;
   }
 
@@ -402,6 +458,8 @@ async function getDb() {
   migrateMilestonesCompletionPct();
   migrateMilestonesProgrammeItemId();
   bootstrapEmptyDatabase();
+  ensureStandardProgrammeUsers();
+  migrateDefaultUserRoles();
   migrateUserTabsProjectProgramme();
   save();
   return db;
@@ -1160,6 +1218,7 @@ module.exports = {
        ORDER BY pi.start_date`,
       [zoneId]
     ),
+  getProgrammeItemById: (id) => get('SELECT * FROM programme_items WHERE id=?', [id]),
   addProgrammeItem: (zone_id, activity_id, start_date, end_date, status, notes) => {
     run(
       'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
