@@ -1,8 +1,16 @@
+/** Working-day date keys between inclusive bounds (skips Sundays). Capped to avoid runaway loops. */
 function dateKeysBetween(startStr, endStr) {
   const out = [];
-  const d = new Date(startStr + 'T12:00:00');
-  const end = new Date(endStr + 'T12:00:00');
-  while (d <= end) {
+  const s = String(startStr || '').trim();
+  const e = String(endStr || '').trim();
+  if (!s || !e) return out;
+  const d = new Date(s + 'T12:00:00');
+  const end = new Date(e + 'T12:00:00');
+  if (Number.isNaN(d.getTime()) || Number.isNaN(end.getTime())) return out;
+  const MAX_STEPS = 12000;
+  let steps = 0;
+  while (d <= end && steps < MAX_STEPS) {
+    steps++;
     if (d.getDay() !== 0) {
       out.push(
         d.getFullYear() +

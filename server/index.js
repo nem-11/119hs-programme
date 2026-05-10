@@ -332,10 +332,15 @@ app.put('/api/zones/:id', auth, programmeEditor, (req, res) => {
   res.json({ ok: true });
 });
 app.delete('/api/zones/:id', auth, programmeEditor, (req, res) => {
-  const zchk = perm.assertZoneTabAllowed(db, req.user, req.params.id);
-  if (!zchk.ok) return res.status(403).json({ error: 'Zone not permitted' });
-  db.deleteZone(req.params.id);
-  res.json({ ok: true });
+  try {
+    const zchk = perm.assertZoneTabAllowed(db, req.user, req.params.id);
+    if (!zchk.ok) return res.status(403).json({ error: 'Zone not permitted' });
+    db.deleteZone(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[119HS] DELETE /api/zones/:id', e);
+    res.status(500).json({ error: e.message || 'Zone delete failed' });
+  }
 });
 app.post('/api/zones/:zoneId/schedule-from-target', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);

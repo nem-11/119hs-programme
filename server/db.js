@@ -57,6 +57,10 @@ let db;
 function save() {
   if (db) fs.writeFileSync(resolveDatabasePath(), Buffer.from(db.export()));
 }
+/** Single statement without persisting — use inside batched ops, then call save() once. */
+function runNoSave(sql, p) {
+  db.run(sql, p);
+}
 function run(sql, p) {
   db.run(sql, p);
   save();
@@ -100,20 +104,24 @@ function expandScheduleForItem(pi) {
   });
 }
 
-function shrinkScheduleForItem(pi) {
+function shrinkScheduleForItem(pi, opts) {
   if (!pi) return;
+  const deferSave = opts && opts.deferSave;
+  if (!String(pi.start_date || '').trim() || !String(pi.end_date || '').trim()) return;
   const z = get(
     'SELECT z.*, d.tab FROM zones z JOIN drawings d ON d.id=z.drawing_id WHERE z.id=?',
     [pi.zone_id]
   );
   const a = get('SELECT name FROM activities WHERE id=?', [pi.activity_id]);
   if (!z || !a) return;
+  const tabVal = z.tab != null ? String(z.tab) : '';
   const dates = dateKeysBetween(pi.start_date, pi.end_date);
+  const sql =
+    'DELETE FROM schedule WHERE tab=? AND date=? AND tower=? AND zone_name=? AND activity=?';
   dates.forEach((dk) => {
-    run(
-      'DELETE FROM schedule WHERE tab=? AND date=? AND tower=? AND zone_name=? AND activity=?',
-      [z.tab, dk, z.tower, z.name, a.name]
-    );
+    const params = [tabVal, dk, z.tower, z.name, a.name];
+    if (deferSave) runNoSave(sql, params);
+    else run(sql, params);
   });
 }
 
@@ -605,12 +613,13 @@ module.exports = {
     const zs = all('SELECT id FROM zones WHERE drawing_id=?', [id]);
     zs.forEach((z) => {
       const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [z.id]);
-      pis.forEach((pi) => shrinkScheduleForItem(pi));
-      run('DELETE FROM programme_items WHERE zone_id=?', [z.id]);
-      run('DELETE FROM zone_activities WHERE zone_id=?', [z.id]);
+      pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
+      runNoSave('DELETE FROM programme_items WHERE zone_id=?', [z.id]);
+      runNoSave('DELETE FROM zone_activities WHERE zone_id=?', [z.id]);
     });
-    run('DELETE FROM zones WHERE drawing_id=?', [id]);
-    run('DELETE FROM drawings WHERE id=?', [id]);
+    runNoSave('DELETE FROM zones WHERE drawing_id=?', [id]);
+    runNoSave('DELETE FROM drawings WHERE id=?', [id]);
+    save();
   },
   getZones: (did) =>
     attachActivitiesToZones(all('SELECT * FROM zones WHERE drawing_id=? ORDER BY id', [did])),
@@ -720,6 +729,23 @@ module.exports = {
         : cur.programme_anchor_date;
     const bb = bboxFromGeom(g);
     const now = new Date().toISOString();
+    const oldTower = String(cur.tower || '');
+    const oldName = String(cur.name || '');
+    const newTower = String(tower || '');
+    const newName = String(name || '');
+    if (
+      (patch.name != null && newName !== oldName) ||
+      (patch.tower != null && newTower !== oldTower)
+    ) {
+      const dr = get('SELECT tab FROM drawings WHERE id=?', [cur.drawing_id]);
+      const tabStr = dr && dr.tab != null ? String(dr.tab) : '';
+      if (tabStr) {
+        run(
+          'UPDATE schedule SET tower=?, zone_name=? WHERE tab=? AND tower=? AND zone_name=?',
+          [newTower, newName, tabStr, oldTower, oldName]
+        );
+      }
+    }
     run(
       'UPDATE zones SET name=?, tower=?, x=?, y=?, w=?, h=?, geometry=?, activity_id=?, source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, updated_at=? WHERE id=?',
       [
@@ -741,11 +767,14 @@ module.exports = {
     return true;
   },
   deleteZone: (id) => {
-    const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [id]);
-    pis.forEach((pi) => shrinkScheduleForItem(pi));
-    run('DELETE FROM programme_items WHERE zone_id=?', [id]);
-    run('DELETE FROM zone_activities WHERE zone_id=?', [id]);
-    run('DELETE FROM zones WHERE id=?', [id]);
+    const nid = Number(id);
+    if (!Number.isFinite(nid)) return;
+    const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [nid]);
+    pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
+    runNoSave('DELETE FROM programme_items WHERE zone_id=?', [nid]);
+    runNoSave('DELETE FROM zone_activities WHERE zone_id=?', [nid]);
+    runNoSave('DELETE FROM zones WHERE id=?', [nid]);
+    save();
   },
   setZoneActivities: (zoneId, items) => {
     const z = get('SELECT id FROM zones WHERE id=?', [zoneId]);
