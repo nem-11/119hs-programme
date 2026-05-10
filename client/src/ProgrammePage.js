@@ -7,6 +7,7 @@ import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {
   buildRowsFromTemplate,
   addCalendarDays,
+  buildActivityLookup,
 } from './programmeSchedule';
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
@@ -84,7 +85,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
   const hasFloorPlan=Boolean(selDraw&&drawData?.image_data);
 
-  const activityIdByName=useMemo(()=>new Map(filteredActs.map(a=>[a.name,a.id])),[filteredActs]);
+  const activityLookup=useMemo(()=>buildActivityLookup(filteredActs),[filteredActs]);
   const zonesSorted=useMemo(()=>[...zones].sort(compareZones),[zones]);
 
   const zonesCta=
@@ -181,7 +182,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
       durations:tplDur,
       startStageIndex:startStageIdx,
       startDateKey:anchorDate,
-      activityIdByName,
+      activityLookup,
     });
     const missing=rows.filter(r=>!r.activity_id).map(r=>r.activity_name);
     if(missing.length){
@@ -301,7 +302,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           durations:dur,
           startStageIndex:b.stageIdx,
           startDateKey:b.startDate||dateKey(new Date()),
-          activityIdByName,
+          activityLookup,
         });
         const existing=await api.getProgrammeItemsByZone(z.id);
         for(const it of existing)await api.deleteProgrammeItem(it.id);
@@ -520,7 +521,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                     templateName={selectedTpl?.name||''}
                     sequence={tplSeq}
                     durations={tplDur}
-                    activityIdByName={activityIdByName}
+                    activityLookup={activityLookup}
                     existingItems={items}
                     onApplied={async()=>{
                       if(onScheduleChanged)await onScheduleChanged();

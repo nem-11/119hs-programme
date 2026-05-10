@@ -304,11 +304,11 @@ function previewRowsForSetActivity(zoneId, activityName, endDateKey) {
     dur = JSON.parse(template.durations || '[]');
   } catch (_) {}
   const actRows = db.getActivities();
-  const activityIdByName = new Map(actRows.map((a) => [a.name, Number(a.id)]));
+  const activityLookup = schedule.buildActivityLookup(actRows);
 
   let k = -1;
   for (let i = 0; i < seq.length; i++) {
-    if (Number(activityIdByName.get(seq[i])) === Number(aid)) {
+    if (Number(schedule.resolveActivityId(activityLookup, seq[i])) === Number(aid)) {
       k = i;
       break;
     }
@@ -320,7 +320,7 @@ function previewRowsForSetActivity(zoneId, activityName, endDateKey) {
     durations: dur,
     anchorIndex: k,
     anchorEndDateKey: String(endDateKey || '').trim(),
-    activityIdByName,
+    activityLookup,
   });
   if (!newRows.length) return { error: 'Could not compute schedule from that date' };
   if (newRows.some((r) => !r.activity_id)) return { error: 'Template activity names do not match database' };
@@ -484,14 +484,14 @@ function buildPreview(commandText, action, allZones) {
         dur = JSON.parse(template.durations || '[]');
       } catch (_) {}
       const actRows = db.getActivities();
-      const activityIdByName = new Map(actRows.map((a) => [a.name, Number(a.id)]));
+      const activityLookup = schedule.buildActivityLookup(actRows);
       const newRows = schedule
         .buildRowsFromTemplate({
           sequence: seq,
           durations: dur,
           startStageIndex: 0,
           startDateKey: action.date,
-          activityIdByName,
+          activityLookup,
         })
         .filter(Boolean);
       if (!newRows.length || newRows.some((r) => !r.activity_id)) {

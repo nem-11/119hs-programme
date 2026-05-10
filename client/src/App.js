@@ -19,6 +19,7 @@ import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
 import GanttPage from './GanttPage';
+import { alignTemplateDurations } from './programmeSchedule';
 
 class AppErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null};}
@@ -353,6 +354,7 @@ function TemplatePage({tab,isAdmin,onReload}){
     const all=[...defaultSeq,...dbActs];
     return [...new Set(all)];
   },[activities,templateTab,defaultSeq]);
+  const orphansInTemplate=useMemo(()=>tActs.filter(a=>!seq.includes(a)),[tActs,seq]);
   function onTemplateScopeChange(next){
     setEditingId(null);
     setTemplateTab(next);
@@ -367,8 +369,9 @@ function TemplatePage({tab,isAdmin,onReload}){
     let acts=[],durs=[];
     try{acts=JSON.parse(t.sequence||'[]')}catch(_){}
     try{durs=JSON.parse(t.durations||'[]')}catch(_){}
-    setTActs(Array.isArray(acts)?acts:[]);
-    setTDurs(Array.isArray(durs)?durs:[]);
+    const actArr=Array.isArray(acts)?acts:[];
+    setTActs(actArr);
+    setTDurs(alignTemplateDurations(actArr,Array.isArray(durs)?durs:[]));
     setSelTpl(null);
   }
   function cancelEdit(){
@@ -408,20 +411,21 @@ function TemplatePage({tab,isAdmin,onReload}){
   }
   async function saveTpl(){
     if(!tName||!tActs.length)return;
+    const dursSave=alignTemplateDurations(tActs,tDurs);
     if(editingId){
-      const res=await api.updateTemplate(editingId,{name:tName,tab:templateTab,tower:tTower,zone_name:tZone,sequence:tActs,durations:tDurs});
+      const res=await api.updateTemplate(editingId,{name:tName,tab:templateTab,tower:tTower,zone_name:tZone,sequence:tActs,durations:dursSave});
       if(res&&res.error){window.alert(String(res.error));return;}
       const syncZ=res?.synced?.zones??0,syncI=res?.synced?.items??0;
       if(syncZ>0)window.alert(`Template updated. Programme refreshed for ${syncZ} linked zone(s) (${syncI} new rows). Rows marked done were kept.`);
       cancelEdit();
     }else{
-      await api.createTemplate(tName,templateTab,tTower,tZone,tActs,tDurs);
+      await api.createTemplate(tName,templateTab,tTower,tZone,tActs,dursSave);
       setTName('');setTActs([]);setTDurs([]);
     }
     setTemplates(await api.getTemplates()||[]);
     if(onReload)await onReload();
   }
-  async function handleApply(){if(!selTpl||!apZone||!apStart)return;const t=templates.find(x=>x.id===selTpl);if(!t)return;await api.applyTemplate(templateTab,apTower,apZone,JSON.parse(t.sequence),JSON.parse(t.durations),apStart);if(onReload)onReload();alert(`Template applied to ${apTower} ${apZone} from ${apStart}`)}
+  async function handleApply(){if(!selTpl||!apZone||!apStart)return;const t=templates.find(x=>x.id===selTpl);if(!t)return;let sq=[],du=[];try{sq=JSON.parse(t.sequence)||[]}catch(_){}try{du=JSON.parse(t.durations)||[]}catch(_){}await api.applyTemplate(templateTab,apTower,apZone,sq,alignTemplateDurations(sq,du),apStart);if(onReload)onReload();alert(`Template applied to ${apTower} ${apZone} from ${apStart}`)}
   async function removeTpl(id,name){
     if(!isAdmin)return;
     if(!window.confirm(`Delete template "${name}"? This cannot be undone.`))return;
@@ -441,7 +445,8 @@ function TemplatePage({tab,isAdmin,onReload}){
     let seq=[],durs=[];
     try{seq=JSON.parse(t.sequence||'[]')}catch(_){}
     try{durs=JSON.parse(t.durations||'[]')}catch(_){}
-    const res=await api.createTemplate(nm,t.tab,t.tower,t.zone_name,Array.isArray(seq)?seq:[],Array.isArray(durs)?durs:[]);
+    const seqOk=Array.isArray(seq)?seq:[];
+    const res=await api.createTemplate(nm,t.tab,t.tower,t.zone_name,seqOk,alignTemplateDurations(seqOk,Array.isArray(durs)?durs:[]));
     if(res&&res.error){window.alert(String(res.error));return;}
     setTemplates(await api.getTemplates()||[]);
   }
@@ -506,7 +511,7 @@ function TemplatePage({tab,isAdmin,onReload}){
     </div>}
     <h3 style={S.section}>Saved Templates</h3>
     {scopedTemplates.length===0&&<p style={{color:T.faint,fontSize:12,marginBottom:16}}>No templates for this programme yet</p>}
-    {scopedTemplates.map(t=>{const acts=JSON.parse(t.sequence),durs=JSON.parse(t.durations),total=durs.reduce((a,b)=>a+b,0);
+    {scopedTemplates.map(t=>{let acts=[],durs=[];try{acts=JSON.parse(t.sequence)||[]}catch(_){}try{durs=JSON.parse(t.durations)||[]}catch(_){}const aligned=alignTemplateDurations(acts,durs);const total=aligned.reduce((a,b)=>a+b,0);
       return<div key={t.id} style={{padding:14,background:grad.cardSurface,borderRadius:12,border:'1px solid rgba(26,26,46,0.06)',marginBottom:8,boxShadow:shadowCard}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div><span style={{fontSize:14,fontWeight:700,color:T.text}}>{t.name}</span><span style={{fontSize:10,color:T.faint,marginLeft:8}}>{total} days</span></div>
@@ -517,7 +522,7 @@ function TemplatePage({tab,isAdmin,onReload}){
             {isAdmin&&<button type="button" onClick={()=>void removeTpl(t.id,t.name)} style={{...S.btn,...S.btnDanger,fontSize:10,padding:'4px 10px'}}>Delete</button>}
           </div>
         </div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:3}}>{acts.map((a,i)=><span key={i} style={S.pill(a)}>{a} ({durs[i]}d)</span>)}</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:3}}>{acts.map((a,i)=><span key={i} style={S.pill(a)}>{a} ({aligned[i]}d)</span>)}</div>
         {selTpl===t.id&&<div style={{marginTop:10,padding:10,background:'rgba(66,133,244,0.06)',borderRadius:8,border:'1px solid rgba(66,133,244,0.2)'}}>
           <div style={{fontSize:10,fontWeight:600,color:T.muted,marginBottom:6,textTransform:'uppercase'}}>Apply to:</div>
           <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
@@ -541,6 +546,11 @@ function TemplatePage({tab,isAdmin,onReload}){
       <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:10}}>
         {seq.map(a=>{const on=tActs.includes(a);return<button key={a} onClick={()=>togAct(a)} style={{padding:'5px 10px',borderRadius:6,fontSize:10,fontWeight:600,cursor:'pointer',border:on?`2px solid ${actColor(a,0.9)}`:`1px solid ${T.hairline}`,background:on?actColor(a,0.2):'transparent',color:on?actColor(a,0.95):T.faint}}>{a}</button>})}
       </div>
+      {orphansInTemplate.length>0&&<>
+      <div style={{fontSize:10,color:T.muted,marginBottom:6}}>Steps saved on this template but not in the catalogue above (add them under “New activity” or they will not schedule):</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:10}}>
+        {orphansInTemplate.map((a,i)=><span key={`${a}-${i}`} style={{padding:'5px 10px',borderRadius:6,fontSize:10,fontWeight:600,border:`1px dashed ${T.hairline}`,color:T.text,background:'rgba(244,165,26,0.08)'}}>{a}</span>)}
+      </div></>}
       {tActs.length>0&&<>
       <div style={{fontSize:10,color:T.muted,marginBottom:6}}>Adjust sequence and durations:</div>
       <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>

@@ -2,7 +2,12 @@ import React, { useMemo, useState, useEffect } from 'react';
 import * as api from './api';
 import { T, S } from './uiTheme';
 import { formatShort, toHtmlDateInputValue } from './constants';
-import { buildRowsFromTargetEndDate, parseYMD } from './programmeSchedule';
+import {
+  buildRowsFromTargetEndDate,
+  parseYMD,
+  resolveActivityId,
+  alignTemplateDurations,
+} from './programmeSchedule';
 
 export default function ScheduleFromTargetModal({
   open,
@@ -13,24 +18,24 @@ export default function ScheduleFromTargetModal({
   templateName,
   sequence,
   durations,
-  activityIdByName,
+  activityLookup,
   existingItems,
   onApplied,
 }) {
   const seq = Array.isArray(sequence) ? sequence : [];
-  const dur = Array.isArray(durations) ? durations : [];
+  const dur = useMemo(() => alignTemplateDurations(seq, durations), [seq, durations]);
 
   const anchorOptions = useMemo(() => {
     return seq
       .map((name, idx) => ({
         name,
         idx,
-        id: activityIdByName.get(name) ?? null,
+        id: resolveActivityId(activityLookup, name),
       }))
       .filter((o) => o.id != null);
-  }, [seq, activityIdByName]);
+  }, [seq, activityLookup]);
 
-  const totalDays = useMemo(() => dur.reduce((a, b) => a + Math.max(0.5, Number(b) || 1), 0), [dur]);
+  const totalDays = useMemo(() => dur.reduce((a, b) => a + b, 0), [dur]);
 
   const [anchorActivityId, setAnchorActivityId] = useState('');
   const [anchorDate, setAnchorDate] = useState(() => toHtmlDateInputValue(new Date()));
@@ -57,9 +62,9 @@ export default function ScheduleFromTargetModal({
       durations: dur,
       anchorIndex: anchorIdxInSeq,
       anchorEndDateKey: anchorDate,
-      activityIdByName,
+      activityLookup,
     });
-  }, [anchorIdxInSeq, anchorDate, seq, dur, activityIdByName]);
+  }, [anchorIdxInSeq, anchorDate, seq, dur, activityLookup]);
 
   const missingActs = previewRows.filter((r) => !r.activity_id);
 

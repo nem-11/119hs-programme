@@ -1097,7 +1097,7 @@ module.exports = {
     if (!Array.isArray(seq) || seq.length === 0) return { zones: 0, items: 0 };
 
     const actRows = all('SELECT id, name FROM activities');
-    const activityIdByName = new Map(actRows.map((a) => [a.name, a.id]));
+    const activityLookup = schedule.buildActivityLookup(actRows);
 
     const linked = all('SELECT * FROM zones WHERE source_template_id=?', [templateId]);
     let itemsInserted = 0;
@@ -1129,7 +1129,7 @@ module.exports = {
         let lastIdx = -1;
         let lastEnd = null;
         for (let ti = 0; ti < seq.length; ti++) {
-          const aid = activityIdByName.get(seq[ti]);
+          const aid = schedule.resolveActivityId(activityLookup, seq[ti]);
           if (aid == null) continue;
           const di = doneItems.find((d) => Number(d.activity_id) === Number(aid));
           if (di && ti > lastIdx) {
@@ -1150,7 +1150,7 @@ module.exports = {
         durations: dur,
         startStageIndex: k,
         startDateKey: anchor,
-        activityIdByName,
+        activityLookup,
       });
 
       const toInsert =
@@ -1397,12 +1397,12 @@ module.exports = {
     if (!Array.isArray(seq) || seq.length === 0) return { error: 'Template has no sequence' };
 
     const actRows = all('SELECT id, name FROM activities');
-    const activityIdByName = new Map(actRows.map((a) => [a.name, a.id]));
+    const activityLookup = schedule.buildActivityLookup(actRows);
 
     const wantId = Number(anchorActivityId);
     let k = -1;
     for (let i = 0; i < seq.length; i++) {
-      const aid = activityIdByName.get(seq[i]);
+      const aid = schedule.resolveActivityId(activityLookup, seq[i]);
       if (aid != null && Number(aid) === wantId) {
         k = i;
         break;
@@ -1415,7 +1415,7 @@ module.exports = {
       durations: dur,
       anchorIndex: k,
       anchorEndDateKey: String(anchorDateKey || '').trim(),
-      activityIdByName,
+      activityLookup,
     });
     if (!rows.length) return { error: 'Could not compute schedule — check anchor date' };
     if (rows.some((r) => !r.activity_id)) {
@@ -1489,7 +1489,7 @@ module.exports = {
     }
 
     const actRows = all('SELECT id, name FROM activities');
-    const activityIdByName = new Map(actRows.map((a) => [a.name, a.id]));
+    const activityLookup = schedule.buildActivityLookup(actRows);
 
     const rows = schedule
       .buildRowsFromTemplate({
@@ -1497,7 +1497,7 @@ module.exports = {
         durations: dur,
         startStageIndex: 0,
         startDateKey: String(startDateKey || '').trim(),
-        activityIdByName,
+        activityLookup,
       })
       .filter(Boolean);
     if (!rows.length) return { error: 'Could not build programme from that start date' };

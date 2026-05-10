@@ -1,5 +1,55 @@
 'use strict';
 
+/** Normalize names so template strings match DB despite spacing / dash variants. */
+function normalizeActivityKey(s) {
+  return String(s || '')
+    .trim()
+    .replace(/\u2013|\u2014/g, '-')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/**
+ * @param {{ id: number|string, name?: string }[]} actRows
+ * @returns {{ map: Map<string, number>, normMap: Map<string, number> }}
+ */
+function buildActivityLookup(actRows) {
+  const map = new Map();
+  const normMap = new Map();
+  for (const a of actRows || []) {
+    const id = Number(a.id);
+    if (!Number.isFinite(id)) continue;
+    const name = String(a.name ?? '');
+    map.set(name, id);
+    map.set(name.trim(), id);
+    const nk = normalizeActivityKey(name);
+    if (!normMap.has(nk)) normMap.set(nk, id);
+  }
+  return { map, normMap };
+}
+
+function resolveActivityId(lookup, templateName) {
+  if (!lookup) return null;
+  const raw = String(templateName ?? '');
+  if (lookup.map?.has(raw)) return lookup.map.get(raw);
+  const t = raw.trim();
+  if (lookup.map?.has(t)) return lookup.map.get(t);
+  const nk = normalizeActivityKey(raw);
+  if (lookup.normMap?.has(nk)) return lookup.normMap.get(nk);
+  return null;
+}
+
+/** Ensure one duration per sequence step (missing entries default to 1 working day). */
+function alignTemplateDurations(sequence, durations) {
+  const seq = Array.isArray(sequence) ? sequence : [];
+  const dur = Array.isArray(durations) ? durations : [];
+  return seq.map((_, i) => {
+    const v = dur[i];
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.max(0.5, Math.round(n * 2) / 2) : 1;
+  });
+}
+
 function dateKey(d) {
   return (
     d.getFullYear() +
@@ -72,22 +122,19 @@ function startDateOfSpanEnding(endKey, nWorking) {
 }
 
 /**
- * @param {Map<string, number>} activityIdByName
- */
-/**
  * Anchor activity ends on anchorEndDateKey (last weekday of that stage).
  * Earlier stages are computed backwards; later stages forwards.
- * @param {Map<string, number>} activityIdByName
+ * @param {{ map: Map<string, number>, normMap: Map<string, number> }} activityLookup from buildActivityLookup
  */
 function buildRowsFromTargetEndDate({
   sequence,
   durations,
   anchorIndex,
   anchorEndDateKey,
-  activityIdByName,
+  activityLookup,
 }) {
   const seq = Array.isArray(sequence) ? sequence : [];
-  const dur = Array.isArray(durations) ? durations : [];
+  const dur = alignTemplateDurations(seq, durations);
   const n = seq.length;
   const k = Math.min(Math.max(0, Number(anchorIndex) || 0), Math.max(0, n - 1));
   const raw = String(anchorEndDateKey || '').trim();
@@ -108,7 +155,7 @@ function buildRowsFromTargetEndDate({
     const name = seq[i];
     rows[i] = {
       idx: i,
-      activity_id: activityIdByName.get(name) ?? null,
+      activity_id: resolveActivityId(activityLookup, name),
       activity_name: name,
       start_date: start_i,
       end_date: end_i,
@@ -120,7 +167,7 @@ function buildRowsFromTargetEndDate({
 
   rows[k] = {
     idx: k,
-    activity_id: activityIdByName.get(seq[k]) ?? null,
+    activity_id: resolveActivityId(activityLookup, seq[k]),
     activity_name: seq[k],
     start_date: startK,
     end_date: endK,
@@ -136,7 +183,7 @@ function buildRowsFromTargetEndDate({
     const name = seq[j];
     rows[j] = {
       idx: j,
-      activity_id: activityIdByName.get(name) ?? null,
+      activity_id: resolveActivityId(activityLookup, name),
       activity_name: name,
       start_date: start_j,
       end_date: end_j,
@@ -154,10 +201,10 @@ function buildRowsFromTemplate({
   durations,
   startStageIndex,
   startDateKey,
-  activityIdByName,
+  activityLookup,
 }) {
   const seq = Array.isArray(sequence) ? sequence : [];
-  const dur = Array.isArray(durations) ? durations : [];
+  const dur = alignTemplateDurations(seq, durations);
   const n = seq.length;
   const k = Math.min(Math.max(0, Number(startStageIndex) || 0), Math.max(0, n - 1));
   const raw = String(startDateKey || '').trim();
@@ -176,7 +223,7 @@ function buildRowsFromTemplate({
     const name = seq[j];
     rows[j] = {
       idx: j,
-      activity_id: activityIdByName.get(name) ?? null,
+      activity_id: resolveActivityId(activityLookup, name),
       activity_name: name,
       start_date: first,
       end_date: last,
@@ -194,7 +241,7 @@ function buildRowsFromTemplate({
     const status = j === k ? 'active' : 'planned';
     rows[j] = {
       idx: j,
-      activity_id: activityIdByName.get(name) ?? null,
+      activity_id: resolveActivityId(activityLookup, name),
       activity_name: name,
       start_date: curStart,
       end_date: last,
@@ -222,6 +269,10 @@ function addCalendarDays(dateKeyStr, delta) {
 module.exports = {
   buildRowsFromTemplate,
   buildRowsFromTargetEndDate,
+  buildActivityLookup,
+  resolveActivityId,
+  alignTemplateDurations,
+  normalizeActivityKey,
   nextWorkingDayAfter,
   prevWorkingDayBefore,
   dateKey,

@@ -11,6 +11,7 @@ import {
   parseZoneNameForActivity,
 } from './constants';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
+import {buildActivityLookup,resolveActivityId,alignTemplateDurations} from './programmeSchedule';
 
 function sortZoneActs(z){
   return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
@@ -81,19 +82,23 @@ function zoneCanvasPaint(z, sel, layerActId, nameForActivityId){
   return{fill,stroke,disp};
 }
 
-function buildActivitiesFromTemplate(t, nameToAct){
+function buildActivitiesFromTemplate(t, activitiesOfTab){
   let seq=[],durs=[];
   try{seq=JSON.parse(t.sequence)||[]}catch(_){}
   try{durs=JSON.parse(t.durations)||[]}catch(_){}
+  const aligned=alignTemplateDurations(seq,durs);
+  const lookup=buildActivityLookup(activitiesOfTab);
   const out=[];
   seq.forEach((name,i)=>{
-    const a=nameToAct.get(name);
+    const aid=resolveActivityId(lookup,name);
+    if(aid==null)return;
+    const a=activitiesOfTab.find(x=>Number(x.id)===Number(aid));
     if(!a)return;
     out.push({
       activity_id:a.id,
       name:a.name,
       sequence_order:i,
-      duration_days:Number(durs[i])>0?Number(durs[i]):1,
+      duration_days:aligned[i],
       start_date:null,
     });
   });
@@ -271,7 +276,6 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
   const filteredActs=activities.filter(a=>a.type===typeTab);
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
-  const nameToAct=useMemo(()=>new Map(filteredActs.map(a=>[a.name,a])),[filteredActs]);
   /** Sequence used to parse zone names (tower | activity patterns, etc.). */
   const activitySeqForParse=useMemo(()=>{
     if(typeTab==='groundworks')return GW_SEQUENCE;
@@ -806,7 +810,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     if(!t)return;
     if(t.tower)setZTower(String(t.tower));
     if(t.zone_name)setZName(t.zone_name);
-    const built=buildActivitiesFromTemplate(t,nameToAct);
+    const built=buildActivitiesFromTemplate(t,filteredActs);
     if(!built.length)return;
     if(selectedId!=null){
       if(!canEdit)return;
