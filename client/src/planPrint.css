@@ -1,0 +1,52 @@
+/* Hide app chrome while Plan print preview is active (screen + print). */
+body.plan-print-mode .app-header-bar,
+body.plan-print-mode .app-date-nav,
+body.plan-print-mode .app-bottom-nav {
+  display: none !important;
+}
+
+body.plan-print-mode {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@media print {
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+
+  body.plan-print-mode {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: #fff !important;
+  }
+
+  body.plan-print-mode .plan-no-print {
+    display: none !important;
+  }
+
+  body.plan-print-mode .plan-print-root {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  body.plan-print-mode .plan-grid-scroll {
+    overflow: visible !important;
+  }
+
+  body.plan-print-mode .plan-zone-col {
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  body.plan-print-mode .plan-print-root table {
+    font-size: 10px;
+  }
+
+  body.plan-print-mode .plan-print-root th,
+  body.plan-print-mode .plan-print-root td {
+    padding: 3px 4px !important;
+  }
+}

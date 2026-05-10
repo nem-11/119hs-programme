@@ -1,17 +1,23 @@
-const BASE='';
+/** Build-time: set REACT_APP_API_URL to the API origin if the SPA is hosted separately. Leave unset when the API serves the built client (same origin): requests use relative `/api/...` URLs. */
+const RAW_BASE = process.env.REACT_APP_API_URL || '';
+const BASE = String(RAW_BASE).replace(/\/+$/, '');
 function getToken(){return localStorage.getItem('119hs-token')}
 async function api(method,path,body){
+  const url = BASE ? `${BASE}${path}` : path;
   const opts={method,headers:{'Content-Type':'application/json'}};
   const token=getToken();if(token)opts.headers['Authorization']='Bearer '+token;
   if(body)opts.body=JSON.stringify(body);
   let res;
   try{
-    res=await fetch(BASE+path,opts);
+    res=await fetch(url,opts);
   }catch(e){
     const msg=e&&e.message?String(e.message):'Network error';
+    const hint = BASE
+      ? `Cannot reach API at ${BASE}. Check REACT_APP_API_URL and that the server is running.`
+      : 'Cannot reach API (same-origin: ensure the server is running and serving the app, or set REACT_APP_API_URL for a separate API host.)';
     const err=new Error(
       msg==='Failed to fetch'||/network|load failed|fetch/i.test(msg)
-        ?'Cannot reach API (is the server running on port 3001? From project root run: npm run server, or npm run dev for client + server together.)'
+        ? hint
         :msg
     );
     err.cause=e;
@@ -28,13 +34,20 @@ async function api(method,path,body){
   }catch(_){
     data={};
   }
-  if(!res.ok)return data;
+  if(!res.ok){
+    if(!data||typeof data!=='object')data={};
+    if(!data.error)data.error=`HTTP ${res.status} ${res.statusText||''}`.trim();
+    return data;
+  }
   return data;
 }
 export async function login(u,p){const d=await api('POST','/api/login',{username:u,password:p});if(d?.token){localStorage.setItem('119hs-token',d.token);localStorage.setItem('119hs-user',JSON.stringify(d.user))}return d}
 export function logout(){localStorage.removeItem('119hs-token');localStorage.removeItem('119hs-user')}
 export function getStoredUser(){const t=getToken(),u=localStorage.getItem('119hs-user');return t&&u?JSON.parse(u):null}
 export const getActivities=()=>api('GET','/api/activities');
+export const createActivity=(name,type)=>api('POST','/api/activities',{name,type});
+export const renameActivity=(id,name)=>api('PUT',`/api/activities/${id}`,{name});
+export const deleteActivity=(id)=>api('DELETE',`/api/activities/${id}`);
 export const getSchedule=(tab)=>api('GET',`/api/schedule/${tab}`);
 export const updateScheduleDay=(tab,date,data)=>api('PUT',`/api/schedule/${tab}/${date}`,{data});
 export const addScheduleActivity=(tab,date,tower,zone_name,activity)=>api('POST','/api/schedule/activity',{tab,date,tower,zone_name,activity});
@@ -42,6 +55,9 @@ export const removeScheduleActivity=(tab,date,tower,zone_name,activity)=>api('DE
 export const getCompletions=()=>api('GET','/api/completions');
 export const toggleCompletion=(date,key,by)=>api('POST','/api/completions',{date,key,by});
 export const getMilestones=()=>api('GET','/api/milestones');
+export const addMilestone=(date,label,status,completion_pct,programme_item_id)=>api('POST','/api/milestones',{date,label,status:status||'planned',completion_pct:completion_pct!=null?completion_pct:0,programme_item_id:programme_item_id!=null&&programme_item_id!==''?programme_item_id:null});
+export const patchMilestone=(id,patch)=>api('PATCH',`/api/milestones/${id}`,patch);
+export const deleteMilestone=(id)=>api('DELETE',`/api/milestones/${id}`);
 export const getUsers=()=>api('GET','/api/users');
 export const addUser=(user)=>api('POST','/api/users',user);
 export const deleteUser=(id)=>api('DELETE',`/api/users/${id}`);
@@ -50,9 +66,21 @@ export const getDrawing=(id)=>api('GET',`/api/drawings/${id}`);
 export const uploadDrawing=(name,tab,floor,image_data,width,height,file_url)=>api('POST','/api/drawings',{name,tab,floor,image_data,width,height,file_url:file_url||null});
 export const deleteDrawing=(id)=>api('DELETE',`/api/drawings/${id}`);
 export const getZonesForDrawing=(id)=>api('GET',`/api/zones/${id}`);
-export const addZone=(drawing_id,name,tower,geometry,activity_id)=>api('POST','/api/zones',{drawing_id,name,tower,geometry,activity_id:activity_id??null});
+export const addZone=(drawing_id,name,tower,geometry,activities)=>api('POST','/api/zones',{drawing_id,name,tower,geometry,activities:activities&&activities.length?activities:undefined});
 export const updateZone=(id,patch)=>api('PUT',`/api/zones/${id}`,patch);
+export const scheduleZoneFromTarget=(zoneId,body)=>api('POST',`/api/zones/${zoneId}/schedule-from-target`,body);
+export const previewProgrammeCommand=(command)=>api('POST','/api/admin/programme-command/preview',{command});
+export const applyProgrammeCommand=(command,action)=>api('POST','/api/admin/programme-command/apply',{command,action});
 export const deleteZone=(id)=>api('DELETE',`/api/zones/${id}`);
+export const addZoneActivity=(zoneId,payload)=>api('POST',`/api/zones/${zoneId}/activities`,payload);
+export const deleteZoneActivity=(zoneId,activityId)=>api('DELETE',`/api/zones/${zoneId}/activities/${activityId}`);
+export const putZoneActivities=(zoneId,activities)=>api('PUT',`/api/zones/${zoneId}/activities`,{activities});
+export const getPlanProgramme=()=>api('GET','/api/plan/programme');
+export const getPlanProgrammeFullExport=()=>api('GET','/api/plan/programme?full=1');
+export const replacePlanZoneItems=(zoneId,rows)=>api('PUT',`/api/plan/admin/zone/${zoneId}/items`,{rows});
+export const deletePlanZone=(zoneId)=>api('DELETE',`/api/plan/admin/zone/${zoneId}`);
+export const restorePlanZone=(snapshot)=>api('POST','/api/plan/admin/restore-zone',{snapshot});
+export const resetProgrammeData=()=>api('POST','/api/admin/reset-programme-data');
 export const getProgrammeItemsByDrawing=(drawingId)=>api('GET',`/api/programme-items/drawing/${drawingId}`);
 export const getProgrammeItemsByZone=(zoneId)=>api('GET',`/api/programme-items/zone/${zoneId}`);
 export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes});
@@ -61,4 +89,5 @@ export const deleteProgrammeItem=(id)=>api('DELETE',`/api/programme-items/${id}`
 export const getTemplates=()=>api('GET','/api/templates');
 export const createTemplate=(name,tab,tower,zone_name,sequence,durations)=>api('POST','/api/templates',{name,tab,tower,zone_name,sequence,durations});
 export const deleteTemplate=(id)=>api('DELETE',`/api/templates/${id}`);
+export const updateTemplate=(id,body)=>api('PUT',`/api/templates/${id}`,body);
 export const applyTemplate=(tab,tower,zone_name,sequence,durations,startDate)=>api('POST','/api/templates/apply',{tab,tower,zone_name,sequence,durations,startDate});

@@ -1,2 +1,11 @@
 node_modules/
 .DS_Store
+
+# Environment and local secrets
+.env
+.env.local
+.env.*.local
+
+# SQLite and persisted data (do not commit databases)
+data/
+*.db

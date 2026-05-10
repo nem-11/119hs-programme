@@ -1,0 +1,1390 @@
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import * as api from './api';
+import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
+import { T, S } from './uiTheme';
+import {
+  calendarDaysBetween,
+  isWeekendKey,
+  dayKeyInItemRange,
+  abbrevActivity,
+  zoneRowLabel,
+} from './planUtils';
+import { endDateOfSpanStarting } from './programmeSchedule';
+import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
+import './planPrint.css';
+
+/**
+ * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
+ * Cycles with brightness tiers when there are more zones than colours.
+ */
+const PLAN_ZONE_PALETTE = [
+  [231, 76, 60],
+  [52, 152, 219],
+  [46, 204, 113],
+  [241, 196, 15],
+  [155, 89, 182],
+  [230, 126, 34],
+  [26, 188, 156],
+  [231, 76, 120],
+  [142, 68, 173],
+  [22, 160, 133],
+  [243, 156, 18],
+  [211, 84, 0],
+  [41, 128, 185],
+  [39, 174, 96],
+  [192, 57, 43],
+  [106, 176, 222],
+  [147, 112, 219],
+  [212, 172, 13],
+  [199, 55, 150],
+  [72, 201, 176],
+];
+
+function planZoneRgb(zoneIndex) {
+  const L = PLAN_ZONE_PALETTE.length;
+  /** Spread consecutive zone indices across the palette (coprime step mod L). */
+  const slot = ((zoneIndex * 11 + 5) % L + L) % L;
+  const [r0, g0, b0] = PLAN_ZONE_PALETTE[slot];
+  const tier = Math.floor(zoneIndex / L);
+  if (tier === 0) return [r0, g0, b0];
+  const t = 0.92 - (tier % 5) * 0.075;
+  return [
+    Math.round(Math.min(255, r0 * t)),
+    Math.round(Math.min(255, g0 * t)),
+    Math.round(Math.min(255, b0 * t)),
+  ];
+}
+
+/** Fill + stroke for one zone on the plan drawing (active = programme work that day). */
+function planZoneDrawingStyles(zoneIndex, { done, active }) {
+  if (!active) {
+    return {
+      fill: 'rgba(110, 118, 135, 0.18)',
+      stroke: 'rgba(35, 40, 52, 0.65)',
+      strokeW: 0.55,
+    };
+  }
+  const [r, g, b] = planZoneRgb(zoneIndex);
+  const alpha = done ? 0.52 : 0.72;
+  const fill = `rgba(${r},${g},${b},${alpha})`;
+  const sr = Math.max(0, r - 42);
+  const sg = Math.max(0, g - 42);
+  const sb = Math.max(0, b - 42);
+  const stroke = `rgb(${sr},${sg},${sb})`;
+  return { fill, stroke, strokeW: 1.05 };
+}
+
+/** Bounding box + centre for zone geometry (viewBox 0–100). */
+function geomBBox(g, z) {
+  if (g?.kind === 'rect') {
+    return {
+      x: g.x,
+      y: g.y,
+      w: g.w,
+      h: g.h,
+      cx: g.x + g.w / 2,
+      cy: g.y + g.h / 2,
+    };
+  }
+  if (g?.kind === 'poly' && Array.isArray(g.points) && g.points.length >= 3) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of g.points) {
+      minX = Math.min(minX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxX = Math.max(maxX, p[0]);
+      maxY = Math.max(maxY, p[1]);
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    return { x: minX, y: minY, w, h, cx: minX + w / 2, cy: minY + h / 2 };
+  }
+  const x = Number(z?.x) || 0;
+  const y = Number(z?.y) || 0;
+  const w = Number(z?.w) || 0;
+  const h = Number(z?.h) || 0;
+  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+}
+
+/** Readable micro-label size from zone footprint; cap so text stays subtle on large zones. */
+function zoneLabelFontSize(bb) {
+  const m = Math.min(bb.w, bb.h);
+  return Math.min(1.15, Math.max(0.52, m * 0.16));
+}
+
+function csvEscape(v) {
+  if (v == null || v === undefined) return '';
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function downloadCsv(filename, rows) {
+  const lines = rows.map((r) => r.map(csvEscape).join(','));
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function addDays(d, n) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+  x.setDate(x.getDate() + n);
+  return x;
+}
+
+function useIsMobile() {
+  const [m, setM] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 640px)').matches : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const fn = () => setM(mq.matches);
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+  return m;
+}
+
+export default function PlanPage({ userTabs, isAdmin }) {
+  const [rows, setRows] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [loadErr, setLoadErr] = useState('');
+  const [preset, setPreset] = useState('7');
+  const [viewMode, setViewMode] = useState('grid'); // grid | drawing
+  const [vizDate, setVizDate] = useState(() => dateKey(new Date()));
+  const [drawings, setDrawings] = useState([]);
+  const [drawingId, setDrawingId] = useState(null);
+  const [drawData, setDrawData] = useState(null);
+  const [drawZones, setDrawZones] = useState([]);
+  const todayRef = useRef(new Date());
+
+  const defaultEnd = useMemo(() => addDays(todayRef.current, 6), []);
+  const [startDate, setStartDate] = useState(() => dateKey(todayRef.current));
+  const [endDate, setEndDate] = useState(() => dateKey(defaultEnd));
+
+  /** null = all permitted drawing tabs; otherwise Set of drawing_tab values (same idea as towers). */
+  const [scopeWhitelist, setScopeWhitelist] = useState(null);
+  /** null = all towers; otherwise whitelist */
+  const [towerWhitelist, setTowerWhitelist] = useState(null);
+
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const [pdfOpts, setPdfOpts] = useState({
+    allZones: true,
+    legend: true,
+    header: true,
+    showWeekends: true,
+  });
+
+  /** Active during print preview + print dialog */
+  const [printLayout, setPrintLayout] = useState(null);
+  const [dragState, setDragState] = useState(null);
+  const [undoState, setUndoState] = useState(null);
+  const [dismissedClashKey, setDismissedClashKey] = useState('');
+
+  const titleRestore = useRef(typeof document !== 'undefined' ? document.title : '');
+  const isMobile = useIsMobile();
+
+  const load = useCallback(async () => {
+    setLoadErr('');
+    try {
+      let data;
+      if (isAdmin) {
+        data = await api.getPlanProgrammeFullExport();
+        if (!Array.isArray(data)) data = await api.getPlanProgramme();
+      } else {
+        data = await api.getPlanProgramme();
+      }
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setLoadErr(e?.message || 'Failed to load programme');
+      setRows([]);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    api.getActivities().then((a) => setActivities(Array.isArray(a) ? a : []));
+  }, []);
+
+  useEffect(() => {
+    api.getDrawings().then((d) => setDrawings(Array.isArray(d) ? d : []));
+  }, []);
+
+  useEffect(() => {
+    function afterPrint() {
+      document.body.classList.remove('plan-print-mode');
+      document.title = titleRestore.current || '119HS';
+      setPrintLayout(null);
+    }
+    window.addEventListener('afterprint', afterPrint);
+    return () => window.removeEventListener('afterprint', afterPrint);
+  }, []);
+
+  const permittedTabs = useMemo(() => {
+    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
+    if (!isAdmin) return base;
+    const s = new Set(base);
+    for (const r of rows) {
+      if (r.drawing_tab) s.add(String(r.drawing_tab));
+    }
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [isAdmin, userTabs, rows]);
+
+  useEffect(() => {
+    setScopeWhitelist((prev) => {
+      if (prev === null) return null;
+      const allowed = new Set(permittedTabs);
+      const next = new Set([...prev].filter((t) => allowed.has(t)));
+      if (next.size === 0 || next.size === allowed.size) return null;
+      return next;
+    });
+  }, [permittedTabs]);
+
+  const applyPreset = useCallback((p) => {
+    const t0 = new Date();
+    t0.setHours(12, 0, 0, 0);
+    setPreset(p);
+    if (p === 'custom') return;
+    const days = parseInt(p, 10);
+    setStartDate(dateKey(t0));
+    setEndDate(dateKey(addDays(t0, days - 1)));
+  }, []);
+
+  /** Scope only (no tower filter) so the tower chips always list every tower in the current scope. */
+  const rowsForScope = useMemo(() => {
+    return rows.filter((r) => {
+      if (!permittedTabs.includes(r.drawing_tab)) return false;
+      if (scopeWhitelist !== null && !scopeWhitelist.has(r.drawing_tab)) return false;
+      return true;
+    });
+  }, [rows, permittedTabs, scopeWhitelist]);
+
+  const filteredRows = useMemo(() => {
+    return rowsForScope.filter((r) => {
+      if (towerWhitelist !== null) {
+        const tw = String(r.tower || '').trim();
+        if (!towerWhitelist.has(tw)) return false;
+      }
+      return true;
+    });
+  }, [rowsForScope, towerWhitelist]);
+
+  const towersInView = useMemo(() => {
+    const s = new Set();
+    rowsForScope.forEach((r) => {
+      const tw = String(r.tower || '').trim();
+      if (tw) s.add(tw);
+    });
+    return [...s].sort();
+  }, [rowsForScope]);
+
+  useEffect(() => {
+    const valid = new Set(towersInView);
+    setTowerWhitelist((prev) => {
+      if (prev === null) return null;
+      const next = new Set([...prev].filter((t) => valid.has(t)));
+      if (next.size === 0) return null;
+      if (next.size === valid.size) return null;
+      return next;
+    });
+  }, [towersInView]);
+
+  const dayColumns = useMemo(() => {
+    const all = calendarDaysBetween(startDate, endDate);
+    if (printLayout && !printLayout.showWeekends) {
+      return all.filter((k) => !isWeekendKey(k));
+    }
+    return all;
+  }, [startDate, endDate, printLayout]);
+
+  const todayKey = dateKey(new Date());
+
+  const zoneBlocks = useMemo(() => {
+    const byZone = new Map();
+    for (const r of filteredRows) {
+      const id = r.zone_id;
+      if (!byZone.has(id)) {
+        byZone.set(id, {
+          zone_id: id,
+          zone_name: r.zone_name,
+          tower: r.tower,
+          drawing_tab: r.drawing_tab,
+          drawing_name: r.drawing_name,
+          items: [],
+        });
+      }
+      byZone.get(id).items.push(r);
+    }
+
+    const blocks = [];
+    const emptyZones = !!(printLayout && printLayout.emptyZones);
+
+    for (const z of byZone.values()) {
+      const cells = {};
+      let any = false;
+      for (const dk of dayColumns) {
+        const hits = z.items.filter((it) => dayKeyInItemRange(dk, it.start_date, it.end_date));
+        if (hits.length) any = true;
+        cells[dk] = hits;
+      }
+      if (!any && !emptyZones) continue;
+      blocks.push({ ...z, cells });
+    }
+
+    blocks.sort((a, b) => {
+      const dtab = String(a.drawing_tab || '').localeCompare(String(b.drawing_tab || ''));
+      if (dtab !== 0) return dtab;
+      const tw = String(a.tower || '').localeCompare(String(b.tower || ''));
+      if (tw !== 0) return tw;
+      return zoneRowLabel(a).localeCompare(zoneRowLabel(b));
+    });
+
+    return blocks;
+  }, [filteredRows, dayColumns, printLayout]);
+
+  const legendActs = useMemo(() => {
+    const names = new Set();
+    for (const z of zoneBlocks) {
+      for (const dk of dayColumns) {
+        for (const it of z.cells[dk] || []) {
+          if (it.activity_name) names.add(it.activity_name);
+        }
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [zoneBlocks, dayColumns]);
+
+  const drawingOptions = useMemo(() => {
+    return (drawings || []).filter((d) => {
+      if (!permittedTabs.includes(d.tab)) return false;
+      if (scopeWhitelist !== null && !scopeWhitelist.has(d.tab)) return false;
+      return true;
+    });
+  }, [drawings, permittedTabs, scopeWhitelist]);
+
+  useEffect(() => {
+    if (!drawingOptions.length) {
+      setDrawingId(null);
+      return;
+    }
+    if (!drawingId || !drawingOptions.some((d) => Number(d.id) === Number(drawingId))) {
+      setDrawingId(drawingOptions[0].id);
+    }
+  }, [drawingOptions, drawingId]);
+
+  useEffect(() => {
+    if (!drawingId) {
+      setDrawData(null);
+      setDrawZones([]);
+      return;
+    }
+    api.getDrawing(drawingId).then((d) => setDrawData(d || null));
+    api.getZonesForDrawing(drawingId).then((z) => setDrawZones(Array.isArray(z) ? z : []));
+  }, [drawingId]);
+
+  const zoneDayActivity = useMemo(() => {
+    const by = new Map();
+    for (const r of filteredRows) {
+      if (!dayKeyInItemRange(vizDate, r.start_date, r.end_date)) continue;
+      const id = Number(r.zone_id);
+      const cur = by.get(id);
+      if (!cur) {
+        by.set(id, r);
+        continue;
+      }
+      const curDone = String(cur.status || '').toLowerCase() === 'done';
+      const nextDone = String(r.status || '').toLowerCase() === 'done';
+      if (curDone && !nextDone) {
+        by.set(id, r);
+        continue;
+      }
+      if (String(r.start_date) < String(cur.start_date)) by.set(id, r);
+    }
+    return by;
+  }, [filteredRows, vizDate]);
+
+  /** One row per zone on this drawing with programme that day: tower + zone - activity. */
+  const drawingDayLegendEntries = useMemo(() => {
+    const ids = new Set(drawZones.map((z) => Number(z.id)));
+    const zoneById = new Map(drawZones.map((z) => [Number(z.id), z]));
+    const out = [];
+    zoneDayActivity.forEach((r, zid) => {
+      if (!ids.has(zid)) return;
+      if (!r?.activity_name) return;
+      const z = zoneById.get(zid);
+      const tw = String(z?.tower ?? r.tower ?? '').trim();
+      const zn = String(z?.name ?? r.zone_name ?? '').trim();
+      const zonePart = [tw, zn].filter(Boolean).join(' ');
+      const label = zonePart ? `${zonePart} - ${r.activity_name}` : String(r.activity_name);
+      const done = String(r.status || '').toLowerCase() === 'done';
+      out.push({ key: zid, label, activity_name: r.activity_name, done });
+    });
+    out.sort((a, b) => a.label.localeCompare(b.label));
+    return out;
+  }, [zoneDayActivity, drawZones]);
+
+  const drawingZoneColorMeta = useMemo(() => {
+    const sorted = [...drawZones].sort((a, b) => Number(a.id) - Number(b.id));
+    const byId = new Map();
+    sorted.forEach((z, i) => byId.set(Number(z.id), i));
+    return { byId, total: sorted.length };
+  }, [drawZones]);
+
+  const shiftVizDate = useCallback((deltaDays) => {
+    setVizDate((prev) => dateKey(addDays(new Date(String(prev) + 'T12:00:00'), deltaDays)));
+  }, []);
+
+  function toggleTower(tw) {
+    setTowerWhitelist((prev) => {
+      const full = new Set(towersInView);
+      const cur = prev === null ? full : new Set(prev);
+      if (cur.has(tw)) cur.delete(tw);
+      else cur.add(tw);
+      if (cur.size === full.size) return null;
+      return cur;
+    });
+  }
+
+  function selectAllTowers() {
+    setTowerWhitelist(null);
+  }
+
+  function toggleScopeTab(t) {
+    setScopeWhitelist((prev) => {
+      const full = new Set(permittedTabs);
+      const cur = prev === null ? full : new Set(prev);
+      if (cur.has(t)) cur.delete(t);
+      else cur.add(t);
+      if (cur.size === full.size) return null;
+      return cur;
+    });
+  }
+
+  function selectAllScopes() {
+    setScopeWhitelist(null);
+  }
+
+  function countWorkingDaysInclusive(startKey, endKey) {
+    const days = calendarDaysBetween(startKey, endKey);
+    return Math.max(1, days.filter((k) => !isWeekendKey(k)).length);
+  }
+
+  function normalizeToWeekdayStart(key) {
+    const d = new Date(String(key) + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return dateKey(new Date());
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return dateKey(d);
+  }
+
+  function endOfWorkingSpan(startKey, durationDays) {
+    let d = new Date(normalizeToWeekdayStart(startKey) + 'T12:00:00');
+    let remain = Math.max(1, Number(durationDays) || 1) - 1;
+    while (remain > 0) {
+      d.setDate(d.getDate() + 1);
+      if (d.getDay() !== 0 && d.getDay() !== 6) remain--;
+    }
+    return dateKey(d);
+  }
+
+  function nextWorkingDay(key) {
+    const d = new Date(String(key) + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return dateKey(d);
+  }
+
+  async function applyZoneRows(zoneId, zoneItems, nextItems) {
+    const payload = (nextItems || []).map((r) => ({
+      activity_id: Number(r.activity_id),
+      start_date: String(r.start_date),
+      end_date: String(r.end_date),
+      status: r.status || 'planned',
+      notes: r.notes || '',
+    }));
+    const out = await api.replacePlanZoneItems(zoneId, payload);
+    if (out && out.error) throw new Error(out.error);
+    setUndoState({
+      type: 'zone_rows',
+      zoneId,
+      label: 'Revert last activity edit/move/add/delete in selected zone',
+      at: new Date().toISOString(),
+      rowsBefore: zoneItems.map((r) => ({
+        activity_id: Number(r.activity_id),
+        start_date: String(r.start_date),
+        end_date: String(r.end_date),
+        status: r.status || 'planned',
+        notes: r.notes || '',
+      })),
+    });
+    await load();
+  }
+
+  function detectClash(allRows) {
+    const by = new Map();
+    for (const r of allRows || []) {
+      for (const dk of calendarDaysBetween(r.start_date, r.end_date)) {
+        const key = `${dk}__${r.activity_name}`;
+        if (!by.has(key)) by.set(key, []);
+        by.get(key).push(r);
+      }
+    }
+    for (const [key, arr] of by.entries()) {
+      const zoneIds = [...new Set(arr.map((x) => Number(x.zone_id)))];
+      if (zoneIds.length >= 2) {
+        const [day, activity] = key.split('__');
+        return { key, day, activity, rows: arr.slice(0, 2) };
+      }
+    }
+    return null;
+  }
+
+  function runPrint(layout) {
+    titleRestore.current = document.title;
+    document.title = `119HS_Programme_${startDate}_${endDate}`;
+    setPrintLayout(layout);
+    document.body.classList.add('plan-print-mode');
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  }
+
+  function handlePrintClick() {
+    runPrint({
+      showWeekends: true,
+      legend: true,
+      header: true,
+      emptyZones: false,
+    });
+  }
+
+  function confirmPdfExport() {
+    setPdfOpen(false);
+    runPrint({
+      showWeekends: pdfOpts.showWeekends,
+      legend: pdfOpts.legend,
+      header: pdfOpts.header,
+      emptyZones: pdfOpts.allZones,
+    });
+  }
+
+  async function exportAdminCsv() {
+    let src = rows;
+    if (isAdmin) {
+      try {
+        const full = await api.getPlanProgrammeFullExport();
+        if (Array.isArray(full)) src = full;
+      } catch (_) {}
+    }
+    const header = [
+      'programme_item_id',
+      'zone_id',
+      'zone_name',
+      'tower',
+      'drawing_tab',
+      'drawing_name',
+      'activity_name',
+      'activity_type',
+      'start_date',
+      'end_date',
+      'status',
+      'notes',
+    ];
+    const lines = [
+      header,
+      ...src.map((r) => [
+        r.id,
+        r.zone_id,
+        r.zone_name,
+        r.tower,
+        r.drawing_tab,
+        r.drawing_name,
+        r.activity_name,
+        r.activity_type,
+        r.start_date,
+        r.end_date,
+        r.status,
+        r.notes || '',
+      ]),
+    ];
+    downloadCsv(`119HS_Programme_${startDate}_${endDate}.csv`, lines);
+  }
+
+  const printHeaderVisible = printLayout && printLayout.header;
+  const legendVisible = printLayout == null || printLayout.legend;
+  const weekendTint = printLayout == null || printLayout.showWeekends;
+  const clash = useMemo(() => detectClash(rows), [rows]);
+
+  return (
+    <div className="plan-print-root" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
+      <div className="plan-no-print" style={{ flexShrink: 0, padding: '12px 14px', borderBottom: `1px solid ${T.hairline}`, background: T.surface }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+          <div>
+            <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Plan</h2>
+            <p style={{ margin: 0, fontSize: 11, color: T.faint }}>
+              Printable programme grid by zone and day
+              {isAdmin ? ' — admins load every drawing tab that has programme items (not only zones).' : ''}
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(26,26,46,0.06)', padding: 3, borderRadius: 8 }}>
+              <button type="button" onClick={() => setViewMode('grid')} style={{ ...S.btn, ...(viewMode === 'grid' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Grid</button>
+              <button type="button" onClick={() => setViewMode('drawing')} style={{ ...S.btn, ...(viewMode === 'drawing' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Drawing</button>
+            </div>
+            {isMobile && (
+              <span style={{ fontSize: 10, color: T.muted, maxWidth: 220, lineHeight: 1.35 }}>
+                For best results, print from a desktop browser.
+              </span>
+            )}
+            <button type="button" onClick={handlePrintClick} style={{ ...S.btn, ...S.btnAct, padding: '8px 14px', fontSize: 12 }}>
+              PRINT
+            </button>
+            <button type="button" onClick={() => setPdfOpen(true)} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
+              EXPORT PDF
+            </button>
+            {isAdmin && (
+              <button type="button" onClick={exportAdminCsv} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
+                EXPORT DATA
+              </button>
+            )}
+            {isAdmin && undoState && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    if (undoState.type === 'zone_rows') {
+                      await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
+                    } else if (undoState.type === 'delete_zone') {
+                      await api.restorePlanZone(undoState.snapshot);
+                    }
+                    setUndoState(null);
+                    await load();
+                  } catch (e) {
+                    window.alert(e?.message || 'Undo failed');
+                  }
+                }}
+                style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}
+              >
+                UNDO
+              </button>
+            )}
+          </div>
+        </div>
+        {isAdmin && (
+          <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.hairline}`, background: 'rgba(66,133,244,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 180 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>
+                Undo Last Change
+              </div>
+              <div style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>
+                {undoState?.label || 'No undo snapshot yet'}
+              </div>
+              {undoState?.at && (
+                <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
+                  Saved {formatShort(new Date(undoState.at))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={!undoState}
+              onClick={async () => {
+                if (!undoState) return;
+                try {
+                  if (undoState.type === 'zone_rows') {
+                    await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
+                  } else if (undoState.type === 'delete_zone') {
+                    await api.restorePlanZone(undoState.snapshot);
+                  }
+                  setUndoState(null);
+                  await load();
+                } catch (e) {
+                  window.alert(e?.message || 'Undo failed');
+                }
+              }}
+              style={{ ...S.btn, ...(!undoState ? {} : S.btnAct), padding: '8px 14px', fontSize: 12, opacity: undoState ? 1 : 0.45 }}
+            >
+              Undo Last
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 8 }}>
+          <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
+            Start
+            <input
+              type="date"
+              value={toHtmlDateInputValue(startDate)}
+              onChange={(e) => {
+                setPreset('custom');
+                setStartDate(e.target.value);
+              }}
+              style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
+            />
+          </label>
+          <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
+            End
+            <input
+              type="date"
+              value={toHtmlDateInputValue(endDate)}
+              onChange={(e) => {
+                setPreset('custom');
+                setEndDate(e.target.value);
+              }}
+              style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
+            />
+          </label>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {['7', '14', '21', '28'].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => applyPreset(p)}
+                  style={{ ...S.btn, ...(preset === p ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
+                >
+                  {p}d
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPreset('custom')}
+                style={{ ...S.btn, ...(preset === 'custom' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
+              >
+                Custom
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Scope</span>
+          <button
+            type="button"
+            disabled={permittedTabs.length === 0}
+            onClick={selectAllScopes}
+            title="Show every programme scope you have access to"
+            style={{
+              ...S.btn,
+              ...(scopeWhitelist === null ? S.btnAct : {}),
+              padding: '6px 10px',
+              fontSize: 11,
+              opacity: permittedTabs.length === 0 ? 0.4 : 1,
+            }}
+          >
+            All
+          </button>
+          {permittedTabs.map((t) => {
+            const active = scopeWhitelist === null || scopeWhitelist.has(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => toggleScopeTab(t)}
+                title={
+                  scopeWhitelist === null
+                    ? 'Click to hide this scope (others stay on)'
+                    : active
+                      ? 'Click to hide'
+                      : 'Click to include'
+                }
+                style={{
+                  ...S.btn,
+                  ...(active ? S.btnAct : {}),
+                  padding: '6px 10px',
+                  fontSize: 11,
+                  opacity: active ? 1 : 0.55,
+                }}
+              >
+                {drawingTabLabel(t)}
+              </button>
+            );
+          })}
+        </div>
+
+        {towersInView.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Towers</span>
+            <button type="button" onClick={selectAllTowers} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }}>
+              All towers
+            </button>
+            {towersInView.map((tw) => {
+              const active = towerWhitelist === null || towerWhitelist.has(tw);
+              return (
+                <button
+                  key={tw}
+                  type="button"
+                  onClick={() => toggleTower(tw)}
+                  style={{ ...S.btn, ...(active ? S.btnAct : {}), padding: '6px 10px', fontSize: 11, opacity: active ? 1 : 0.55 }}
+                >
+                  {tw}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {viewMode === 'drawing' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing date</span>
+            <button type="button" onClick={() => shiftVizDate(-1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Previous day">
+              ← Prev day
+            </button>
+            <input type="date" value={toHtmlDateInputValue(vizDate)} onChange={(e) => setVizDate(e.target.value)} style={{ ...S.input, width: 150, fontSize: 12, padding: '6px 10px' }} />
+            <button type="button" onClick={() => shiftVizDate(1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Next day">
+              Next day →
+            </button>
+            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing</span>
+            <select value={drawingId || ''} onChange={(e) => setDrawingId(Number(e.target.value) || null)} style={{ ...S.input, width: 220, fontSize: 12, padding: '6px 10px' }}>
+              {drawingOptions.length === 0 && <option value="">No drawing in this scope</option>}
+              {drawingOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {loadErr && (
+        <div className="plan-no-print" style={{ padding: '8px 14px', fontSize: 12, color: '#c0392b' }}>
+          {loadErr}
+        </div>
+      )}
+      {clash && dismissedClashKey !== clash.key && (
+        <div className="plan-no-print" style={{ margin: '8px 12px 0', padding: 10, borderRadius: 10, border: '1px solid rgba(244,165,26,0.35)', background: 'rgba(244,165,26,0.12)', fontSize: 12, color: T.text, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+          <span>⚠️ CLASH DETECTED: {zoneRowLabel(clash.rows[0])} and {zoneRowLabel(clash.rows[1])} both have {clash.activity} on {formatShort(new Date(clash.day + 'T12:00:00'))}.</span>
+          <button type="button" onClick={() => setDismissedClashKey(clash.key)} style={{ ...S.btn, padding: '5px 10px', fontSize: 11 }}>DISMISS</button>
+        </div>
+      )}
+
+      {printHeaderVisible && (
+        <div style={{ padding: '12px 14px 8px', flexShrink: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: T.text, letterSpacing: '0.02em' }}>
+            119 HIGH STREET — PROGRAMME WEEK OF {formatShort(new Date(startDate + 'T12:00:00'))} TO{' '}
+            {formatShort(new Date(endDate + 'T12:00:00'))} {new Date(endDate + 'T12:00:00').getFullYear()}
+          </div>
+          <div style={{ fontSize: 10, color: T.muted, marginTop: 4 }}>
+            Printed {formatShort(new Date())} {new Date().getFullYear()} · {dayColumns.length} day column(s)
+          </div>
+        </div>
+      )}
+
+      <div className="plan-grid-scroll" style={{ flex: 1, overflow: 'auto', padding: '0 12px 16px' }}>
+        {zoneBlocks.length === 0 && !loadErr && (
+          <div style={{ padding: 40, textAlign: 'center', color: T.faint, fontSize: 13 }}>No programme rows in this range or filters.</div>
+        )}
+        {viewMode === 'grid' && zoneBlocks.length > 0 && (
+          <table
+            style={{
+              borderCollapse: 'collapse',
+              fontSize: isMobile ? 10 : 11,
+              minWidth: 480,
+              background: T.surface,
+              border: `1px solid ${T.hairline}`,
+              borderRadius: 8,
+              overflow: 'hidden',
+            }}
+          >
+            <thead>
+              <tr>
+                <th
+                  className="plan-zone-col"
+                  style={{
+                    textAlign: 'left',
+                    padding: '8px 10px',
+                    borderBottom: `1px solid ${T.hairline}`,
+                    borderRight: `1px solid ${T.hairline}`,
+                    background: T.surface,
+                    fontWeight: 700,
+                    color: T.text,
+                    minWidth: 140,
+                    maxWidth: 220,
+                    width: 180,
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 3,
+                  }}
+                >
+                  Zone
+                </th>
+                {dayColumns.map((dk) => {
+                  const d = new Date(dk + 'T12:00:00');
+                  const wk = weekendTint && isWeekendKey(dk);
+                  const isToday = dk === todayKey;
+                  return (
+                    <th
+                      key={dk}
+                      style={{
+                        padding: '8px 6px',
+                        borderBottom: `1px solid ${T.hairline}`,
+                        borderLeft: `1px solid ${T.hairline}`,
+                        fontWeight: 700,
+                        color: T.text,
+                        textAlign: 'center',
+                        minWidth: 56,
+                        maxWidth: 72,
+                        background: wk ? 'rgba(26,26,46,0.06)' : T.surface,
+                        boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
+                      }}
+                    >
+                      <div>{formatShort(d)}</div>
+                      <div style={{ fontSize: 9, fontWeight: 600, color: T.faint }}>{d.getDate()}</div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {zoneBlocks.map((z) => (
+                <tr key={z.zone_id}>
+                  <td
+                    className="plan-zone-col"
+                    style={{
+                      padding: '8px 10px',
+                      borderTop: `1px solid ${T.hairline}`,
+                      borderRight: `1px solid ${T.hairline}`,
+                      fontWeight: 600,
+                      color: T.text,
+                      verticalAlign: 'top',
+                      background: T.surface,
+                      lineHeight: 1.25,
+                      position: 'sticky',
+                      left: 0,
+                      zIndex: 2,
+                      boxShadow: '4px 0 8px rgba(26,26,46,0.06)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                      <span>{zoneRowLabel(z)}</span>
+                      {isAdmin && (
+                        <span style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            type="button"
+                            title="Add activity"
+                            style={{ ...S.btn, padding: '2px 6px', fontSize: 11 }}
+                            onClick={async () => {
+                              try {
+                                const actName = window.prompt(`Add activity to ${zoneRowLabel(z)}. Enter activity name exactly:`, '');
+                                if (!actName) return;
+                                const act = activities.find((a) => String(a.name).toLowerCase() === String(actName).trim().toLowerCase());
+                                if (!act) throw new Error('Activity not found');
+                                const start = normalizeToWeekdayStart(window.prompt('Start date (YYYY-MM-DD):', dayColumns[0] || startDate) || '');
+                                const duration = Math.max(1, Number(window.prompt('Duration (working days):', '1')) || 1);
+                                const items = [...z.items].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
+                                const insertAfter = window.prompt('Insert after activity name (blank = at start):', '');
+                                let idx = 0;
+                                if (insertAfter) {
+                                  const afterIdx = items.findIndex((it) => String(it.activity_name).toLowerCase() === insertAfter.trim().toLowerCase());
+                                  idx = afterIdx >= 0 ? afterIdx + 1 : items.length;
+                                }
+                                const end = endOfWorkingSpan(start, duration);
+                                items.splice(idx, 0, {
+                                  id: `tmp_${Date.now()}`,
+                                  zone_id: z.zone_id,
+                                  activity_id: Number(act.id),
+                                  activity_name: act.name,
+                                  start_date: start,
+                                  end_date: end,
+                                  status: 'planned',
+                                  notes: '',
+                                });
+                                let cursor = idx === 0 ? items[0].start_date : nextWorkingDay(items[idx - 1].end_date);
+                                for (let i = idx; i < items.length; i++) {
+                                  const dur = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
+                                  items[i].start_date = normalizeToWeekdayStart(cursor);
+                                  items[i].end_date = endOfWorkingSpan(items[i].start_date, dur);
+                                  cursor = nextWorkingDay(items[i].end_date);
+                                }
+                                await applyZoneRows(z.zone_id, z.items, items);
+                              } catch (e) {
+                                window.alert(e?.message || 'Add failed');
+                              }
+                            }}
+                          >
+                            ＋
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete zone"
+                            style={{ ...S.btn, padding: '2px 6px', fontSize: 11, color: '#c0392b' }}
+                            onClick={async () => {
+                              if (!window.confirm(`Delete ${zoneRowLabel(z)} and all its activities?\nThis cannot be undone.`)) return;
+                              try {
+                                const out = await api.deletePlanZone(z.zone_id);
+                                if (out && out.error) throw new Error(out.error);
+                                setUndoState({
+                                  type: 'delete_zone',
+                                  snapshot: out.snapshot,
+                                  label: `Restore deleted zone ${zoneRowLabel(z)}`,
+                                  at: new Date().toISOString(),
+                                });
+                                await load();
+                              } catch (e) {
+                                window.alert(e?.message || 'Delete zone failed');
+                              }
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  {dayColumns.map((dk) => {
+                    const hits = z.cells[dk] || [];
+                    const wk = weekendTint && isWeekendKey(dk);
+                    return (
+                      <td
+                        key={dk}
+                        style={{
+                          borderTop: `1px solid ${T.hairline}`,
+                          borderLeft: `1px solid ${T.hairline}`,
+                          padding: 2,
+                          verticalAlign: 'top',
+                          minHeight: 36,
+                          height: 36,
+                          background: wk ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
+                        }}
+                        onDragOver={(e) => {
+                          if (isAdmin && dragState) e.preventDefault();
+                        }}
+                        onDrop={async () => {
+                          if (!isAdmin || !dragState) return;
+                          try {
+                            const moved = dragState.item;
+                            if (String(moved.status || '').toLowerCase() === 'done') return;
+                            if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
+                              setDragState(null);
+                              return;
+                            }
+                            const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
+                            const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
+                            if (idx < 0) return;
+                            const dur = countWorkingDaysInclusive(items[idx].start_date, items[idx].end_date);
+                            items[idx].start_date = normalizeToWeekdayStart(dk);
+                            items[idx].end_date = endOfWorkingSpan(items[idx].start_date, dur);
+                            let cursor = nextWorkingDay(items[idx].end_date);
+                            for (let i = idx + 1; i < items.length; i++) {
+                              const d = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
+                              items[i].start_date = normalizeToWeekdayStart(cursor);
+                              items[i].end_date = endOfWorkingSpan(items[i].start_date, d);
+                              cursor = nextWorkingDay(items[i].end_date);
+                            }
+                            await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
+                          } catch (e) {
+                            window.alert(e?.message || 'Move failed');
+                          } finally {
+                            setDragState(null);
+                          }
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
+                          {hits.map((it) => {
+                            const done = String(it.status || '').toLowerCase() === 'done';
+                            const label = abbrevActivity(it.activity_name);
+                            return (
+                              <div
+                                key={it.id}
+                                title={it.activity_name}
+                                draggable={isAdmin && !done}
+                                onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
+                                style={{
+                                  background: actColor(it.activity_name, done ? 0.35 : 0.88),
+                                  color: '#1a1a2e',
+                                  fontWeight: 700,
+                                  fontSize: isMobile ? 9 : 10,
+                                  lineHeight: 1.15,
+                                  padding: '4px 5px',
+                                  borderRadius: 4,
+                                  opacity: done ? 0.72 : 1,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  WebkitPrintColorAdjust: 'exact',
+                                  printColorAdjust: 'exact',
+                                  cursor: isAdmin && !done ? 'grab' : 'default',
+                                }}
+                                onClick={async () => {
+                                  if (!isAdmin || done) return;
+                                  const action = window.prompt(
+                                    `Edit ${it.activity_name} in ${zoneRowLabel(z)}\nType:\n- move YYYY-MM-DD\n- duration N\n- delete`,
+                                    ''
+                                  );
+                                  if (!action) return;
+                                  const items = [...z.items]
+                                    .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+                                    .map((x) => ({ ...x }));
+                                  const idx = items.findIndex((x) => Number(x.id) === Number(it.id));
+                                  if (idx < 0) return;
+                                  const cmd = action.trim().toLowerCase();
+                                  try {
+                                    if (cmd === 'delete') {
+                                      items.splice(idx, 1);
+                                    } else if (cmd.startsWith('move ')) {
+                                      const nk = normalizeToWeekdayStart(action.slice(5).trim());
+                                      const dur = countWorkingDaysInclusive(items[idx].start_date, items[idx].end_date);
+                                      items[idx].start_date = nk;
+                                      items[idx].end_date = endOfWorkingSpan(nk, dur);
+                                    } else if (cmd.startsWith('duration ')) {
+                                      const d = Math.max(1, Number(action.slice(9).trim()) || 1);
+                                      items[idx].end_date = endOfWorkingSpan(items[idx].start_date, d);
+                                    } else {
+                                      window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
+                                      return;
+                                    }
+                                    let from = Math.max(0, idx + (cmd === 'delete' ? 0 : 1));
+                                    if (cmd === 'delete' && idx > 0) from = idx;
+                                    let cursor = from === 0 ? items[0]?.start_date : nextWorkingDay(items[from - 1].end_date);
+                                    for (let i = from; i < items.length; i++) {
+                                      const dur = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
+                                      items[i].start_date = normalizeToWeekdayStart(cursor);
+                                      items[i].end_date = endOfWorkingSpan(items[i].start_date, dur);
+                                      cursor = nextWorkingDay(items[i].end_date);
+                                    }
+                                    await applyZoneRows(z.zone_id, z.items, items);
+                                  } catch (e) {
+                                    window.alert(e?.message || 'Edit failed');
+                                  }
+                                }}
+                              >
+                                {done && <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>}
+                                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {viewMode === 'drawing' && (
+          <div style={{ marginTop: 10, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: 'hidden' }}>
+            {!drawData?.image_data && (
+              <div style={{ padding: 30, textAlign: 'center', color: T.faint, fontSize: 12 }}>
+                No drawing selected for current scope.
+              </div>
+            )}
+            {drawData?.image_data && (
+              <div style={{ position: 'relative', minHeight: 420, background: '#ececf1' }}>
+                <img alt="Plan drawing" src={`data:image/jpeg;base64,${drawData.image_data}`} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+                <svg style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }} viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {drawZones.map((z) => {
+                    const g = parseZoneGeometry(z);
+                    if (!g) return null;
+                    const hit = zoneDayActivity.get(Number(z.id));
+                    const done = String(hit?.status || '').toLowerCase() === 'done';
+                    const zi = drawingZoneColorMeta.byId.get(Number(z.id)) ?? 0;
+                    const zStyles = planZoneDrawingStyles(zi, { done, active: !!hit });
+                    const { fill, stroke, strokeW } = zStyles;
+                    const bb = geomBBox(g, z);
+                    const cx = bb.cx;
+                    const cy = bb.cy;
+                    const minDim = Math.min(bb.w, bb.h);
+                    const fs = zoneLabelFontSize(bb);
+                    const vertical = bb.h > bb.w * 1.15;
+                    let shortLabel = '';
+                    if (hit?.activity_name) {
+                      shortLabel = abbrevActivity(hit.activity_name);
+                    } else if (minDim >= 2.4) {
+                      const zn = String(z.name || '').trim();
+                      shortLabel = zn.length > 10 ? `${zn.slice(0, 9)}…` : zn;
+                    }
+                    const showText = shortLabel && minDim >= 1.6;
+                    const shape = g.kind === 'poly'
+                      ? <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={strokeW} strokeLinejoin="round" />
+                      : <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={fill} stroke={stroke} strokeWidth={strokeW} />;
+                    return (
+                      <g key={z.id}>
+                        {shape}
+                        {showText && (
+                          <text
+                            transform={`translate(${cx},${cy}) rotate(${vertical ? -90 : 0})`}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fill={hit ? T.text : 'rgba(26,26,46,0.55)'}
+                            fontSize={fs}
+                            fontWeight="700"
+                            stroke="rgba(255,255,255,0.88)"
+                            strokeWidth={Math.max(0.04, fs * 0.07)}
+                            paintOrder="stroke fill"
+                            pointerEvents="none"
+                          >
+                            {shortLabel}
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })}
+                </svg>
+                <div
+                  className="plan-drawing-activity-key"
+                  style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 10,
+                    zIndex: 2,
+                    maxWidth: 'min(340px, 55vw)',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    background: 'rgba(255,255,255,0.94)',
+                    border: `1px solid ${T.hairline}`,
+                    boxShadow: '0 4px 18px rgba(26,26,46,0.12)',
+                    pointerEvents: 'none',
+                    WebkitPrintColorAdjust: 'exact',
+                    printColorAdjust: 'exact',
+                  }}
+                >
+                  <div style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 6 }}>
+                    Activities — {formatShort(new Date(vizDate + 'T12:00:00'))}
+                  </div>
+                  {drawingDayLegendEntries.length === 0 ? (
+                    <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.4 }}>No programme activity on this drawing for this date.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {drawingDayLegendEntries.map((entry) => {
+                        const zi = drawingZoneColorMeta.byId.get(entry.key) ?? 0;
+                        const zs = planZoneDrawingStyles(zi, { done: entry.done, active: true });
+                        return (
+                          <div key={entry.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                            <div style={{ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'center', marginTop: 2 }}>
+                              <span
+                                title="Activity colour"
+                                style={{
+                                  width: 5,
+                                  height: 18,
+                                  borderRadius: 2,
+                                  background: actColor(entry.activity_name, 0.92),
+                                  border: `1px solid ${actColor(entry.activity_name, 1)}`,
+                                  WebkitPrintColorAdjust: 'exact',
+                                  printColorAdjust: 'exact',
+                                }}
+                              />
+                              <span
+                                title="Zone colour on drawing"
+                                style={{
+                                  width: 18,
+                                  height: 18,
+                                  borderRadius: 4,
+                                  background: zs.fill,
+                                  border: `2px solid ${zs.stroke}`,
+                                  boxSizing: 'border-box',
+                                  WebkitPrintColorAdjust: 'exact',
+                                  printColorAdjust: 'exact',
+                                }}
+                              />
+                            </div>
+                            <span style={{ fontSize: 11, color: T.text, fontWeight: 600, lineHeight: 1.35 }}>{entry.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 9, color: T.faint, marginTop: 8, lineHeight: 1.35 }}>
+                    Large square = zone tint on plan (unique per zone). Narrow strip = activity type colour.
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {legendVisible && viewMode === 'grid' && legendActs.length > 0 && (
+          <div style={{ marginTop: 14, padding: 12, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 8 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+              Legend
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {legendActs.map((name) => (
+                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 14, height: 14, borderRadius: 4, background: actColor(name, 0.88), WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
+                  <span style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{name}</span>
+                  <span style={{ fontSize: 10, color: T.faint }}>({abbrevActivity(name)})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {pdfOpen && (
+        <div
+          className="plan-no-print"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(26,26,46,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 16,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="plan-pdf-title"
+        >
+          <div style={{ width: 'min(400px,100%)', background: T.surface, borderRadius: 14, border: `1px solid ${T.hairline}`, padding: 18, boxShadow: '0 12px 40px rgba(26,26,46,0.15)' }}>
+            <div id="plan-pdf-title" style={{ fontSize: 16, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+              Export Programme to PDF
+            </div>
+            <p style={{ fontSize: 12, color: T.muted, margin: '0 0 12px', lineHeight: 1.45 }}>
+              Date range:{' '}
+              <strong>{formatShort(new Date(startDate + 'T12:00:00'))}</strong> to{' '}
+              <strong>
+                {formatShort(new Date(endDate + 'T12:00:00'))} {new Date(endDate + 'T12:00:00').getFullYear()}
+              </strong>
+              <br />
+              Days shown: {calendarDaysBetween(startDate, endDate).length}
+            </p>
+            <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>Include:</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={pdfOpts.allZones}
+                onChange={(e) => setPdfOpts((o) => ({ ...o, allZones: e.target.checked }))}
+              />
+              All zones (include rows with no activity in range)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+              <input type="checkbox" checked={pdfOpts.legend} onChange={(e) => setPdfOpts((o) => ({ ...o, legend: e.target.checked }))} />
+              Legend
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+              <input type="checkbox" checked={pdfOpts.header} onChange={(e) => setPdfOpts((o) => ({ ...o, header: e.target.checked }))} />
+              Page header
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 12, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={pdfOpts.showWeekends}
+                onChange={(e) => setPdfOpts((o) => ({ ...o, showWeekends: e.target.checked }))}
+              />
+              Show weekends
+            </label>
+            <p style={{ fontSize: 10, color: T.faint, margin: '0 0 14px', lineHeight: 1.4 }}>
+              Uses your browser print dialog → choose “Save as PDF”. Suggested filename:{' '}
+              <code style={{ fontSize: 10 }}>119HS_Programme_{startDate}_{endDate}.pdf</code>
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setPdfOpen(false)} style={{ ...S.btn, padding: '10px 16px' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={confirmPdfExport} style={{ ...S.btn, ...S.btnAct, padding: '10px 16px' }}>
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

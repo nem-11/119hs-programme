@@ -1,8 +1,26 @@
-import React,{useState,useEffect,useRef,useCallback} from 'react';
+import React,{useState,useEffect,useRef,useCallback,useMemo} from 'react';
 import * as api from './api';
 import {T,S} from './uiTheme';
 import {parseZoneGeometry,svgPolygonPoints,pointInGeom} from './zoneGeom';
-import {toHtmlDateInputValue} from './constants';
+import {toHtmlDateInputValue,actColor,dateKey,PROJECT_PROGRAMME_TAB,drawingTabLabel} from './constants';
+import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
+import {
+  buildRowsFromTemplate,
+  addCalendarDays,
+} from './programmeSchedule';
+import ScheduleFromTargetModal from './ScheduleFromTargetModal';
+import ProgrammeNlCommand from './ProgrammeNlCommand';
+
+function sortZoneActs(z){
+  return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
+}
+
+function primaryZoneActivityName(z, idToName){
+  const acts=sortZoneActs(z);
+  if(acts.length)return acts[0].name;
+  if(z.activity_id)return idToName(z.activity_id);
+  return '';
+}
 
 function clientToPct(e,el){
   if(!el)return[0,0];
@@ -13,28 +31,92 @@ function clientToPct(e,el){
 
 const STATUSES=['planned','active','done','on-hold'];
 
-export default function ProgrammePage({tab,canEdit,onScheduleChanged}){
-  const typeTab=tab==='groundworks'?'groundworks':'internals';
+/** Tower then zone name, with numeric chunks sorted naturally (Pour 2 before Pour 10). */
+function compareZones(a,b){
+  const opt={numeric:true,sensitivity:'base'};
+  const tw=String(a.tower||'').localeCompare(String(b.tower||''),undefined,opt);
+  if(tw!==0)return tw;
+  return String(a.name||'').localeCompare(String(b.name||''),undefined,opt);
+}
+
+const tableHead={
+  display:'grid',
+  gridTemplateColumns:'minmax(0,1.2fr) 88px 88px 72px 52px',
+  gap:6,
+  alignItems:'center',
+  fontSize:9,
+  fontWeight:700,
+  color:T.faint,
+  textTransform:'uppercase',
+  letterSpacing:'0.05em',
+  marginBottom:6,
+};
+
+export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneSetup,zoneSetupAvailable=true,isAdmin=false}){
+  const typeTab=['groundworks','internals',PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
   const[drawings,setDrawings]=useState([]);
   const[selDraw,setSelDraw]=useState(null);
   const[drawData,setDrawData]=useState(null);
   const[zones,setZones]=useState([]);
   const[activities,setActivities]=useState([]);
+  const[templates,setTemplates]=useState([]);
   const[selectedId,setSelectedId]=useState(null);
   const[items,setItems]=useState([]);
   const[loadingItems,setLoadingItems]=useState(false);
-  const[form,setForm]=useState({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
-  const[editingId,setEditingId]=useState(null);
+
+  const[schedTpl,setSchedTpl]=useState('');
+  const[startStageIdx,setStartStageIdx]=useState(0);
+  const[anchorDate,setAnchorDate]=useState(()=>dateKey(new Date()));
+  const[draftRows,setDraftRows]=useState([]);
+  const[reviewMode,setReviewMode]=useState(false);
+  const[showManual,setShowManual]=useState(false);
+  const[manualForm,setManualForm]=useState({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
+  const[shiftDays,setShiftDays]=useState(0);
+  const[bulk,setBulk]=useState({});
+  const[saving,setSaving]=useState(false);
+  const[targetModalOpen,setTargetModalOpen]=useState(false);
+
   const wrapRef=useRef(null);
 
   const filteredActs=activities.filter(a=>a.type===typeTab);
   const selectedZone=zones.find(z=>z.id===selectedId);
+  const tabDrawings=(drawings||[]).filter(d=>d.tab===tab);
+  const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
+  const hasFloorPlan=Boolean(selDraw&&drawData?.image_data);
+
+  const activityIdByName=useMemo(()=>new Map(filteredActs.map(a=>[a.name,a.id])),[filteredActs]);
+  const zonesSorted=useMemo(()=>[...zones].sort(compareZones),[zones]);
+
+  const zonesCta=
+    typeof onGoToZoneSetup==='function' ? (
+      <button type="button" onClick={onGoToZoneSetup} style={{...S.btn,...S.btnAct,padding:'12px 20px',fontSize:13,fontWeight:700}}>
+        Go to Zones setup →
+      </button>
+    ) : null;
+
+  const canvasNoPlan=(
+    <div style={{textAlign:'center',padding:32,maxWidth:400,margin:'0 auto'}}>
+      <div style={{fontSize:16,fontWeight:700,color:T.text,marginBottom:8}}>No drawing for {drawingTabLabel(tab)}</div>
+      <div style={{fontSize:12,color:T.muted,lineHeight:1.5,marginBottom:16}}>
+        {tab===PROJECT_PROGRAMME_TAB
+          ? (zoneSetupAvailable
+              ? 'On Zones, upload a one-page programme PDF or any placeholder image, add logical rows (towers / packages / milestones) as zones, then schedule here. This scope feeds Plan and Gantt alongside floor drawings.'
+              : 'An administrator should upload a drawing for Project programme and define zones.')
+          : (zoneSetupAvailable
+              ? 'Upload a plan on Zones, mark zones on the drawing, then return here to link programme dates to each zone.'
+              : 'An administrator must upload a floor plan and define zones before scheduling here. Use Plan to view the programme by zone.')}
+      </div>
+      {zonesCta}
+    </div>
+  );
 
   const reloadDrawings=useCallback(()=>{
     api.getDrawings().then(d=>{
       setDrawings(d||[]);
       const f=(d||[]).filter(x=>x.tab===tab);
-      setSelDraw(p=>{
+      setSelDraw((p)=>{
+        const saved=readSavedDrawingId(tab,f);
+        if(saved!=null)return saved;
         if(p&&f.some(x=>x.id===p))return p;
         return f.length?f[0].id:null;
       });
@@ -43,11 +125,35 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged}){
 
   useEffect(()=>{reloadDrawings()},[reloadDrawings]);
   useEffect(()=>{api.getActivities().then(a=>setActivities(a||[]))},[]);
+  useEffect(()=>{api.getTemplates().then(t=>setTemplates(t||[]))},[]);
+
   useEffect(()=>{
     if(!selDraw){setDrawData(null);setZones([]);return}
     api.getDrawing(selDraw).then(d=>setDrawData(d));
     api.getZonesForDrawing(selDraw).then(z=>setZones(z||[]));
   },[selDraw]);
+
+  useEffect(()=>{
+    setSchedTpl('');
+    setStartStageIdx(0);
+    setAnchorDate(dateKey(new Date()));
+    setDraftRows([]);
+    setReviewMode(false);
+    setShowManual(false);
+    setManualForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
+    setTargetModalOpen(false);
+    loadItemsForZone(selectedId);
+  },[selectedId]);
+
+  useEffect(()=>{
+    setBulk((prev)=>{
+      const next={};
+      for(const z of zones){
+        next[z.id]=prev[z.id]||{templateId:'',stageIdx:0,startDate:dateKey(new Date())};
+      }
+      return next;
+    });
+  },[zones]);
 
   async function loadItemsForZone(zid){
     if(!zid){setItems([]);return}
@@ -57,50 +163,102 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged}){
     setLoadingItems(false);
   }
 
-  useEffect(()=>{
-    setEditingId(null);
-    setForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
-    loadItemsForZone(selectedId);
-  },[selectedId]);
-
-  function onCanvasClick(e){
-    if(!drawData||!wrapRef.current)return;
-    const[pctX,pctY]=clientToPct(e,wrapRef.current);
-    for(let i=zones.length-1;i>=0;i--){
-      const z=zones[i],g=parseZoneGeometry(z);
-      if(pointInGeom(pctX,pctY,g)){setSelectedId(z.id);return}
-    }
-    setSelectedId(null);
-  }
-
   function activityName(id){
     const a=activities.find(x=>Number(x.id)===Number(id));
     return a?a.name:'';
   }
 
-  async function submitItem(e){
-    e.preventDefault();
-    if(!canEdit||!selectedId||!form.activity_id||!form.start_date||!form.end_date)return;
-    if(editingId){
-      await api.updateProgrammeItem(editingId,{activity_id:Number(form.activity_id),start_date:form.start_date,end_date:form.end_date,status:form.status,notes:form.notes});
-    }else{
-      await api.createProgrammeItem(selectedId,Number(form.activity_id),form.start_date,form.end_date,form.status,form.notes);
+  const selectedTpl=tabTemplates.find(t=>String(t.id)===schedTpl);
+  let tplSeq=[],tplDur=[];
+  try{tplSeq=JSON.parse(selectedTpl?.sequence||'[]')}catch(_){}
+  try{tplDur=JSON.parse(selectedTpl?.durations||'[]')}catch(_){}
+
+  function runGenerate(){
+    if(!schedTpl||!selectedTpl)return;
+    if(items.length>0&&!window.confirm('Replace all existing programme rows for this zone with the generated schedule?'))return;
+    const rows=buildRowsFromTemplate({
+      sequence:tplSeq,
+      durations:tplDur,
+      startStageIndex:startStageIdx,
+      startDateKey:anchorDate,
+      activityIdByName,
+    });
+    const missing=rows.filter(r=>!r.activity_id).map(r=>r.activity_name);
+    if(missing.length){
+      window.alert(`Unknown activities (add them in the database or fix template names): ${missing.join(', ')}`);
+    }
+    setDraftRows(rows);
+    setReviewMode(true);
+  }
+
+  async function saveDraftRows(){
+    if(!canEdit||!selectedId||draftRows.length===0)return;
+    if(draftRows.some(r=>!r.activity_id)){
+      window.alert('Every row needs a matching activity. Fix or remove rows with missing activities.');
+      return;
+    }
+    setSaving(true);
+    try{
+      const existing=await api.getProgrammeItemsByZone(selectedId);
+      for(const it of existing)await api.deleteProgrammeItem(it.id);
+      for(const row of draftRows){
+        await api.createProgrammeItem(
+          selectedId,
+          row.activity_id,
+          row.start_date,
+          row.end_date,
+          row.status||'planned',
+          row.notes||''
+        );
+      }
+      if(schedTpl){
+        await api.updateZone(selectedId,{
+          source_template_id:Number(schedTpl),
+          programme_stage_idx:startStageIdx,
+          programme_anchor_date:anchorDate,
+        });
+      }
+      if(onScheduleChanged)await onScheduleChanged();
+      setReviewMode(false);
+      setDraftRows([]);
+      await loadItemsForZone(selectedId);
+    }finally{
+      setSaving(false);
+    }
+  }
+
+  async function applyShift(){
+    if(!canEdit||!selectedId)return;
+    const delta=Number(shiftDays)||0;
+    if(delta===0)return;
+    const planned=items.filter(it=>it.status==='planned');
+    if(planned.length===0)return;
+    for(const it of planned){
+      await api.updateProgrammeItem(it.id,{
+        start_date:addCalendarDays(it.start_date,delta),
+        end_date:addCalendarDays(it.end_date,delta),
+      });
     }
     if(onScheduleChanged)await onScheduleChanged();
-    setEditingId(null);
-    setForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
+    setShiftDays(0);
     await loadItemsForZone(selectedId);
   }
 
-  function startEdit(it){
-    setEditingId(it.id);
-    setForm({
-      activity_id:String(it.activity_id),
-      start_date:toHtmlDateInputValue(it.start_date),
-      end_date:toHtmlDateInputValue(it.end_date),
-      status:it.status||'planned',
-      notes:it.notes||'',
-    });
+  async function submitManual(e){
+    e.preventDefault();
+    if(!canEdit||!selectedId||!manualForm.activity_id||!manualForm.start_date||!manualForm.end_date)return;
+    await api.createProgrammeItem(
+      selectedId,
+      Number(manualForm.activity_id),
+      manualForm.start_date,
+      manualForm.end_date,
+      manualForm.status,
+      manualForm.notes
+    );
+    if(onScheduleChanged)await onScheduleChanged();
+    setManualForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
+    setShowManual(false);
+    await loadItemsForZone(selectedId);
   }
 
   async function removeItem(id){
@@ -108,33 +266,125 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged}){
     await api.deleteProgrammeItem(id);
     if(onScheduleChanged)await onScheduleChanged();
     await loadItemsForZone(selectedId);
-    if(editingId===id){setEditingId(null);setForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''})}
+  }
+
+  async function patchItem(id,patch){
+    if(!canEdit)return;
+    await api.updateProgrammeItem(id,patch);
+    if(onScheduleChanged)await onScheduleChanged();
+    await loadItemsForZone(selectedId);
+  }
+
+  async function generateAllZones(){
+    if(!canEdit||zones.length===0)return;
+    if(reviewMode&&draftRows.length>0&&!window.confirm('You have an unsaved preview for the selected zone. Continue with Generate all anyway?'))return;
+    const todo=[...zones].filter(z=>{
+      const b=bulk[z.id];
+      return b?.templateId;
+    }).sort(compareZones);
+    if(todo.length===0){
+      window.alert('Choose a template for at least one zone.');
+      return;
+    }
+    if(!window.confirm(`Generate programme for ${todo.length} zone(s)? Existing programme rows for those zones will be replaced.`))return;
+    setSaving(true);
+    try{
+      for(const z of todo){
+        const b=bulk[z.id];
+        const t=templates.find(x=>String(x.id)===b.templateId);
+        if(!t)continue;
+        let seq=[],dur=[];
+        try{seq=JSON.parse(t.sequence||'[]')}catch(_){}
+        try{dur=JSON.parse(t.durations||'[]')}catch(_){}
+        const rows=buildRowsFromTemplate({
+          sequence:seq,
+          durations:dur,
+          startStageIndex:b.stageIdx,
+          startDateKey:b.startDate||dateKey(new Date()),
+          activityIdByName,
+        });
+        const existing=await api.getProgrammeItemsByZone(z.id);
+        for(const it of existing)await api.deleteProgrammeItem(it.id);
+        for(const row of rows){
+          if(row.activity_id){
+            await api.createProgrammeItem(z.id,row.activity_id,row.start_date,row.end_date,row.status,row.notes||'');
+          }
+        }
+        await api.updateZone(z.id,{
+          source_template_id:Number(b.templateId),
+          programme_stage_idx:b.stageIdx,
+          programme_anchor_date:b.startDate||dateKey(new Date()),
+        });
+      }
+      if(onScheduleChanged)await onScheduleChanged();
+      if(selectedId)await loadItemsForZone(selectedId);
+    }finally{
+      setSaving(false);
+    }
+  }
+
+  function patchDraft(i,field,val){
+    setDraftRows((r)=>r.map((row,j)=>(j===i?{...row,[field]:val}:row)));
+  }
+
+  const plannedCount=items.filter(it=>it.status==='planned').length;
+
+  function discardReviewIfNeeded(){
+    if(reviewMode&&draftRows.length>0){
+      if(!window.confirm('Discard this generated preview? Your programme on disk is unchanged until you Save all.'))return false;
+      setReviewMode(false);
+      setDraftRows([]);
+    }
+    return true;
+  }
+
+  function selectZone(id){
+    if(id!=null&&Number(id)===Number(selectedId))return;
+    if(!discardReviewIfNeeded())return;
+    setSelectedId(id);
+  }
+
+  function clearZoneSelection(){
+    if(!discardReviewIfNeeded())return;
+    setSelectedId(null);
+  }
+
+  function onCanvasClick(e){
+    if(!drawData||!wrapRef.current)return;
+    const[pctX,pctY]=clientToPct(e,wrapRef.current);
+    for(let i=zonesSorted.length-1;i>=0;i--){
+      const z=zonesSorted[i],g=parseZoneGeometry(z);
+      if(pointInGeom(pctX,pctY,g)){selectZone(z.id);return}
+    }
+    clearZoneSelection();
   }
 
   return(
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg}}>
+      {isAdmin&&<ProgrammeNlCommand onApplied={onScheduleChanged}/>}
       <div style={{padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        {drawings.filter(d=>d.tab===tab).length>0&&(
-          <select value={selDraw||''} onChange={e=>setSelDraw(Number(e.target.value))} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
-            {drawings.filter(d=>d.tab===tab).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+        {tabDrawings.length>0&&(
+          <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
+            {tabDrawings.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         )}
-        <span style={{fontSize:11,color:T.muted}}>Click a zone on the drawing, then add programme dates below.</span>
+        <span style={{fontSize:11,color:T.muted}}>{hasFloorPlan?'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.':zoneSetupAvailable?'Add a plan on Zones to use this screen.':'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}</span>
       </div>
       <div style={{flex:1,display:'flex',flexDirection:'row',minHeight:0}}>
-        <div style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',display:'flex',alignItems:'center',justifyContent:'center'}}
+        <div style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',minHeight:0}}
           ref={wrapRef}
           onClick={onCanvasClick}
         >
           {drawData?.image_data?(
             <>
-              <img alt="Plan" draggable={false} src={`data:image/jpeg;base64,${drawData.image_data}`} style={{maxWidth:'100%',maxHeight:'100%',objectFit:'contain',userSelect:'none',pointerEvents:'none'}}/>
-              <svg style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
-                {zones.map(z=>{
+              <div style={{position:'absolute',inset:0}}>
+                <img alt="Plan" draggable={false} src={`data:image/jpeg;base64,${drawData.image_data}`} style={{width:'100%',height:'100%',objectFit:'fill',display:'block',userSelect:'none',pointerEvents:'none'}}/>
+                <svg style={{position:'absolute',left:0,top:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
+                {zonesSorted.map(z=>{
                   const g=parseZoneGeometry(z),sel=z.id===selectedId;
-                  const actNm=z.activity_id?activityName(z.activity_id):'';
-                  const fill=sel?'rgba(46,178,96,0.12)':'rgba(66,133,244,0.06)';
-                  const stroke=sel?'rgba(46,178,96,0.9)':'rgba(66,133,244,0.4)';
+                  const actNm=primaryZoneActivityName(z,activityName);
+                  const fill=sel?(actNm?actColor(actNm,0.14):'rgba(120,120,130,0.12)'):(actNm?actColor(actNm,0.07):'rgba(120,120,130,0.06)');
+                  const stroke=sel?(actNm?actColor(actNm,0.88):'rgba(90,90,100,0.85)'):(actNm?actColor(actNm,0.4):'rgba(90,90,100,0.35)');
                   const bb=g.kind==='rect'?g:{x:z.x,y:z.y,w:z.w,h:z.h};
                   const cx=(bb.x||0)+(bb.w||0)/2,cy=(bb.y||0)+(bb.h||0)/2;
                   const frag=g.kind==='rect'?(
@@ -142,55 +392,235 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged}){
                   ):(
                     <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={0.35}/>
                   );
+                  const nActs=sortZoneActs(z).length;
                   return<g key={z.id}>{frag}
                     <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fill={T.text} fontSize={2.2} fontWeight="700" style={{pointerEvents:'none',textShadow:'0 0 2px #fff'}}>
-                      {z.tower} {z.name}{actNm?` · ${actNm}`:''}
+                      {z.tower} {z.name}{actNm?` · ${actNm}${nActs>1?` (+${nActs-1})`:''}`:''}
                     </text>
                   </g>;
                 })}
               </svg>
+              </div>
             </>
-          ):(
-            <div style={{padding:24,color:T.faint,fontSize:13}}>No drawing — complete Zone Setup first.</div>
-          )}
+          ):canvasNoPlan}
         </div>
-        <div style={{width:320,maxWidth:'42%',flexShrink:0,borderLeft:`1px solid ${T.hairline}`,background:T.surface,overflowY:'auto',padding:12}}>
-          {!selectedId&&<div style={{fontSize:13,color:T.muted}}>Select a zone on the plan.</div>}
+        <div style={{width:'min(440px,46vw)',minWidth:280,maxWidth:'100%',flexShrink:0,borderLeft:`1px solid ${T.hairline}`,background:T.surface,overflowY:'auto',padding:12}}>
+          {!hasFloorPlan&&(
+            <div>
+              <p style={{fontSize:12,color:T.muted,lineHeight:1.45,margin:'0 0 12px'}}>{zoneSetupAvailable?'Zones defines the drawing and shapes. Programme links dates to each zone.':'Programme links dates to each zone once a floor plan exists. Coordinate with an administrator to upload drawings and zones — use Plan to see the programme layout.'}</p>
+              {zonesCta}
+            </div>
+          )}
+
+          {hasFloorPlan&&!selectedId&&zones.length>0&&canEdit&&tabTemplates.length>0&&(
+            <div style={{marginBottom:16,padding:12,borderRadius:12,border:`1px solid ${T.hairline}`,background:T.bg}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:8}}>Schedule all zones</div>
+              <p style={{fontSize:11,color:T.muted,margin:'0 0 10px',lineHeight:1.45}}>Set template and start stage per zone, then generate every programme in one pass.</p>
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,color:T.text}}>
+                  <thead>
+                    <tr style={{textAlign:'left',color:T.muted,fontSize:9,textTransform:'uppercase'}}>
+                      <th style={{padding:'6px 4px'}}>Zone</th>
+                      <th style={{padding:'6px 4px'}}>Template</th>
+                      <th style={{padding:'6px 4px'}}>Stage #</th>
+                      <th style={{padding:'6px 4px'}}>Start date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {zonesSorted.map(z=>{
+                      const b=bulk[z.id]||{templateId:'',stageIdx:0,startDate:dateKey(new Date())};
+                      const tpl=b.templateId?tabTemplates.find(t=>String(t.id)===b.templateId):null;
+                      let bulkSeq=[];
+                      try{
+                        bulkSeq=JSON.parse(tpl?.sequence||'[]');
+                        if(!Array.isArray(bulkSeq))bulkSeq=[];
+                      }catch(_){bulkSeq=[]}
+                      return<tr key={z.id}>
+                        <td style={{padding:'6px 4px',verticalAlign:'middle',color:T.text,fontWeight:600,fontSize:12}}>{z.tower} {z.name}</td>
+                        <td style={{padding:'4px',verticalAlign:'middle'}}>
+                          <select value={b.templateId} onChange={e=>setBulk(o=>({...o,[z.id]:{...b,templateId:e.target.value,stageIdx:0}}))} style={{...S.input,fontSize:10,padding:'4px 6px',width:'100%',minWidth:100}}>
+                            <option value="">—</option>
+                            {tabTemplates.map(t=><option key={t.id} value={String(t.id)}>{t.name}</option>)}
+                          </select>
+                        </td>
+                        <td style={{padding:'4px',verticalAlign:'middle'}}>
+                          <select value={Math.min(b.stageIdx,Math.max(0,bulkSeq.length-1))} disabled={!bulkSeq.length} onChange={e=>setBulk(o=>({...o,[z.id]:{...b,stageIdx:Number(e.target.value)}}))} style={{...S.input,fontSize:10,padding:'4px',width:'100%',minWidth:120}}>
+                            {!bulkSeq.length&&<option value={0}>—</option>}
+                            {bulkSeq.map((name,i)=><option key={i} value={i}>{i+1}. {name}</option>)}
+                          </select>
+                        </td>
+                        <td style={{padding:'4px',verticalAlign:'middle'}}>
+                          <input type="date" value={toHtmlDateInputValue(b.startDate)} onChange={e=>setBulk(o=>({...o,[z.id]:{...b,startDate:e.target.value}}))} style={{...S.input,fontSize:10,padding:'4px'}}/>
+                        </td>
+                      </tr>;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" disabled={saving} onClick={()=>void generateAllZones()} style={{...S.btn,...S.btnAct,marginTop:10,width:'100%',padding:'10px',fontSize:12}}>{saving?'Working…':'Generate all'}</button>
+            </div>
+          )}
+
+          {hasFloorPlan&&!selectedId&&<div style={{fontSize:13,color:T.muted}}>Select a zone on the plan for single-zone scheduling.</div>}
+
           {selectedZone&&<>
             <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>{selectedZone.tower} {selectedZone.name}</div>
-            {selectedZone.activity_id&&<div style={{marginBottom:12}}><span style={S.pill(activityName(selectedZone.activity_id))}>{activityName(selectedZone.activity_id)}</span></div>}
-            <h4 style={{...S.section,marginTop:4}}>Programme items</h4>
-            {loadingItems&&<div style={{fontSize:12,color:T.faint}}>Loading…</div>}
-            {!loadingItems&&items.length===0&&<div style={{fontSize:12,color:T.faint,marginBottom:10}}>No programme rows yet.</div>}
-            {items.map(it=>(
-              <div key={it.id} style={{padding:10,borderRadius:10,border:`1px solid ${T.hairline}`,marginBottom:8,background:T.bg}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.text}}>{it.activity_name}</div>
-                <div style={{fontSize:11,color:T.muted}}>{it.start_date} → {it.end_date}</div>
-                <div style={{fontSize:10,color:T.faint,marginTop:4}}>{it.status}{it.notes?` · ${it.notes}`:''}</div>
-                {canEdit&&<div style={{marginTop:8,display:'flex',gap:6}}>
-                  <button type="button" onClick={()=>startEdit(it)} style={{...S.btn,padding:'4px 10px',fontSize:10}}>Edit</button>
-                  <button type="button" onClick={()=>removeItem(it.id)} style={{...S.btn,padding:'4px 10px',fontSize:10,color:'#c0392b'}}>Delete</button>
-                </div>}
+            {sortZoneActs(selectedZone).length>0?(
+              <div style={{marginBottom:12,display:'flex',flexWrap:'wrap',gap:4}}>
+                {sortZoneActs(selectedZone).map(a=><span key={a.id} style={S.pill(a.name)}>{a.name}</span>)}
               </div>
-            ))}
-            {canEdit&&(
-              <form onSubmit={submitItem} style={{marginTop:12,padding:12,borderRadius:12,border:`1px solid rgba(66,133,244,0.25)`,background:'rgba(66,133,244,0.04)'}}>
-                <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>{editingId?'Update row':'Add row'}</div>
-                <select required value={form.activity_id} onChange={e=>setForm(f=>({...f,activity_id:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}>
-                  <option value="">Activity</option>
-                  {filteredActs.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-                <input required type="date" value={toHtmlDateInputValue(form.start_date)} onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}/>
-                <input required type="date" value={toHtmlDateInputValue(form.end_date)} onChange={e=>setForm(f=>({...f,end_date:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}/>
-                <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}>
-                  {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
-                </select>
-                <input value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Notes" style={{...S.input,fontSize:12,marginBottom:10}}/>
-                <div style={{display:'flex',gap:8}}>
-                  <button type="submit" style={{...S.btn,...S.btnAct,flex:1}}>{editingId?'Save':'Add'}</button>
-                  {editingId&&<button type="button" onClick={()=>{setEditingId(null);setForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''})}} style={S.btn}>Cancel</button>}
+            ):selectedZone.activity_id?(
+              <div style={{marginBottom:12}}><span style={S.pill(activityName(selectedZone.activity_id))}>{activityName(selectedZone.activity_id)}</span></div>
+            ):null}
+
+            {!reviewMode&&(
+              <>
+                <div style={{padding:12,borderRadius:12,border:`1px solid rgba(66,133,244,0.25)`,background:'rgba(66,133,244,0.04)',marginBottom:12}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:10}}>Template schedule</div>
+                  <label style={{fontSize:10,color:T.muted,display:'block',marginBottom:4}}>Template</label>
+                  <select value={schedTpl} onChange={e=>{setSchedTpl(e.target.value);setStartStageIdx(0)}} style={{...S.input,fontSize:12,marginBottom:10,width:'100%'}}>
+                    <option value="">Choose template…</option>
+                    {tabTemplates.map(t=><option key={t.id} value={String(t.id)}>{t.name}</option>)}
+                  </select>
+                  {schedTpl&&tplSeq.length>0&&(
+                    <>
+                      <label style={{fontSize:10,color:T.muted,display:'block',marginBottom:6}}>Start from stage</label>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:10,maxHeight:120,overflowY:'auto'}}>
+                        {tplSeq.map((name,i)=>(
+                          <button key={i} type="button" onClick={()=>setStartStageIdx(i)} style={{
+                            ...S.btn,padding:'6px 10px',fontSize:10,maxWidth:'100%',textAlign:'left',
+                            ...(i===startStageIdx?S.btnAct:{}),
+                            opacity:i===startStageIdx?1:0.85,
+                          }}>
+                            <span style={{fontWeight:700,marginRight:6,color:T.faint}}>{i+1}.</span>{name}
+                          </button>
+                        ))}
+                      </div>
+                      <label style={{fontSize:10,color:T.muted,display:'block',marginBottom:4}}>Start date (first weekday of selected stage)</label>
+                      <input type="date" value={toHtmlDateInputValue(anchorDate)} onChange={e=>setAnchorDate(e.target.value)} style={{...S.input,fontSize:12,marginBottom:10,width:'100%'}}/>
+                      <button type="button" disabled={!schedTpl||saving} onClick={runGenerate} style={{...S.btn,...S.btnAct,width:'100%',padding:'10px',fontSize:12}}>Generate programme</button>
+                      {isAdmin&&(
+                        <button type="button" disabled={saving} onClick={()=>setTargetModalOpen(true)} style={{...S.btn,marginTop:10,width:'100%',padding:'10px',fontSize:12,border:`1px solid rgba(66,133,244,0.35)`,background:'rgba(66,133,244,0.08)'}}>
+                          Schedule from target date
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
-              </form>
+
+                {loadingItems&&<div style={{fontSize:12,color:T.faint}}>Loading…</div>}
+
+                {isAdmin&&!reviewMode&&schedTpl&&tplSeq.length>0&&(
+                  <ScheduleFromTargetModal
+                    open={targetModalOpen}
+                    onClose={()=>setTargetModalOpen(false)}
+                    zoneId={selectedId}
+                    zoneTitle={selectedZone?`${selectedZone.tower} ${selectedZone.name}`:''}
+                    templateId={schedTpl?Number(schedTpl):null}
+                    templateName={selectedTpl?.name||''}
+                    sequence={tplSeq}
+                    durations={tplDur}
+                    activityIdByName={activityIdByName}
+                    existingItems={items}
+                    onApplied={async()=>{
+                      if(onScheduleChanged)await onScheduleChanged();
+                      await loadItemsForZone(selectedId);
+                    }}
+                  />
+                )}
+
+                {!loadingItems&&items.length>0&&canEdit&&plannedCount>0&&(
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+                    <span style={{fontSize:11,fontWeight:600,color:T.text}}>Shift planned dates</span>
+                    <input type="number" value={shiftDays} onChange={e=>setShiftDays(Number(e.target.value))} style={{...S.input,width:64,padding:'6px',fontSize:12}} placeholder="±"/>
+                    <span style={{fontSize:11,color:T.muted}}>calendar days</span>
+                    <button type="button" onClick={()=>void applyShift()} style={{...S.btn,padding:'6px 12px',fontSize:11}}>Apply</button>
+                    <span style={{fontSize:10,color:T.faint}}>({plannedCount} planned)</span>
+                  </div>
+                )}
+
+                {!loadingItems&&items.length>0&&!reviewMode&&(
+                  <div style={{marginBottom:12}}>
+                    <div style={tableHead}>
+                      <span>Activity</span><span>Start</span><span>End</span><span>Status</span><span/>
+                    </div>
+                    {items.map(it=>(
+                      <div key={it.id} style={{...tableHead,gridTemplateColumns:'minmax(0,1.2fr) 88px 88px 72px 52px',fontSize:10,fontWeight:400,color:T.text,marginBottom:4}}>
+                        <span style={{fontWeight:600}}>{it.activity_name}</span>
+                        {canEdit?(
+                          <>
+                            <input type="date" value={toHtmlDateInputValue(it.start_date)} onChange={e=>patchItem(it.id,{start_date:e.target.value})} style={{...S.input,padding:'4px',fontSize:10}}/>
+                            <input type="date" value={toHtmlDateInputValue(it.end_date)} onChange={e=>patchItem(it.id,{end_date:e.target.value})} style={{...S.input,padding:'4px',fontSize:10}}/>
+                            <select value={it.status||'planned'} onChange={e=>patchItem(it.id,{status:e.target.value})} style={{...S.input,padding:'4px',fontSize:10}}>
+                              {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </>
+                        ):(
+                          <>
+                            <span>{it.start_date}</span><span>{it.end_date}</span><span>{it.status}</span>
+                          </>
+                        )}
+                        {canEdit&&<button type="button" onClick={()=>removeItem(it.id)} style={{...S.btn,padding:'4px',fontSize:10,color:'#c0392b'}}>×</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!loadingItems&&items.length===0&&!reviewMode&&<div style={{fontSize:12,color:T.faint,marginBottom:10}}>No programme rows yet — pick a template above or add manually.</div>}
+              </>
+            )}
+
+            {reviewMode&&draftRows.length>0&&(
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Review schedule</div>
+                <div style={tableHead}>
+                  <span>Activity</span><span>Start</span><span>End</span><span>Status</span><span/>
+                </div>
+                {draftRows.map((row,i)=>(
+                  <div key={row.idx} style={{...tableHead,marginBottom:4}}>
+                    <span style={{fontSize:10,fontWeight:600}}>{row.activity_name}{!row.activity_id?' (!)':''}</span>
+                    <input type="date" value={toHtmlDateInputValue(row.start_date)} onChange={e=>patchDraft(i,'start_date',e.target.value)} style={{...S.input,padding:'4px',fontSize:10}}/>
+                    <input type="date" value={toHtmlDateInputValue(row.end_date)} onChange={e=>patchDraft(i,'end_date',e.target.value)} style={{...S.input,padding:'4px',fontSize:10}}/>
+                    <select value={row.status} onChange={e=>patchDraft(i,'status',e.target.value)} style={{...S.input,padding:'4px',fontSize:10}}>
+                      {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <span/>
+                  </div>
+                ))}
+                <div style={{display:'flex',gap:8,marginTop:10}}>
+                  <button type="button" disabled={saving} onClick={()=>void saveDraftRows()} style={{...S.btn,...S.btnAct,flex:1,padding:'10px',fontSize:12}}>{saving?'Saving…':'Save all'}</button>
+                  <button type="button" onClick={()=>{setReviewMode(false);setDraftRows([])}} style={{...S.btn,flex:1}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {canEdit&&!reviewMode&&(
+              <>
+                {!showManual&&(
+                  <button type="button" onClick={()=>setShowManual(true)} style={{...S.btn,padding:'8px 0',fontSize:11,background:'transparent',color:'rgba(66,133,244,0.95)',marginTop:8}}>
+                    + Add individual row
+                  </button>
+                )}
+                {showManual&&(
+                  <form onSubmit={submitManual} style={{marginTop:12,padding:12,borderRadius:12,border:`1px solid ${T.hairline}`,background:T.bg}}>
+                    <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>Manual row</div>
+                    <select required value={manualForm.activity_id} onChange={e=>setManualForm(f=>({...f,activity_id:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}>
+                      <option value="">Activity</option>
+                      {filteredActs.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                    <input required type="date" value={toHtmlDateInputValue(manualForm.start_date)} onChange={e=>setManualForm(f=>({...f,start_date:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}/>
+                    <input required type="date" value={toHtmlDateInputValue(manualForm.end_date)} onChange={e=>setManualForm(f=>({...f,end_date:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}/>
+                    <select value={manualForm.status} onChange={e=>setManualForm(f=>({...f,status:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}>
+                      {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <input value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))} placeholder="Notes" style={{...S.input,fontSize:12,marginBottom:10}}/>
+                    <div style={{display:'flex',gap:8}}>
+                      <button type="submit" style={{...S.btn,...S.btnAct,flex:1}}>Add row</button>
+                      <button type="button" onClick={()=>{setShowManual(false)}} style={S.btn}>Close</button>
+                    </div>
+                  </form>
+                )}
+              </>
             )}
           </>}
         </div>
