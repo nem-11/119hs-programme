@@ -281,21 +281,34 @@ function SettingsPage(){
   }
   const thumbSrc=info.url?`${api.absoluteUrl(info.url)}${info.updated_at?`?v=${encodeURIComponent(info.updated_at)}`:''}`:'';
   const updatedLabel=formatSitePhotoUpdated(info.updated_at);
+  const heroBg=info.url&&thumbSrc
+    ?{backgroundImage:`url(${thumbSrc})`,backgroundSize:'cover',backgroundPosition:'center'}
+    :{
+      backgroundColor:'#1e293b',
+      backgroundImage:'linear-gradient(rgba(255,255,255,0.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.06) 1px,transparent 1px)',
+      backgroundSize:'24px 24px',
+    };
   return<div style={{flex:1,overflowY:'auto',padding:16,background:T.bg}}>
     <h2 style={{margin:'0 0 4px',fontSize:20,fontWeight:700,color:T.text}}>Settings</h2>
     <p style={{fontSize:11,color:T.faint,marginBottom:18}}>Site appearance</p>
-    <div style={{maxWidth:520,padding:16,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:12}}>
-      <div style={{fontSize:11,fontWeight:700,color:T.text,letterSpacing:'0.06em',textTransform:'uppercase',marginBottom:6}}>Site photo</div>
-      <p style={{fontSize:12,color:T.muted,margin:'0 0 14px',lineHeight:1.45}}>This image appears on the login page.</p>
-      <div style={{marginBottom:14,minHeight:112}}>
-        {info.url&&thumbSrc?<img src={thumbSrc} alt="" style={{display:'block',width:200,maxWidth:'100%',height:'auto',borderRadius:8,border:`1px solid ${T.hairline}`,objectFit:'cover'}}/>:
-          <div style={{width:200,maxWidth:'100%',height:112,borderRadius:8,background:'#1e293b',border:`1px solid ${T.hairline}`,backgroundImage:'linear-gradient(rgba(255,255,255,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.05) 1px,transparent 1px)',backgroundSize:'20px 20px'}}/>}
+    <div style={{maxWidth:520,borderRadius:12,overflow:'hidden',border:`1px solid ${T.hairline}`,boxShadow:'0 8px 28px rgba(26,26,46,0.08)'}}>
+      <div style={{position:'relative',minHeight:220,...heroBg}}>
+        <div style={{position:'absolute',inset:0,background:'linear-gradient(180deg, rgba(17,24,39,0.5) 0%, rgba(17,24,39,0.82) 100%)',pointerEvents:'none'}} aria-hidden/>
+        <div style={{position:'relative',zIndex:1,padding:18,display:'flex',flexDirection:'column',gap:12,minHeight:220,boxSizing:'border-box'}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:'rgba(255,255,255,0.95)',letterSpacing:'0.06em',textTransform:'uppercase',marginBottom:6}}>Site photo</div>
+            <p style={{fontSize:12,color:'rgba(255,255,255,0.85)',margin:0,lineHeight:1.45,maxWidth:360}}>This image appears on the login page.</p>
+          </div>
+          <div style={{flex:1,minHeight:4}}/>
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:'none'}} onChange={onPick}/>
+          <div>
+            <button type="button" disabled={uploading} onClick={()=>fileRef.current?.click()} style={{...S.btn,padding:'10px 18px',fontSize:12,fontWeight:600,background:'#fff',color:'#111827',border:'none',opacity:uploading?0.55:1,cursor:uploading?'default':'pointer'}}>{uploading?'Uploading…':'Upload new photo'}</button>
+            <p style={{fontSize:10,color:'rgba(255,255,255,0.7)',marginTop:10,lineHeight:1.5}}>Recommended: landscape, min 1200px wide.<br/>Accepted: JPG, PNG (max 5MB).</p>
+            {err&&<div style={{fontSize:12,color:'#fca5a5',marginTop:10}}>{err}</div>}
+            {updatedLabel&&<p style={{fontSize:11,color:'rgba(255,255,255,0.78)',marginTop:10}}>Last updated: {updatedLabel}</p>}
+          </div>
+        </div>
       </div>
-      <input ref={fileRef} type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:'none'}} onChange={onPick}/>
-      <button type="button" disabled={uploading} onClick={()=>fileRef.current?.click()} style={{...S.btn,...S.btnAct,padding:'10px 16px',fontSize:12,opacity:uploading?0.5:1}}>{uploading?'Uploading…':'Upload new photo'}</button>
-      <p style={{fontSize:10,color:T.faint,marginTop:10,lineHeight:1.5}}>Recommended: landscape, min 1200px wide.<br/>Accepted: JPG, PNG (max 5MB).</p>
-      {err&&<div style={{fontSize:12,color:'#e74c3c',marginTop:10}}>{err}</div>}
-      {updatedLabel&&<p style={{fontSize:11,color:T.muted,marginTop:12}}>Last updated: {updatedLabel}</p>}
     </div>
   </div>;
 }
