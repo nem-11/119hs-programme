@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { dateKeysBetween, bboxFromGeom } = require('./programmeSync');
 const schedule = require('./programmeSchedule');
 const { resolveDatabasePath } = require('./databasePath');
+const { DEFAULT_PROGRAMME_TEMPLATES } = require('./defaultTemplates');
 
 const GW_NAMES = [
   'Pile Mat',
@@ -321,58 +322,42 @@ function bootstrapEmptyDatabase() {
   if (tplCnt && Number(tplCnt.c) > 0) return;
 
   try {
-    run(
-      'INSERT INTO templates (name,tab,tower,zone_name,sequence,durations) VALUES (?,?,?,?,?,?)',
-      [
-        'GW Standard',
-        'groundworks',
-        'T2',
-        'Pour X',
-        JSON.stringify([
-          'Blinding',
-          'Drainage',
-          'Insulation',
-          'Waterproofing',
-          'Reinforcement - Shuttering',
-          'Pour',
-          'Verts',
-          'Podium Pour',
-        ]),
-        JSON.stringify([1, 1, 2, 2, 3, 1, 3, 1]),
-      ]
-    );
-    run(
-      'INSERT INTO templates (name,tab,tower,zone_name,sequence,durations) VALUES (?,?,?,?,?,?)',
-      [
-        'INT Floor',
-        'internals',
-        'T1',
-        'Floor X',
-        JSON.stringify([
-          'Riser Stitching',
-          'Corridor Ceiling Stitch',
-          'Modular Ceiling Stitch',
-          'Modular Floor Stitch',
-          'Form Door Aperture',
-          'Corridor Floor Stitch',
-          'Stair Core Stitching',
-          'MEP Riser',
-          'MEP Corridor',
-          'Ceiling Install',
-          'Install Ceiling Panels',
-          'Modular Linear Stitch',
-          'Install Fire Doors',
-          'Paint',
-          'Commission',
-        ]),
-        JSON.stringify([2, 2, 1, 2, 1, 1, 1, 2, 2, 2, 1, 1, 1, 3, 2]),
-      ]
-    );
+    for (const t of DEFAULT_PROGRAMME_TEMPLATES) {
+      run('INSERT INTO templates (name,tab,tower,zone_name,sequence,durations) VALUES (?,?,?,?,?,?)', [
+        t.name,
+        t.tab,
+        t.tower,
+        t.zone_name,
+        JSON.stringify(t.sequence),
+        JSON.stringify(t.durations),
+      ]);
+    }
     if (!isProd) {
-      console.log('[119HS] Bootstrap: added templates GW Standard, INT Floor.');
+      console.log('[119HS] Bootstrap: added', DEFAULT_PROGRAMME_TEMPLATES.length, 'programme templates.');
     }
   } catch (e) {
     console.error('[119HS] Bootstrap templates failed:', e.message);
+  }
+}
+
+/** Re-insert GW Standard / INT Floor if missing (e.g. DB wiped templates but users remained). */
+function ensureDefaultTemplates() {
+  for (const t of DEFAULT_PROGRAMME_TEMPLATES) {
+    const row = get('SELECT id FROM templates WHERE name=? AND tab=?', [t.name, t.tab]);
+    if (row) continue;
+    try {
+      run('INSERT INTO templates (name,tab,tower,zone_name,sequence,durations) VALUES (?,?,?,?,?,?)', [
+        t.name,
+        t.tab,
+        t.tower,
+        t.zone_name,
+        JSON.stringify(t.sequence),
+        JSON.stringify(t.durations),
+      ]);
+      console.log('[119HS] Restored default template:', t.name, `(${t.tab})`);
+    } catch (e) {
+      console.error('[119HS] ensureDefaultTemplates:', t.name, e.message);
+    }
   }
 }
 
@@ -454,6 +439,7 @@ async function getDb() {
   migrateMilestonesProgrammeItemId();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
+  ensureDefaultTemplates();
   migrateDefaultUserRoles();
   migrateUserTabsProjectProgramme();
   save();

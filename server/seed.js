@@ -2,6 +2,7 @@
 const db = require('./db');
 const bcrypt = require('bcryptjs');
 const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
+const { DEFAULT_PROGRAMME_TEMPLATES } = require('./defaultTemplates');
 
 async function seed() {
   await db.init();
@@ -20,9 +21,17 @@ async function seed() {
   console.log('  INT: '+Object.keys(int_s).length+' days');
   [{"date": "2026-05-01", "label": "T2 P6 GF Pour", "status": "planned"}, {"date": "2026-05-06", "label": "T2 P4 GF Pour", "status": "planned"}, {"date": "2026-05-13", "label": "T2 P5+P6 Podium Pour", "status": "planned"}, {"date": "2026-05-14", "label": "T2 P4 Podium Pour", "status": "planned"}, {"date": "2026-05-18", "label": "T2 P3 Podium Pour", "status": "unconfirmed"}, {"date": "2026-05-21", "label": "T2 P7 GF Pour", "status": "planned"}, {"date": "2026-06-01", "label": "T2 P7 Podium / T2 GW Complete", "status": "critical"}, {"date": "2026-06-01", "label": "T3 Pile Mat Start", "status": "gated"}, {"date": "2026-06-22", "label": "T3 Zone 1 Pile Cap Pour", "status": "planned"}, {"date": "2026-06-23", "label": "T3 Zone 2 Pile Cap Pour", "status": "planned"}, {"date": "2026-07-04", "label": "T3 Zone 1 GF Pour", "status": "planned"}, {"date": "2026-07-06", "label": "T3 Zone 2 GF Pour", "status": "planned"}, {"date": "2026-07-13", "label": "T3 Zone 1 Podium Pour", "status": "planned"}, {"date": "2026-07-14", "label": "T3 Zone 2 Podium / T3 GW Complete", "status": "planned"}].forEach(m=>db.addMilestone(m.date,m.label,m.status,0,null));
   console.log('  Milestones: 14');
-  db.addTemplate('GW Standard','groundworks','T2','Pour X',JSON.stringify(["Blinding","Drainage","Insulation","Waterproofing","Reinforcement - Shuttering","Pour","Verts","Podium Pour"]),JSON.stringify([1,1,2,2,3,1,3,1]));
-  db.addTemplate('INT Floor','internals','T1','Floor X',JSON.stringify(["Riser Stitching","Corridor Ceiling Stitch","Modular Ceiling Stitch","Modular Floor Stitch","Form Door Aperture","Corridor Floor Stitch","Stair Core Stitching","MEP Riser","MEP Corridor","Ceiling Install","Install Ceiling Panels","Modular Linear Stitch","Install Fire Doors","Paint","Commission"]),JSON.stringify([2,2,1,2,1,1,1,2,2,2,1,1,1,3,2]));
-  console.log('  Templates: 2');
+  DEFAULT_PROGRAMME_TEMPLATES.forEach((t) =>
+    db.addTemplate(
+      t.name,
+      t.tab,
+      t.tower,
+      t.zone_name,
+      JSON.stringify(t.sequence),
+      JSON.stringify(t.durations)
+    )
+  );
+  console.log('  Templates:', DEFAULT_PROGRAMME_TEMPLATES.length);
   console.log('Done! Run: npm run dev');
 }
 seed().catch(e=>{console.error(e);process.exit(1)});
