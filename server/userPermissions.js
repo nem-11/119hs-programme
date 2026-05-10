@@ -12,13 +12,17 @@ function isAdminRole(role) {
   return role === 'admin';
 }
 
+function isGwSubbieRole(role) {
+  return role === 'gw_subbie';
+}
+
+function isIntSubbieRole(role) {
+  return role === 'int_subbie';
+}
+
+/** Update / completions POST — admin + site only (subbies use Plan/Gantt; no tick-offs). */
 function canTickCompletions(role) {
-  return (
-    isAdminRole(role) ||
-    isSiteEditorRole(role) ||
-    role === 'gw_subbie' ||
-    role === 'int_subbie'
-  );
+  return isAdminRole(role) || isSiteEditorRole(role);
 }
 
 /** Zone/drawing upload/programme-item mutations — admin only (site team uses Plan/Gantt read APIs). */
@@ -26,9 +30,9 @@ function canEditProgrammeAndZones(role) {
   return isAdminRole(role);
 }
 
-/** Programme-item GET routes power the Programme screen; site_editor uses Plan/Gantt instead. */
+/** Programme screen API — admin only (site + subbies use Plan/Gantt). */
 function canReadProgrammeItemsApi(role) {
-  return isAdminRole(role) || role === 'gw_subbie' || role === 'int_subbie';
+  return isAdminRole(role);
 }
 
 function programmeItemsReader(req, res, next) {
@@ -64,10 +68,8 @@ function completionKeyAllowedForUser(db, user, dateStr, key) {
   const tabCandidates = [];
   if (isAdminRole(role) || isSiteEditorRole(role)) {
     tabCandidates.push(...(user.tabs || []));
-  } else if (role === 'gw_subbie') {
-    tabCandidates.push('groundworks');
-  } else if (role === 'int_subbie') {
-    tabCandidates.push('internals');
+  } else if (isGwSubbieRole(role) || isIntSubbieRole(role)) {
+    tabCandidates.push(...(user.tabs || []));
   } else {
     return false;
   }
@@ -156,6 +158,8 @@ function filterTemplatesForUser(user, rows) {
 module.exports = {
   isSiteEditorRole,
   isAdminRole,
+  isGwSubbieRole,
+  isIntSubbieRole,
   canTickCompletions,
   canEditProgrammeAndZones,
   canReadProgrammeItemsApi,

@@ -25,13 +25,20 @@ export function canEditZonesProgramme(role) {
   return isAdmin(role);
 }
 
+/** Update / tick-offs — admin + site only. */
 export function canTick(role) {
-  return isAdmin(role) || isSiteEditor(role) || isGwSubbie(role) || isIntSubbie(role);
+  return isAdmin(role) || isSiteEditor(role);
 }
 
-/** Gantt: site/admin plus board (read-only programme timeline). */
+/** Gantt: admin, site, board, GW/INT subbies (scoped tabs). */
 export function showGantt(role) {
-  return isAdmin(role) || isSiteEditor(role) || isBoardViewer(role);
+  return (
+    isAdmin(role) ||
+    isSiteEditor(role) ||
+    isBoardViewer(role) ||
+    isGwSubbie(role) ||
+    isIntSubbie(role)
+  );
 }
 
 export function bottomNavItemsForRole(role) {
@@ -50,7 +57,11 @@ export function bottomNavItemsForRole(role) {
   }
 
   if (isSiteEditor(role)) {
-    return [dash, upd, ahead, plan, gantt];
+    return [dash, upd, ahead, plan, gantt, zones];
+  }
+
+  if (isGwSubbie(role) || isIntSubbie(role)) {
+    return [dash, ahead, plan, gantt, zones];
   }
 
   const core = [dash, upd, ahead, plan];

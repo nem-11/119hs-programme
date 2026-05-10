@@ -11,6 +11,8 @@ import {
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
   isSiteEditor as roleIsSiteEditor,
+  isGwSubbie as roleIsGwSubbie,
+  isIntSubbie as roleIsIntSubbie,
 } from './userPermissions';
 import {T,S,shadowCard,grad} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
@@ -1326,12 +1328,12 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
-      {page==='zones'&&!roleIsSiteEditor(user.role)&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
-      {page==='programme'&&!roleIsBoardViewer(user.role)&&!roleIsSiteEditor(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
+      {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
+      {page==='programme'&&!roleIsBoardViewer(user.role)&&!roleIsSiteEditor(user.role)&&!roleIsGwSubbie(user.role)&&!roleIsIntSubbie(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>

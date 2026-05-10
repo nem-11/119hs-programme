@@ -26,14 +26,14 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     passwordPlain: 'ground1',
     name: 'DBs',
     role: 'gw_subbie',
-    tabs: ['groundworks'],
+    tabs: ['groundworks', 'project_programme'],
   },
   {
     username: 'IKEW',
     passwordPlain: 'Ikew1',
     name: 'IKEW',
     role: 'int_subbie',
-    tabs: ['internals'],
+    tabs: ['internals', 'project_programme'],
   },
   {
     username: 'board',

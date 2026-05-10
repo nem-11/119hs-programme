@@ -142,7 +142,13 @@ function seedProjectProgrammeActivities() {
 }
 
 function roleGetsProjectProgrammeTab(role) {
-  return role === 'admin' || role === 'site_editor' || role === 'editor';
+  return (
+    role === 'admin' ||
+    role === 'site_editor' ||
+    role === 'editor' ||
+    role === 'gw_subbie' ||
+    role === 'int_subbie'
+  );
 }
 
 /** Add project_programme tab only for roles that should manage milestones (admin/site). */
