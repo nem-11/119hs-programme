@@ -352,12 +352,12 @@ app.get('/api/plan/programme', auth, (req, res) => {
   const tabs = wantFull ? null : req.user.tabs && req.user.tabs.length ? req.user.tabs : ['groundworks', 'internals'];
   res.json(db.getPlanProgrammeRows(tabs));
 });
-app.get('/api/programme-items/drawing/:did', auth, (req, res) => {
+app.get('/api/programme-items/drawing/:did', auth, perm.denyBoardViewer, (req, res) => {
   const chk = perm.assertDrawingTabAllowed(db, req.user, req.params.did);
   if (!chk.ok) return res.status(403).json({ error: 'Drawing not permitted' });
   res.json(db.getProgrammeItemsByDrawing(req.params.did));
 });
-app.get('/api/programme-items/zone/:zid', auth, (req, res) => {
+app.get('/api/programme-items/zone/:zid', auth, perm.denyBoardViewer, (req, res) => {
   const chk = perm.assertZoneTabAllowed(db, req.user, req.params.zid);
   if (!chk.ok) return res.status(403).json({ error: 'Zone not permitted' });
   res.json(db.getProgrammeItemsByZone(req.params.zid));

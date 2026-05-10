@@ -9,6 +9,7 @@ import {
   canEditZonesProgramme,
   showGantt as roleShowGantt,
   isAdmin as roleIsAdmin,
+  isBoardViewer as roleIsBoardViewer,
 } from './userPermissions';
 import {T,S} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
@@ -1317,12 +1318,12 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
-      {page==='update'&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
-      {page==='lookahead'&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
+      {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
-      {page==='programme'&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
+      {page==='programme'&&!roleIsBoardViewer(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>

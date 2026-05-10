@@ -28,9 +28,9 @@ export function canTick(role) {
   return isAdmin(role) || isSiteEditor(role) || isGwSubbie(role) || isIntSubbie(role);
 }
 
-/** Gantt is an advanced programme view — site + admin only. */
+/** Gantt: site/admin plus board (read-only programme timeline). */
 export function showGantt(role) {
-  return isAdmin(role) || isSiteEditor(role);
+  return isAdmin(role) || isSiteEditor(role) || isBoardViewer(role);
 }
 
 export function bottomNavItemsForRole(role) {
@@ -45,7 +45,7 @@ export function bottomNavItemsForRole(role) {
   const sett = { id: 'settings', label: 'Settings', icon: '⚙' };
 
   if (isBoardViewer(role)) {
-    return [dash, plan, prog];
+    return [dash, plan, gantt, zones];
   }
 
   const core = [dash, upd, ahead, plan];

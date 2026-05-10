@@ -120,7 +120,8 @@ function filterZonesAllForUser(db, user, rows) {
 
 function filterCompletionsForUser(db, user, completionsObj) {
   if (isAdminRole(user.role) || isSiteEditorRole(user.role)) return completionsObj || {};
-  if (isBoardViewer(user.role)) return {};
+  /** Board: read-only full completions for dashboard metrics (cannot POST — completionWriter). */
+  if (isBoardViewer(user.role)) return completionsObj || {};
   const out = {};
   Object.entries(completionsObj || {}).forEach(([date, keysObj]) => {
     const filtered = {};
@@ -139,12 +140,21 @@ function filterTemplatesForUser(user, rows) {
   return rows.filter((t) => tabs.has(t.tab));
 }
 
+/** Express: Programme-item APIs are for the hidden Programme screen only. */
+function denyBoardViewer(req, res, next) {
+  if (isBoardViewer(req.user.role)) {
+    return res.status(403).json({ error: 'Not permitted for this role' });
+  }
+  next();
+}
+
 module.exports = {
   isSiteEditorRole,
   isAdminRole,
   canTickCompletions,
   canEditProgrammeAndZones,
   isBoardViewer,
+  denyBoardViewer,
   scheduleDayCompletionKeys,
   completionKeyAllowedForUser,
   assertDrawingTabAllowed,
