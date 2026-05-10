@@ -10,6 +10,20 @@ function sortZoneActs(z){
   return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
 }
 
+function sameZoneId(a,b){
+  if(a==null||b==null)return false;
+  return Number(a)===Number(b);
+}
+
+/** Top-most zone under cursor (SVG / %-space). */
+function findZoneAtPct(zonesList,pctX,pctY){
+  for(let i=zonesList.length-1;i>=0;i--){
+    const zz=zonesList[i],g=parseZoneGeometry(zz);
+    if(pointInGeom(pctX,pctY,g))return zz;
+  }
+  return null;
+}
+
 /** Centre point for zone label (rect centre or polygon centroid). */
 function zoneLabelAnchor(g, z){
   if(g?.kind==='rect')return{cx:g.x+g.w/2,cy:g.y+g.h/2};
@@ -261,7 +275,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     }
     return[...seen.values()];
   },[zones]);
-  const selectedZone=useMemo(()=>zones.find(z=>z.id===selectedId),[zones,selectedId]);
+  const selectedZone=useMemo(()=>zones.find(z=>sameZoneId(z.id,selectedId)),[zones,selectedId]);
 
   useEffect(()=>{toolRef.current=tool},[tool]);
 
@@ -288,8 +302,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   },[selDraw]);
 
   useEffect(()=>{
-    if(selectedId){
-      const z=zones.find(x=>x.id===selectedId);
+    if(selectedId!=null){
+      const z=zones.find(x=>sameZoneId(x.id,selectedId));
       if(z){
         setZName(z.name||'');
         setZTower(z.tower||'T2');
@@ -454,24 +468,22 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
     if(!drawData?.image_data)return;
 
-    if(canEdit&&tool==='select'&&selectedId){
-      const z=zones.find(x=>x.id===selectedId);
+    if(canEdit&&tool==='select'&&selectedId!=null){
+      const z=zones.find(x=>sameZoneId(x.id,selectedId));
       if(z){
         const g=parseZoneGeometry(z);
         const hit=hitVertexHandle(pctX,pctY,g,thresholdPct);
         if(hit){
           e.preventDefault();
-          handleDragRef.current={zoneId:selectedId,...hit};
+          handleDragRef.current={zoneId:Number(selectedId),...hit};
           return;
         }
       }
     }
 
     if(tool==='select'){
-      for(let i=zones.length-1;i>=0;i--){
-        const zz=zones[i],g=parseZoneGeometry(zz);
-        if(pointInGeom(pctX,pctY,g)){setSelectedId(zz.id);return}
-      }
+      const hitZ=findZoneAtPct(zones,pctX,pctY);
+      if(hitZ){setSelectedId(Number(hitZ.id));return}
       setSelectedId(null);
       return;
     }
@@ -482,6 +494,12 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
     if(tool==='rect'){
       e.preventDefault();
+      const hitZ=findZoneAtPct(zones,pctX,pctY);
+      if(hitZ){
+        setTool('select');
+        setSelectedId(Number(hitZ.id));
+        return;
+      }
       dragging.current=true;
       setRectDraft({x:pctX,y:pctY,w:0,h:0});
       setSelectedId(null);
@@ -489,6 +507,14 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     }
     if(tool==='poly'){
       e.preventDefault();
+      if(polyPts.length===0){
+        const hitZ=findZoneAtPct(zones,pctX,pctY);
+        if(hitZ){
+          setTool('select');
+          setSelectedId(Number(hitZ.id));
+          return;
+        }
+      }
       if(polyPts.length>=3&&polyPts[0]){
         const [fx,fy]=polyPts[0];
         if(distClientToPctPoint(e.clientX,e.clientY,fx,fy,pr)<=SNAP_CLOSE_PX){
@@ -511,7 +537,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
       const zz=zones[i],g=parseZoneGeometry(zz);
       if(pointInGeom(pctX,pctY,g)){
         setTool('select');
-        setSelectedId(zz.id);
+        setSelectedId(Number(zz.id));
         setFocusZoneEditorNonce(n=>n+1);
         return;
       }
@@ -570,10 +596,13 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     }
     const hd=handleDragRef.current;
     if(hd?.geomDirty&&selDraw){
-      const z=zones.find(x=>x.id===hd.zoneId);
+      const z=zones.find(x=>sameZoneId(x.id,hd.zoneId));
       if(z){
         const g=parseZoneGeometry(z);
-        api.updateZone(hd.zoneId,{geometry:g}).then(()=>api.getZonesForDrawing(selDraw).then(setZones));
+        api.updateZone(Number(hd.zoneId),{geometry:g}).then((r)=>{
+          if(r&&typeof r==='object'&&r.error)setUploadErr(String(r.error));
+          else void api.getZonesForDrawing(selDraw).then(setZones);
+        });
       }
       handleDragRef.current=null;
       return;
@@ -612,7 +641,11 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     const tower=(zTower||'').trim()||'T2';
     const actPayload=draftZoneActs.length?toPutPayload(draftZoneActs):undefined;
     try{
-      await api.addZone(selDraw,name,tower,geometry,actPayload);
+      const out=await api.addZone(selDraw,name,tower,geometry,actPayload);
+      if(out&&typeof out==='object'&&out.error){
+        setUploadErr(String(out.error));
+        return;
+      }
       setZones(await api.getZonesForDrawing(selDraw)||[]);
       cancelDraft();
       setTool('select');
@@ -626,28 +659,57 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   }
 
   async function saveEditZone(){
-    if(!canEdit||!selectedId)return;
-    const z=zones.find(x=>x.id===selectedId);if(!z)return;
+    if(!canEdit||selectedId==null)return;
+    const zid=Number(selectedId);
+    if(!Number.isFinite(zid))return;
+    const z=zones.find(x=>sameZoneId(x.id,zid));
+    if(!z)return;
     const g=parseZoneGeometry(z);
-    await api.updateZone(selectedId,{name:zName.trim(),tower:zTower.trim(),geometry:g});
+    setUploadErr('');
+    const r=await api.updateZone(zid,{name:zName.trim(),tower:zTower.trim(),geometry:g});
+    if(r&&typeof r==='object'&&r.error){
+      setUploadErr(String(r.error));
+      return;
+    }
     setZones(await api.getZonesForDrawing(selDraw)||[]);
   }
 
   async function persistSelectedZoneActs(rows){
-    if(!canEdit||!selectedId)return;
-    await api.putZoneActivities(selectedId,toPutPayload(rows));
+    if(!canEdit||selectedId==null)return;
+    const zid=Number(selectedId);
+    if(!Number.isFinite(zid))return;
+    setUploadErr('');
+    const r=await api.putZoneActivities(zid,toPutPayload(rows));
+    if(r&&typeof r==='object'&&r.error){
+      setUploadErr(String(r.error));
+      return;
+    }
     setZones(await api.getZonesForDrawing(selDraw)||[]);
   }
 
   async function removeLinkedActivity(activityId){
-    if(!canEdit||!selectedId)return;
-    await api.deleteZoneActivity(selectedId,activityId);
+    if(!canEdit||selectedId==null)return;
+    const zid=Number(selectedId);
+    if(!Number.isFinite(zid))return;
+    setUploadErr('');
+    const r=await api.deleteZoneActivity(zid,activityId);
+    if(r&&typeof r==='object'&&r.error){
+      setUploadErr(String(r.error));
+      return;
+    }
     setZones(await api.getZonesForDrawing(selDraw)||[]);
   }
 
   async function appendLinkedActivity(){
-    if(!canEdit||!selectedId||!addActPick)return;
-    await api.addZoneActivity(selectedId,{activity_id:Number(addActPick)});
+    if(!canEdit||selectedId==null||!addActPick)return;
+    const zid=Number(selectedId);
+    if(!Number.isFinite(zid))return;
+    setUploadErr('');
+    const r=await api.addZoneActivity(zid,{activity_id:Number(addActPick)});
+    if(r&&typeof r==='object'&&r.error){
+      setUploadErr(String(r.error));
+      return;
+    }
     setAddActPick('');
     setZones(await api.getZonesForDrawing(selDraw)||[]);
   }
@@ -690,8 +752,15 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   }
 
   async function removeZone(){
-    if(!canEdit||!selectedId)return;
-    await api.deleteZone(selectedId);
+    if(!canEdit||selectedId==null)return;
+    const zid=Number(selectedId);
+    if(!Number.isFinite(zid))return;
+    setUploadErr('');
+    const r=await api.deleteZone(zid);
+    if(r&&typeof r==='object'&&r.error){
+      setUploadErr(String(r.error));
+      return;
+    }
     setSelectedId(null);
     setZones(await api.getZonesForDrawing(selDraw)||[]);
   }
@@ -720,9 +789,16 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     if(t.zone_name)setZName(t.zone_name);
     const built=buildActivitiesFromTemplate(t,nameToAct);
     if(!built.length)return;
-    if(selectedId){
+    if(selectedId!=null){
       if(!canEdit)return;
-      await api.putZoneActivities(selectedId,toPutPayload(built));
+      const zid=Number(selectedId);
+      if(!Number.isFinite(zid))return;
+      setUploadErr('');
+      const r=await api.putZoneActivities(zid,toPutPayload(built));
+      if(r&&typeof r==='object'&&r.error){
+        setUploadErr(String(r.error));
+        return;
+      }
       setZones(await api.getZonesForDrawing(selDraw)||[]);
     }else{
       setDraftZoneActs(built);
@@ -868,7 +944,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                 <img alt="Plan" draggable={false} src={`data:image/jpeg;base64,${drawData.image_data}`} style={{width:'100%',height:'100%',objectFit:'fill',display:'block',userSelect:'none',pointerEvents:'none'}}/>
                 <svg style={{position:'absolute',left:0,top:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
                   {zones.map(z=>{
-                    const g=parseZoneGeometry(z),sel=z.id===selectedId;
+                    const g=parseZoneGeometry(z),sel=sameZoneId(z.id,selectedId);
                     const resolveAct=id=>{
                       const a=activities.find(x=>Number(x.id)===Number(id));
                       return a?.name||'';
@@ -891,8 +967,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       )}
                     </g>;
                   })}
-                  {tool==='select'&&selectedId&&(()=>{
-                    const z=zones.find(x=>x.id===selectedId);
+                  {tool==='select'&&selectedId!=null&&(()=>{
+                    const z=zones.find(x=>sameZoneId(x.id,selectedId));
                     if(!z)return null;
                     const g=parseZoneGeometry(z);
                     if(g.kind==='rect'){
@@ -1036,13 +1112,13 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
             {canEdit&&tool==='poly'&&polyPts.length>=3&&!pendingRect&&(
               <button type="button" onClick={finishPolygon} style={{...S.btn,...S.btnPrimary,width:'100%'}}>Save polygon zone</button>
             )}
-            {canEdit&&selectedId&&!pendingRect&&tool!=='poly'&&(
+            {canEdit&&selectedId!=null&&!pendingRect&&!(tool==='poly'&&polyPts.length>0)&&(
               <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                <button type="button" onClick={saveEditZone} style={{...S.btn,...S.btnPrimary,flex:1}}>Save changes</button>
-                <button type="button" onClick={removeZone} style={{...S.btn,...S.btnDanger,flex:1}}>Delete zone</button>
+                <button type="button" onClick={()=>void saveEditZone()} style={{...S.btn,...S.btnPrimary,flex:1}}>Save changes</button>
+                <button type="button" onClick={()=>void removeZone()} style={{...S.btn,...S.btnDanger,flex:1}}>Delete zone</button>
               </div>
             )}
-            {!canEdit&&selectedId&&(
+            {!canEdit&&selectedId!=null&&(
               <p style={{fontSize:11,color:T.muted,margin:0,lineHeight:1.4}}>Viewer — switch to an editor account to change zones.</p>
             )}
             </div>
