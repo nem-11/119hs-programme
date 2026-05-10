@@ -40,6 +40,6 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     passwordPlain: 'board119',
     name: 'Board',
     role: 'board_viewer',
-    tabs: ['groundworks', 'internals'],
+    tabs: ['groundworks', 'internals', 'project_programme'],
   },
 ];

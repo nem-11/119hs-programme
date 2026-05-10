@@ -10,8 +10,9 @@ import {
   showGantt as roleShowGantt,
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
+  isSiteEditor as roleIsSiteEditor,
 } from './userPermissions';
-import {T,S} from './uiTheme';
+import {T,S,shadowCard,grad} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
@@ -240,9 +241,16 @@ function LoginPage({onLogin}){
     setLoading(false);
   }
   return<div className="login-landing">
-    {photoUrl
-      ?<img className="login-landing__bg" src={photoUrl} alt="" decoding="async"/>
-      :<div className="login-landing__fallback" aria-hidden/>}
+    <div className="login-landing__media">
+      {photoUrl ? (
+        <>
+          <img className="login-landing__bg" src={photoUrl} alt="" decoding="async"/>
+          <div className="login-landing__photo-scrim" aria-hidden/>
+        </>
+      ) : (
+        <div className="login-landing__fallback" aria-hidden/>
+      )}
+    </div>
     <div className="login-landing__overlay">
       <div className="login-landing__card">
         <div className="login-landing__brand">
@@ -456,7 +464,7 @@ function TemplatePage({tab,isAdmin,onReload}){
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:12,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text}}>New activity</span>
       <input value={newAct} onChange={e=>setNewAct(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewActivity()} placeholder={`Add ${templateTab} activity`} style={{...S.input,width:220,fontSize:12,padding:'7px 10px'}}/>
-      <button type="button" disabled={addingAct||!newAct.trim()} onClick={()=>void addNewActivity()} style={{...S.btn,...S.btnAct,padding:'7px 12px',fontSize:11,opacity:addingAct||!newAct.trim()?0.45:1}}>{addingAct?'Adding...':'Add activity'}</button>
+      <button type="button" disabled={addingAct||!newAct.trim()} onClick={()=>void addNewActivity()} style={{...S.btn,...S.btnPrimary,padding:'7px 12px',fontSize:11,opacity:addingAct||!newAct.trim()?0.45:1}}>{addingAct?'Adding...':'Add activity'}</button>
       <span style={{fontSize:10,color:T.faint}}>Appears immediately in template options.</span>
     </div>}
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:14}}>
@@ -481,7 +489,7 @@ function TemplatePage({tab,isAdmin,onReload}){
           >Rename</button>
           <button
             type="button"
-            style={{...S.btn,padding:'2px 6px',fontSize:10,color:'#c0392b'}}
+            style={{...S.btn,...S.btnDanger,padding:'2px 6px',fontSize:10}}
             onClick={async()=>{
               if(!window.confirm(`Delete activity "${a.name}"?`))return;
               const res=await api.deleteActivity(a.id);
@@ -497,14 +505,14 @@ function TemplatePage({tab,isAdmin,onReload}){
     <h3 style={S.section}>Saved Templates</h3>
     {scopedTemplates.length===0&&<p style={{color:T.faint,fontSize:12,marginBottom:16}}>No templates for this programme yet</p>}
     {scopedTemplates.map(t=>{const acts=JSON.parse(t.sequence),durs=JSON.parse(t.durations),total=durs.reduce((a,b)=>a+b,0);
-      return<div key={t.id} style={{padding:14,background:T.surface,borderRadius:12,border:`1px solid ${T.hairline}`,marginBottom:8,boxShadow:'0 1px 3px rgba(26,26,46,0.04)'}}>
+      return<div key={t.id} style={{padding:14,background:grad.cardSurface,borderRadius:12,border:'1px solid rgba(26,26,46,0.06)',marginBottom:8,boxShadow:shadowCard}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div><span style={{fontSize:14,fontWeight:700,color:T.text}}>{t.name}</span><span style={{fontSize:10,color:T.faint,marginLeft:8}}>{total} days</span></div>
           <div style={{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'flex-end'}}>
             <button type="button" onClick={()=>setSelTpl(selTpl===t.id?null:t.id)} style={{...S.btn,...(selTpl===t.id?S.btnAct:{}),fontSize:10,padding:'4px 10px'}}>Apply</button>
             {isAdmin&&<button type="button" onClick={()=>void duplicateTpl(t)} style={{...S.btn,fontSize:10,padding:'4px 10px'}}>Duplicate</button>}
             {isAdmin&&<button type="button" onClick={()=>startEdit(t)} style={{...S.btn,fontSize:10,padding:'4px 10px'}}>Edit</button>}
-            {isAdmin&&<button type="button" onClick={()=>void removeTpl(t.id,t.name)} style={{...S.btn,fontSize:10,padding:'4px 10px',color:'#c0392b'}}>Delete</button>}
+            {isAdmin&&<button type="button" onClick={()=>void removeTpl(t.id,t.name)} style={{...S.btn,...S.btnDanger,fontSize:10,padding:'4px 10px'}}>Delete</button>}
           </div>
         </div>
         <div style={{display:'flex',flexWrap:'wrap',gap:3}}>{acts.map((a,i)=><span key={i} style={S.pill(a)}>{a} ({durs[i]}d)</span>)}</div>
@@ -514,7 +522,7 @@ function TemplatePage({tab,isAdmin,onReload}){
             <input value={apTower} onChange={e=>setApTower(e.target.value)} placeholder="Tower" style={{...S.input,width:80,fontSize:12,padding:'6px 10px'}}/>
             <input value={apZone} onChange={e=>setApZone(e.target.value)} placeholder="Zone (Pour 5)" style={{...S.input,width:120,fontSize:12,padding:'6px 10px'}}/>
             <input type="date" value={toHtmlDateInputValue(apStart)} onChange={e=>setApStart(e.target.value)} style={{...S.input,width:140,fontSize:12,padding:'6px 10px'}}/>
-            <button onClick={handleApply} style={{...S.btn,...S.btnAct,fontSize:11}}>Apply</button>
+            <button onClick={handleApply} style={{...S.btn,...S.btnPrimary,fontSize:11}}>Apply</button>
           </div>
           <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} days, skipping Sundays</div>
         </div>}
@@ -566,7 +574,7 @@ function TemplatePage({tab,isAdmin,onReload}){
         </div>)}
       </div><div style={{fontSize:11,color:T.muted,marginBottom:10}}>Total: {tDurs.reduce((a,b)=>a+b,0)} working days</div></>}
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        <button type="button" onClick={()=>void saveTpl()} disabled={!tName||!tActs.length} style={{...S.btn,...(tName&&tActs.length?S.btnAct:{}),opacity:tName&&tActs.length?1:0.4}}>{editingId?'Save changes':'Save template'}</button>
+        <button type="button" onClick={()=>void saveTpl()} disabled={!tName||!tActs.length} style={{...S.btn,...(tName&&tActs.length?S.btnPrimary:{}),opacity:tName&&tActs.length?1:0.4}}>{editingId?'Save changes':'Save template'}</button>
         {editingId&&<button type="button" onClick={cancelEdit} style={S.btn}>Cancel edit</button>}
       </div>
     </div></>}
@@ -704,9 +712,9 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
             alignSelf:'flex-start',
             padding:'10px 14px',
             borderRadius:12,
-            background:T.surface,
-            border:`1px solid ${T.hairline}`,
-            boxShadow:'0 2px 10px rgba(26,26,46,0.05)',
+            background:grad.cardSurface,
+            border:'1px solid rgba(26,26,46,0.06)',
+            boxShadow:shadowCard,
           }}>
             <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
             <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
@@ -716,10 +724,10 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
 
       <section style={{
         padding:'22px 22px 24px',
-        background:T.surface,
+        background:grad.cardSurface,
         borderRadius:20,
-        border:`1px solid rgba(26,26,46,0.08)`,
-        boxShadow:'0 4px 24px rgba(26,26,46,0.06), 0 1px 0 rgba(255,255,255,0.8) inset',
+        border:'1px solid rgba(26,26,46,0.06)',
+        boxShadow:shadowCard,
         marginBottom:16,
         position:'relative',
         overflow:'hidden',
@@ -747,10 +755,10 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
         {metrics.map((s)=><div key={s.k} style={{
           position:'relative',
           padding:'16px 16px 16px 18px',
-          background:T.surface,
+          background:grad.cardSurface,
           borderRadius:16,
-          border:`1px solid rgba(${s.accent},0.18)`,
-          boxShadow:'0 2px 14px rgba(26,26,46,0.04)',
+          border:`1px solid rgba(${s.accent},0.14)`,
+          boxShadow:shadowCard,
           overflow:'hidden',
         }}>
           <div style={{
@@ -787,9 +795,9 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
       <section style={{
         padding:'18px 20px',
         borderRadius:16,
-        background:T.surface,
-        border:`1px solid ${T.hairline}`,
-        boxShadow:'0 2px 14px rgba(26,26,46,0.04)',
+        background:grad.cardSurface,
+        border:'1px solid rgba(26,26,46,0.06)',
+        boxShadow:shadowCard,
       }}>
         <div style={{display:'flex',flexWrap:'wrap',alignItems:'baseline',justifyContent:'space-between',gap:10,marginBottom:12}}>
           <div>
@@ -818,9 +826,9 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
               display:'flex',
               borderRadius:12,
               overflow:'hidden',
-              border:`1px solid rgba(26,26,46,0.08)`,
+              border:'1px solid rgba(26,26,46,0.06)',
               background:health.tint,
-              boxShadow:'0 1px 4px rgba(26,26,46,0.04)',
+              boxShadow:`inset 3px 0 0 rgba(37,99,235,0.22), ${shadowCard}`,
             }}>
               <div style={{width:5,flexShrink:0,background:`rgb(${health.rgb})`}} aria-hidden/>
               <div style={{flex:1,minWidth:0,padding:'12px 14px'}}>
@@ -887,7 +895,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
                     {MILESTONE_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                   {m.programme_item_id!=null&&<button type="button" disabled={mBusy} onClick={()=>void unlinkMilestoneProgramme(m.id)} style={{...S.btn,padding:'4px 10px',fontSize:11}} title="Stop using Update ticks for this row; you can then edit % manually">Unlink programme</button>}
-                  <button type="button" disabled={mBusy} onClick={()=>void removeMilestone(m.id)} style={{...S.btn,padding:'4px 10px',fontSize:11,color:'#c0392b'}}>Remove</button>
+                  <button type="button" disabled={mBusy} onClick={()=>void removeMilestone(m.id)} style={{...S.btn,...S.btnDanger,padding:'4px 10px',fontSize:11}}>Remove</button>
                 </div>}
               </div>
             </div>;
@@ -906,7 +914,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
             <select value={manualStatus} onChange={(e)=>setManualStatus(e.target.value)} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
               {MILESTONE_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
             </select>
-            <button type="button" disabled={mBusy||!manualLabel.trim()} onClick={()=>void addMilestoneRow(manualDate,manualLabel.trim(),manualStatus,manualCompletion).then(()=>{setManualLabel('');setManualCompletion(0);})} style={{...S.btn,...S.btnAct,padding:'8px 14px',fontSize:11}}>Add milestone</button>
+            <button type="button" disabled={mBusy||!manualLabel.trim()} onClick={()=>void addMilestoneRow(manualDate,manualLabel.trim(),manualStatus,manualCompletion).then(()=>{setManualLabel('');setManualCompletion(0);})} style={{...S.btn,...S.btnPrimary,padding:'8px 14px',fontSize:11}}>Add milestone</button>
           </div>
 
           <div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:6}}>From programme (pick one)</div>
@@ -934,7 +942,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
               if(!o)return;
               const d=pickDateEdge==='start'?o.start_date:o.end_date;
               void addMilestoneRow(d,o.label,pickStatus,0,o.programmeItemId);
-            }} style={{...S.btn,...S.btnAct,padding:'8px 14px',fontSize:11}}>Add selected</button>
+            }} style={{...S.btn,...S.btnPrimary,padding:'8px 14px',fontSize:11}}>Add selected</button>
           </div>
         </>}
       </section>
@@ -1069,7 +1077,7 @@ function UpdPage({date,sched,comp,tab,canTick,userName,onSubmitted}){
       </p>
       {canTick?(
         <>
-          <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{width:'100%',...S.btn,...(dirty&&!submitting?S.btnAct:{}),padding:'14px 18px',fontSize:14,fontWeight:700,opacity:!dirty||submitting?0.5:1,cursor:!dirty||submitting?'default':'pointer'}}>{submitting?'Saving…':dirty?'Submit & lock in day’s progress':'No changes to submit yet'}</button>
+          <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{width:'100%',...S.btn,...(dirty&&!submitting?S.btnPrimary:{}),padding:'14px 18px',fontSize:14,fontWeight:700,opacity:!dirty||submitting?0.5:1,cursor:!dirty||submitting?'default':'pointer'}}>{submitting?'Saving…':dirty?'Submit & lock in day’s progress':'No changes to submit yet'}</button>
           {dirty&&!submitting&&<div style={{fontSize:10,color:'rgba(244,165,26,0.95)',marginTop:10,fontWeight:600}}>Unsaved ticks — submit to sync the programme.</div>}
         </>
       ):<div style={{fontSize:11,color:T.muted,lineHeight:1.45}}>Viewer access: you can see progress but cannot submit updates.</div>}
@@ -1095,7 +1103,7 @@ function UpdPage({date,sched,comp,tab,canTick,userName,onSubmitted}){
     {sections.length===0&&<div style={{textAlign:'center',padding:'60px 20px',color:T.faint}}><div style={{fontSize:15,fontWeight:600}}>No activities scheduled</div></div>}
     {canTick&&dirty&&<div style={{position:'fixed',left:0,right:0,bottom:56,padding:'10px 14px',background:T.surface,borderTop:`1px solid ${T.hairline}`,boxShadow:'0 -4px 20px rgba(26,26,46,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,zIndex:20,maxWidth:560,margin:'0 auto'}}>
       <span style={{fontSize:11,color:T.muted,flex:1}}>Lock in to save today’s ticks and refresh overall programme completion.</span>
-      <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{...S.btn,...S.btnAct,padding:'12px 22px',whiteSpace:'nowrap',opacity:!dirty||submitting?0.45:1}}>{submitting?'Saving…':'Submit & lock in'}</button>
+      <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{...S.btn,...S.btnPrimary,padding:'12px 22px',whiteSpace:'nowrap',opacity:!dirty||submitting?0.45:1}}>{submitting?'Saving…':'Submit & lock in'}</button>
     </div>}
     {toast&&<div style={{position:'fixed',bottom:130,left:'50%',transform:'translateX(-50%)',background:toast.includes('failed')?'rgba(231,76,60,0.95)':'rgba(46,178,96,0.95)',color:'#fff',padding:'8px 16px',borderRadius:10,fontSize:13,fontWeight:600,zIndex:25,boxShadow:'0 4px 16px rgba(0,0,0,0.15)'}}>{toast}</div>}
   </div>;
@@ -1227,7 +1235,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
             Three-week window from the date above (Sundays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
           </p>
         </div>
-        <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnAct,padding:'10px 16px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>
+        <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnPrimary,padding:'10px 16px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>
       </div>
 
       {stats.total>0?<div style={{
@@ -1308,12 +1316,12 @@ function MainApp({user,onLogout}){
   const navItems=bottomNavItemsForRole(user.role);
 
   return<div style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
-    <div className="app-header-bar" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 14px',borderBottom:`1px solid ${T.hairline}`,flexShrink:0,background:T.surface}}>
+    <div className="app-header-bar">
       <div style={{display:'flex',alignItems:'center',gap:10}}><Wordmark119HS variant="nav"/>
         {page!=='plan'&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}</div>
       <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:10,color:T.faint}}>{user.name}</span><button onClick={onLogout} style={{...S.btn,fontSize:10,padding:'4px 10px'}}>Logout</button></div>
     </div>
-    {showDateNav&&<div className="app-date-nav" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 14px',borderBottom:`1px solid ${T.hairline}`,flexShrink:0,background:T.nav}}>
+    {showDateNav&&<div className="app-date-nav">
       <button onClick={()=>nav(-1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>←</button><div style={{fontSize:15,fontWeight:700,color:T.text}}>{formatDate(date)}</div><button onClick={()=>nav(1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>→</button>
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
@@ -1322,13 +1330,13 @@ function MainApp({user,onLogout}){
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
-      {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
-      {page==='programme'&&!roleIsBoardViewer(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
+      {page==='zones'&&!roleIsSiteEditor(user.role)&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
+      {page==='programme'&&!roleIsBoardViewer(user.role)&&!roleIsSiteEditor(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>
-    <div className="app-bottom-nav" style={{display:'flex',borderTop:`1px solid ${T.hairline}`,flexShrink:0,background:T.nav,boxShadow:'0 -4px 16px rgba(26,26,46,0.04)'}}>
-      {navItems.map(p=><button key={p.id} onClick={()=>setPage(p.id)} style={{flex:1,padding:'10px 2px',background:'transparent',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:18,opacity:page===p.id?1:0.35,color:T.text}}>{p.icon}</span><span style={{fontSize:7,fontWeight:600,color:page===p.id?'rgba(66,133,244,1)':T.faint,textTransform:'uppercase',textAlign:'center',lineHeight:1.1}}>{p.label}</span></button>)}
+    <div className="app-bottom-nav">
+      {navItems.map((p)=>(<button key={p.id} type="button" className={`app-bottom-nav__btn${page===p.id?' app-bottom-nav__btn--active':''}`} onClick={()=>setPage(p.id)}><span className="app-bottom-nav__icon" aria-hidden>{p.icon}</span><span className="app-bottom-nav__label">{p.label}</span></button>))}
     </div>
   </div>;
 }

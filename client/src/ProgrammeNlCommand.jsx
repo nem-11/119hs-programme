@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as api from './api';
-import { T, S } from './uiTheme';
+import { T, S, shadowCard } from './uiTheme';
 import { formatShort } from './constants';
 
 function fmt(iso) {
@@ -70,14 +70,7 @@ export default function ProgrammeNlCommand({ onApplied }) {
 
   return (
     <>
-      <div
-        style={{
-          flexShrink: 0,
-          padding: '12px 14px',
-          borderBottom: `1px solid ${T.hairline}`,
-          background: 'linear-gradient(135deg,rgba(66,133,244,0.07),rgba(26,26,46,0.02))',
-        }}
-      >
+      <div className="app-page-header">
         <div style={{ fontSize: 11, fontWeight: 800, color: T.text, marginBottom: 8, letterSpacing: '0.04em' }}>
           💬 PROGRAMME COMMAND
         </div>
@@ -100,7 +93,7 @@ export default function ProgrammeNlCommand({ onApplied }) {
             type="button"
             disabled={busy || !String(text).trim()}
             onClick={() => void runParse()}
-            style={{ ...S.btn, ...S.btnAct, padding: '10px 20px', fontSize: 13, fontWeight: 700 }}
+            style={{ ...S.btn, ...S.btnPrimary, padding: '10px 20px', fontSize: 13, fontWeight: 700 }}
           >
             {busy ? '…' : 'RUN'}
           </button>
@@ -131,7 +124,7 @@ export default function ProgrammeNlCommand({ onApplied }) {
               borderRadius: 14,
               border: `1px solid ${T.hairline}`,
               padding: 18,
-              boxShadow: '0 12px 40px rgba(26,26,46,0.15)',
+              boxShadow: `${shadowCard}, 0 12px 28px rgba(26,26,46,0.1)`,
             }}
           >
             {showUnknown && (
@@ -255,7 +248,7 @@ export default function ProgrammeNlCommand({ onApplied }) {
                     type="button"
                     disabled={applyBusy}
                     onClick={() => void confirmApply()}
-                    style={{ ...S.btn, ...S.btnAct, flex: 1, padding: 12, fontWeight: 700 }}
+                    style={{ ...S.btn, ...S.btnPrimary, flex: 1, padding: 12, fontWeight: 700 }}
                   >
                     {applyBusy ? 'Saving…' : 'CONFIRM'}
                   </button>

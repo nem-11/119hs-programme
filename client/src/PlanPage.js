@@ -634,7 +634,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
 
   return (
     <div className="plan-print-root" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
-      <div className="plan-no-print" style={{ flexShrink: 0, padding: '12px 14px', borderBottom: `1px solid ${T.hairline}`, background: T.surface }}>
+      <div className="plan-no-print app-page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Plan</h2>
@@ -653,7 +653,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                 For best results, print from a desktop browser.
               </span>
             )}
-            <button type="button" onClick={handlePrintClick} style={{ ...S.btn, ...S.btnAct, padding: '8px 14px', fontSize: 12 }}>
+            <button type="button" onClick={handlePrintClick} style={{ ...S.btn, ...S.btnPrimary, padding: '8px 14px', fontSize: 12 }}>
               PRINT
             </button>
             <button type="button" onClick={() => setPdfOpen(true)} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
@@ -719,7 +719,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                   window.alert(e?.message || 'Undo failed');
                 }
               }}
-              style={{ ...S.btn, ...(!undoState ? {} : S.btnAct), padding: '8px 14px', fontSize: 12, opacity: undoState ? 1 : 0.45 }}
+              style={{ ...S.btn, ...(!undoState ? {} : S.btnPrimary), padding: '8px 14px', fontSize: 12, opacity: undoState ? 1 : 0.45 }}
             >
               Undo Last
             </button>
@@ -1017,7 +1017,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                           <button
                             type="button"
                             title="Delete zone"
-                            style={{ ...S.btn, padding: '2px 6px', fontSize: 11, color: '#c0392b' }}
+                            style={{ ...S.btn, ...S.btnDanger, padding: '2px 6px', fontSize: 11 }}
                             onClick={async () => {
                               if (!window.confirm(`Delete ${zoneRowLabel(z)} and all its activities?\nThis cannot be undone.`)) return;
                               try {
@@ -1384,7 +1384,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
               <button type="button" onClick={() => setPdfOpen(false)} style={{ ...S.btn, padding: '10px 16px' }}>
                 Cancel
               </button>
-              <button type="button" onClick={confirmPdfExport} style={{ ...S.btn, ...S.btnAct, padding: '10px 16px' }}>
+              <button type="button" onClick={confirmPdfExport} style={{ ...S.btn, ...S.btnPrimary, padding: '10px 16px' }}>
                 Export
               </button>
             </div>

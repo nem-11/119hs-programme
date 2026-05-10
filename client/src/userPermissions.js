@@ -20,8 +20,9 @@ export function isIntSubbie(role) {
   return role === 'int_subbie';
 }
 
+/** Editing zones / programme lines — admin only (site uses Plan/Gantt). */
 export function canEditZonesProgramme(role) {
-  return isAdmin(role) || isSiteEditor(role);
+  return isAdmin(role);
 }
 
 export function canTick(role) {
@@ -46,6 +47,10 @@ export function bottomNavItemsForRole(role) {
 
   if (isBoardViewer(role)) {
     return [dash, plan, gantt, zones];
+  }
+
+  if (isSiteEditor(role)) {
+    return [dash, upd, ahead, plan, gantt];
   }
 
   const core = [dash, upd, ahead, plan];

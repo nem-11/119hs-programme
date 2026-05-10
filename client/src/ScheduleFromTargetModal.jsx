@@ -232,7 +232,7 @@ export default function ScheduleFromTargetModal({
               !templateId
             }
             onClick={() => void apply()}
-            style={{ ...S.btn, ...S.btnAct, padding: '10px 16px' }}
+            style={{ ...S.btn, ...S.btnPrimary, padding: '10px 16px' }}
           >
             {applying ? 'Applying…' : 'Apply to zone'}
           </button>

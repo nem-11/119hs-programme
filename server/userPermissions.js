@@ -21,8 +21,21 @@ function canTickCompletions(role) {
   );
 }
 
+/** Zone/drawing upload/programme-item mutations — admin only (site team uses Plan/Gantt read APIs). */
 function canEditProgrammeAndZones(role) {
-  return isAdminRole(role) || isSiteEditorRole(role);
+  return isAdminRole(role);
+}
+
+/** Programme-item GET routes power the Programme screen; site_editor uses Plan/Gantt instead. */
+function canReadProgrammeItemsApi(role) {
+  return isAdminRole(role) || role === 'gw_subbie' || role === 'int_subbie';
+}
+
+function programmeItemsReader(req, res, next) {
+  if (!canReadProgrammeItemsApi(req.user.role)) {
+    return res.status(403).json({ error: 'Not permitted for this role' });
+  }
+  next();
 }
 
 function isBoardViewer(role) {
@@ -140,21 +153,14 @@ function filterTemplatesForUser(user, rows) {
   return rows.filter((t) => tabs.has(t.tab));
 }
 
-/** Express: Programme-item APIs are for the hidden Programme screen only. */
-function denyBoardViewer(req, res, next) {
-  if (isBoardViewer(req.user.role)) {
-    return res.status(403).json({ error: 'Not permitted for this role' });
-  }
-  next();
-}
-
 module.exports = {
   isSiteEditorRole,
   isAdminRole,
   canTickCompletions,
   canEditProgrammeAndZones,
+  canReadProgrammeItemsApi,
+  programmeItemsReader,
   isBoardViewer,
-  denyBoardViewer,
   scheduleDayCompletionKeys,
   completionKeyAllowedForUser,
   assertDrawingTabAllowed,

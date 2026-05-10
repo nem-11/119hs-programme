@@ -89,7 +89,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
 
   const zonesCta=
     typeof onGoToZoneSetup==='function' ? (
-      <button type="button" onClick={onGoToZoneSetup} style={{...S.btn,...S.btnAct,padding:'12px 20px',fontSize:13,fontWeight:700}}>
+      <button type="button" onClick={onGoToZoneSetup} style={{...S.btn,...S.btnPrimary,padding:'12px 20px',fontSize:13,fontWeight:700}}>
         Go to Zones setup →
       </button>
     ) : null;
@@ -362,7 +362,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   return(
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg}}>
       {isAdmin&&<ProgrammeNlCommand onApplied={onScheduleChanged}/>}
-      <div style={{padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+      <div className="app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
         {tabDrawings.length>0&&(
           <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
             {tabDrawings.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
@@ -457,7 +457,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   </tbody>
                 </table>
               </div>
-              <button type="button" disabled={saving} onClick={()=>void generateAllZones()} style={{...S.btn,...S.btnAct,marginTop:10,width:'100%',padding:'10px',fontSize:12}}>{saving?'Working…':'Generate all'}</button>
+              <button type="button" disabled={saving} onClick={()=>void generateAllZones()} style={{...S.btn,...S.btnPrimary,marginTop:10,width:'100%',padding:'10px',fontSize:12}}>{saving?'Working…':'Generate all'}</button>
             </div>
           )}
 
@@ -498,7 +498,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                       </div>
                       <label style={{fontSize:10,color:T.muted,display:'block',marginBottom:4}}>Start date (first weekday of selected stage)</label>
                       <input type="date" value={toHtmlDateInputValue(anchorDate)} onChange={e=>setAnchorDate(e.target.value)} style={{...S.input,fontSize:12,marginBottom:10,width:'100%'}}/>
-                      <button type="button" disabled={!schedTpl||saving} onClick={runGenerate} style={{...S.btn,...S.btnAct,width:'100%',padding:'10px',fontSize:12}}>Generate programme</button>
+                      <button type="button" disabled={!schedTpl||saving} onClick={runGenerate} style={{...S.btn,...S.btnPrimary,width:'100%',padding:'10px',fontSize:12}}>Generate programme</button>
                       {isAdmin&&(
                         <button type="button" disabled={saving} onClick={()=>setTargetModalOpen(true)} style={{...S.btn,marginTop:10,width:'100%',padding:'10px',fontSize:12,border:`1px solid rgba(66,133,244,0.35)`,background:'rgba(66,133,244,0.08)'}}>
                           Schedule from target date
@@ -560,7 +560,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                             <span>{it.start_date}</span><span>{it.end_date}</span><span>{it.status}</span>
                           </>
                         )}
-                        {canEdit&&<button type="button" onClick={()=>removeItem(it.id)} style={{...S.btn,padding:'4px',fontSize:10,color:'#c0392b'}}>×</button>}
+                        {canEdit&&<button type="button" onClick={()=>removeItem(it.id)} style={{...S.btn,...S.btnDanger,padding:'4px',fontSize:10}}>×</button>}
                       </div>
                     ))}
                   </div>
@@ -588,7 +588,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   </div>
                 ))}
                 <div style={{display:'flex',gap:8,marginTop:10}}>
-                  <button type="button" disabled={saving} onClick={()=>void saveDraftRows()} style={{...S.btn,...S.btnAct,flex:1,padding:'10px',fontSize:12}}>{saving?'Saving…':'Save all'}</button>
+                  <button type="button" disabled={saving} onClick={()=>void saveDraftRows()} style={{...S.btn,...S.btnPrimary,flex:1,padding:'10px',fontSize:12}}>{saving?'Saving…':'Save all'}</button>
                   <button type="button" onClick={()=>{setReviewMode(false);setDraftRows([])}} style={{...S.btn,flex:1}}>Cancel</button>
                 </div>
               </div>
@@ -615,7 +615,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                     </select>
                     <input value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))} placeholder="Notes" style={{...S.input,fontSize:12,marginBottom:10}}/>
                     <div style={{display:'flex',gap:8}}>
-                      <button type="submit" style={{...S.btn,...S.btnAct,flex:1}}>Add row</button>
+                      <button type="submit" style={{...S.btn,...S.btnPrimary,flex:1}}>Add row</button>
                       <button type="button" onClick={()=>{setShowManual(false)}} style={S.btn}>Close</button>
                     </div>
                   </form>

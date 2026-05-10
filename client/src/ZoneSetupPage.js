@@ -753,7 +753,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
   return(
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg,minHeight:0}}>
-      <div style={{display:'flex',gap:8,padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,flexWrap:'wrap',alignItems:'center',background:T.surface}}>
+      <div className="app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
         {drawings.filter(d=>d.tab===tab).length>0&&(
           <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
             {drawings.filter(d=>d.tab===tab).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
@@ -767,11 +767,11 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         {canEdit&&<>
           {(['rect','poly']).map(t=><button key={t} type="button" onClick={()=>{setTool(t);cancelDraft()}} style={{...S.btn,...(tool===t?S.btnAct:{}),padding:'6px 10px',fontSize:11,textTransform:'capitalize'}}>{t==='poly'?'Polygon':t}</button>)}
           {tool==='poly'&&polyPts.length>0&&<>
-            <button type="button" onClick={finishPolygon} disabled={polyPts.length<3} style={{...S.btn,...S.btnAct,padding:'6px 10px',fontSize:11}}>Finish polygon</button>
+            <button type="button" onClick={finishPolygon} disabled={polyPts.length<3} style={{...S.btn,...S.btnPrimary,padding:'6px 10px',fontSize:11}}>Finish polygon</button>
             <button type="button" onClick={()=>setPolyPts([])} style={{...S.btn,padding:'6px 10px',fontSize:11}}>Clear</button>
           </>}
         </>}
-        {isAdmin&&selDraw&&<button type="button" onClick={removeDrawing} style={{...S.btn,padding:'6px 10px',fontSize:11,color:'#c0392b'}}>Delete drawing</button>}
+        {isAdmin&&selDraw&&<button type="button" onClick={removeDrawing} style={{...S.btn,...S.btnDanger,padding:'6px 10px',fontSize:11}}>Delete drawing</button>}
       </div>
       {uploadErr&&(
         <div style={{padding:'8px 12px',fontSize:12,color:'#c0392b',background:'rgba(231,76,60,0.08)',borderBottom:`1px solid ${T.hairline}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
@@ -932,7 +932,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
             <div style={{textAlign:'center',color:T.muted,padding:36,maxWidth:340,margin:'0 auto'}}>
               <div style={{fontSize:16,fontWeight:700,color:T.text,marginBottom:8}}>No floor plan yet</div>
               <div style={{fontSize:12,lineHeight:1.5,marginBottom:16}}>{canEdit?'Upload a drawing (image or PDF) to draw zones on the plan.':'Ask an editor to upload a plan so zones can be marked up.'}</div>
-              {canEdit&&<button type="button" onClick={()=>fileInputRef.current?.click()} style={{...S.btn,...S.btnAct,padding:'12px 20px',fontSize:13,fontWeight:700}}>Upload floor plan</button>}
+              {canEdit&&<button type="button" onClick={()=>fileInputRef.current?.click()} style={{...S.btn,...S.btnPrimary,padding:'12px 20px',fontSize:13,fontWeight:700}}>Upload floor plan</button>}
             </div>
           )}
         </div>
@@ -1007,7 +1007,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       {showActEditor&&<>
                         <button type="button" disabled={i===0} onClick={()=>selectedId?void moveLinkedActivity(i,-1):setDraftZoneActs(d=>{if(i<1)return d;const n=[...d];[n[i-1],n[i]]=[n[i],n[i-1]];return n})} style={{...S.btn,padding:'2px 8px',fontSize:12,lineHeight:1}} aria-label="Move up">↑</button>
                         <button type="button" disabled={i===list.length-1} onClick={()=>selectedId?void moveLinkedActivity(i,1):setDraftZoneActs(d=>{if(i>=d.length-1)return d;const n=[...d];[n[i],n[i+1]]=[n[i+1],n[i]];return n})} style={{...S.btn,padding:'2px 8px',fontSize:12,lineHeight:1}} aria-label="Move down">↓</button>
-                        <button type="button" onClick={()=>selectedId?void removeLinkedActivity(row.activity_id):setDraftZoneActs(d=>d.filter((_,j)=>j!==i))} style={{...S.btn,padding:'2px 10px',fontSize:13,lineHeight:1,color:'#c0392b'}} title="Remove" aria-label="Remove">×</button>
+                        <button type="button" onClick={()=>selectedId?void removeLinkedActivity(row.activity_id):setDraftZoneActs(d=>d.filter((_,j)=>j!==i))} style={{...S.btn,...S.btnDanger,padding:'2px 10px',fontSize:13,lineHeight:1}} title="Remove" aria-label="Remove">×</button>
                       </>}
                     </div>;
                   })}
@@ -1029,17 +1029,17 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                 <button type="button" onClick={()=>{
                   let z={...rectDraft};if(z.w<0){z.x+=z.w;z.w=-z.w}if(z.h<0){z.y+=z.h;z.h=-z.h};
                   saveNewZone({kind:'rect',x:z.x,y:z.y,w:z.w,h:z.h});
-                }} style={{...S.btn,...S.btnAct,flex:1}}>Save zone</button>
+                }} style={{...S.btn,...S.btnPrimary,flex:1}}>Save zone</button>
                 <button type="button" onClick={cancelDraft} style={S.btn}>Cancel</button>
               </div>
             )}
             {canEdit&&tool==='poly'&&polyPts.length>=3&&!pendingRect&&(
-              <button type="button" onClick={finishPolygon} style={{...S.btn,...S.btnAct,width:'100%'}}>Save polygon zone</button>
+              <button type="button" onClick={finishPolygon} style={{...S.btn,...S.btnPrimary,width:'100%'}}>Save polygon zone</button>
             )}
             {canEdit&&selectedId&&!pendingRect&&tool!=='poly'&&(
               <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                <button type="button" onClick={saveEditZone} style={{...S.btn,...S.btnAct,flex:1}}>Save changes</button>
-                <button type="button" onClick={removeZone} style={{...S.btn,color:'#c0392b',flex:1}}>Delete zone</button>
+                <button type="button" onClick={saveEditZone} style={{...S.btn,...S.btnPrimary,flex:1}}>Save changes</button>
+                <button type="button" onClick={removeZone} style={{...S.btn,...S.btnDanger,flex:1}}>Delete zone</button>
               </div>
             )}
             {!canEdit&&selectedId&&(

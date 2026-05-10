@@ -246,7 +246,7 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
-      <div style={{ flexShrink: 0, padding: '12px 14px', borderBottom: `1px solid ${T.hairline}`, background: T.surface }}>
+      <div className="app-page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Gantt</h2>
@@ -264,7 +264,7 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
               {isAdmin ? ' Admins see every drawing tab that has programme rows.' : ''}
             </p>
           </div>
-          <button type="button" onClick={() => load()} style={{ ...S.btn, ...S.btnAct, padding: '8px 14px', fontSize: 12 }}>
+          <button type="button" onClick={() => load()} style={{ ...S.btn, ...S.btnPrimary, padding: '8px 14px', fontSize: 12 }}>
             Refresh
           </button>
         </div>
