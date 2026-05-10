@@ -1,6 +1,12 @@
 /** Build-time: set REACT_APP_API_URL to the API origin if the SPA is hosted separately. Leave unset when the API serves the built client (same origin): requests use relative `/api/...` URLs. */
 const RAW_BASE = process.env.REACT_APP_API_URL || '';
 const BASE = String(RAW_BASE).replace(/\/+$/, '');
+/** Same-origin path or full URL for static assets served by the API (e.g. /uploads/...). */
+export function absoluteUrl(path) {
+  if (!path) return '';
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return BASE ? `${BASE}${p}` : p;
+}
 function getToken(){return localStorage.getItem('119hs-token')}
 async function api(method,path,body){
   const url = BASE ? `${BASE}${path}` : path;
@@ -42,6 +48,27 @@ async function api(method,path,body){
   return data;
 }
 export async function login(u,p){const d=await api('POST','/api/login',{username:u,password:p});if(d?.token){localStorage.setItem('119hs-token',d.token);localStorage.setItem('119hs-user',JSON.stringify(d.user))}return d}
+export async function getSitePhoto(){
+  const url=BASE?`${BASE}/api/site-photo`:'/api/site-photo';
+  const res=await fetch(url);
+  return res.json();
+}
+export async function uploadSitePhoto(file){
+  const fd=new FormData();
+  fd.append('photo',file);
+  const url=BASE?`${BASE}/api/admin/site-photo`:'/api/admin/site-photo';
+  const token=getToken();
+  const headers={};
+  if(token)headers.Authorization='Bearer '+token;
+  const res=await fetch(url,{method:'POST',headers,body:fd});
+  let data={};
+  try{data=await res.json()}catch(_){}
+  if(!res.ok){
+    if(!data.error)data.error=`HTTP ${res.status}`;
+    return data;
+  }
+  return data;
+}
 export function logout(){localStorage.removeItem('119hs-token');localStorage.removeItem('119hs-user')}
 export function getStoredUser(){const t=getToken(),u=localStorage.getItem('119hs-user');return t&&u?JSON.parse(u):null}
 export const getActivities=()=>api('GET','/api/activities');

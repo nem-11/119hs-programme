@@ -44,6 +44,20 @@ app.use(
 );
 app.use(express.json({ limit: '50mb' }));
 
+const multer = require('multer');
+const sitePhotoStore = require('./sitePhotoStore');
+sitePhotoStore.ensureUploadsDir();
+app.use('/uploads', express.static(sitePhotoStore.getUploadsDir()));
+
+const uploadSitePhotoMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (['image/jpeg', 'image/png'].includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Only JPG and PNG are allowed'));
+  },
+});
+
 const clientBuild = path.join(__dirname, '../client/build');
 if (fs.existsSync(path.join(clientBuild, 'index.html'))) {
   app.use(express.static(clientBuild));
@@ -84,6 +98,36 @@ app.post('/api/login', (req, res) => {
     user: { id: u.id, username: u.username, name: u.name, role: u.role, tabs: JSON.parse(u.tabs) },
   });
 });
+
+app.get('/api/site-photo', (req, res) => {
+  res.json(sitePhotoStore.getSitePhotoStatus());
+});
+
+app.post('/api/admin/site-photo', auth, admin, (req, res, next) => {
+  uploadSitePhotoMw.single('photo')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large (max 5MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'photo file required (JPG or PNG, max 5MB)' });
+  }
+  if (!['image/jpeg', 'image/png'].includes(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Only JPG and PNG are allowed' });
+  }
+  try {
+    const out = sitePhotoStore.saveSitePhoto(req.file.buffer, req.file.mimetype);
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Save failed' });
+  }
+});
+
 app.get('/api/schedule/:tab', auth, (req, res) => res.json(db.getSchedule(req.params.tab)));
 app.put('/api/schedule/:tab/:date', auth, admin, (req, res) => {
   db.setScheduleDay(req.params.tab, req.params.date, req.body.data);
@@ -321,6 +365,7 @@ app.delete('/api/plan/admin/zone/:zoneId', auth, admin, (req, res) => {
 const spaIndex = path.join(clientBuild, 'index.html');
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) return next();
+  if (req.path.startsWith('/uploads')) return next();
   if (!fs.existsSync(spaIndex)) return res.status(503).send('Client build not found. Run npm run build in client/.');
   res.sendFile(spaIndex);
 });

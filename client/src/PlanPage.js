@@ -150,7 +150,7 @@ function useIsMobile() {
   return m;
 }
 
-export default function PlanPage({ userTabs, isAdmin }) {
+export default function PlanPage({ tab, userTabs, isAdmin }) {
   const [rows, setRows] = useState([]);
   const [activities, setActivities] = useState([]);
   const [loadErr, setLoadErr] = useState('');
@@ -167,8 +167,8 @@ export default function PlanPage({ userTabs, isAdmin }) {
   const [startDate, setStartDate] = useState(() => dateKey(todayRef.current));
   const [endDate, setEndDate] = useState(() => dateKey(defaultEnd));
 
-  /** Same model as Gantt: explicit list of drawing tabs included (never rely on null + Set + effect fighting row reloads). */
-  const [selectedScopeTabs, setSelectedScopeTabs] = useState([]);
+  /** Same model as Gantt: explicit selected drawing tabs (multi-select); synced from header `tab` like GanttPage. */
+  const [selectedTabs, setSelectedTabs] = useState(() => [tab]);
   /** null = all towers; otherwise whitelist */
   const [towerWhitelist, setTowerWhitelist] = useState(null);
 
@@ -238,26 +238,21 @@ export default function PlanPage({ userTabs, isAdmin }) {
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [isAdmin, userTabs, rows]);
 
-  const permittedTabsKey = useMemo(() => permittedTabs.join('|'), [permittedTabs]);
+  /** When the header programme tab changes, match Plan scope to that tab only (same as Gantt). */
+  useEffect(() => {
+    setSelectedTabs([tab]);
+  }, [tab]);
 
-  /** Only when the allowed tab *set* changes — not when `rows` reload changes `permittedTabs` array identity (fixes scope toggles snapping back). */
   useEffect(() => {
     if (!permittedTabs.length) return;
-    setSelectedScopeTabs((prev) => {
-      const allowed = new Set(permittedTabs);
-      if (prev.length === 0) return [...permittedTabs];
-      const filtered = prev.filter((t) => allowed.has(t));
-      if (filtered.length === 0) return [...permittedTabs];
-      return filtered;
+    setSelectedTabs((prev) => {
+      const kept = prev.filter((t) => permittedTabs.includes(t));
+      if (kept.length) return kept;
+      return [permittedTabs[0]];
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: permittedTabsKey captures tab membership; `permittedTabs` reference churns every fetch
-  }, [permittedTabsKey]);
+  }, [permittedTabs]);
 
-  const scopeSelectedSet = useMemo(() => {
-    if (!permittedTabs.length) return new Set();
-    if (!selectedScopeTabs.length) return new Set(permittedTabs);
-    return new Set(selectedScopeTabs);
-  }, [selectedScopeTabs, permittedTabs]);
+  const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
   const applyPreset = useCallback((p) => {
     const t0 = new Date();
@@ -272,11 +267,12 @@ export default function PlanPage({ userTabs, isAdmin }) {
   /** Scope only (no tower filter) so the tower chips always list every tower in the current scope. */
   const rowsForScope = useMemo(() => {
     return rows.filter((r) => {
-      if (!permittedTabs.includes(r.drawing_tab)) return false;
-      if (!scopeSelectedSet.has(r.drawing_tab)) return false;
+      const dt = String(r.drawing_tab || '').trim();
+      if (!permittedTabs.includes(dt)) return false;
+      if (!selectedSet.has(dt)) return false;
       return true;
     });
-  }, [rows, permittedTabs, scopeSelectedSet]);
+  }, [rows, permittedTabs, selectedSet]);
 
   const filteredRows = useMemo(() => {
     return rowsForScope.filter((r) => {
@@ -375,11 +371,12 @@ export default function PlanPage({ userTabs, isAdmin }) {
 
   const drawingOptions = useMemo(() => {
     return (drawings || []).filter((d) => {
-      if (!permittedTabs.includes(d.tab)) return false;
-      if (!scopeSelectedSet.has(d.tab)) return false;
+      const t = String(d.tab || '').trim();
+      if (!permittedTabs.includes(t)) return false;
+      if (!selectedSet.has(t)) return false;
       return true;
     });
-  }, [drawings, permittedTabs, scopeSelectedSet]);
+  }, [drawings, permittedTabs, selectedSet]);
 
   useEffect(() => {
     if (!drawingOptions.length) {
@@ -468,22 +465,21 @@ export default function PlanPage({ userTabs, isAdmin }) {
     setTowerWhitelist(null);
   }
 
-  function toggleScopeTab(t) {
-    setSelectedScopeTabs((prev) => {
-      const full = new Set(permittedTabs);
-      const cur = new Set(prev.length ? prev : [...permittedTabs]);
-      if (cur.has(t)) {
-        cur.delete(t);
-        if (cur.size === 0) return [t];
+  function toggleProgrammeTab(t) {
+    setSelectedTabs((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) {
+        next.delete(t);
+        if (next.size === 0) return [t];
       } else {
-        cur.add(t);
+        next.add(t);
       }
-      return permittedTabs.filter((x) => cur.has(x));
+      return permittedTabs.filter((x) => next.has(x));
     });
   }
 
-  function selectAllScopes() {
-    setSelectedScopeTabs([...permittedTabs]);
+  function selectAllProgrammeTabs() {
+    setSelectedTabs([...permittedTabs]);
   }
 
   function countWorkingDaysInclusive(startKey, endKey) {
@@ -786,7 +782,7 @@ export default function PlanPage({ userTabs, isAdmin }) {
             {permittedTabs.length > 1 && (
               <button
                 type="button"
-                onClick={selectAllScopes}
+                onClick={selectAllProgrammeTabs}
                 title="Show every programme scope you have access to"
                 style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}
               >
@@ -794,12 +790,12 @@ export default function PlanPage({ userTabs, isAdmin }) {
               </button>
             )}
             {permittedTabs.map((t) => {
-              const on = scopeSelectedSet.has(t);
+              const on = selectedSet.has(t);
               return (
                 <button
                   key={t}
                   type="button"
-                  onClick={() => toggleScopeTab(t)}
+                  onClick={() => toggleProgrammeTab(t)}
                   title={on ? 'Click to hide from this plan' : 'Click to include on this plan'}
                   style={{
                     ...S.btn,

@@ -9,3 +9,7 @@ node_modules/
 # SQLite and persisted data (do not commit databases)
 data/
 *.db
+
+# Uploaded site hero (keep directory)
+server/public/uploads/*
+!server/public/uploads/.gitkeep

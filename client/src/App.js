@@ -1,5 +1,6 @@
-import React,{useState,useEffect,useCallback,useMemo,Component} from 'react';
+import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'react';
 import * as api from './api';
+import './loginLanding.css';
 import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
 import {T,S} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
@@ -196,8 +197,28 @@ function CompletionRing({pct,done,total}){
   </div>;
 }
 
+function Wordmark119HS({variant='hero'}){
+  const nav=variant==='nav';
+  return<div className={`logo-wordmark${nav?' logo-wordmark--nav':''}`} aria-label="119HS">
+    <span className="logo-number">119</span>
+    <span className="logo-letters">HS</span>
+  </div>;
+}
+
 function LoginPage({onLogin}){
-  const[u,setU]=useState('');const[p,setP]=useState('');const[err,setErr]=useState('');const[loading,setLoading]=useState(false);
+  const[u,setU]=useState('');const[p,setP]=useState('');const[err,setErr]=useState('');const[loading,setLoading]=useState(false);const[photoUrl,setPhotoUrl]=useState(null);
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const d=await api.getSitePhoto();
+        if(cancelled)return;
+        const path=d?.url||null;
+        setPhotoUrl(path?api.absoluteUrl(path):null);
+      }catch(_){if(!cancelled)setPhotoUrl(null);}
+    })();
+    return()=>{cancelled=true};
+  },[]);
   async function go(){
     setLoading(true);setErr('');
     try{
@@ -209,13 +230,72 @@ function LoginPage({onLogin}){
     }
     setLoading(false);
   }
-  return<div style={{minHeight:'100vh',background:T.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
-    <div style={{width:320,padding:36,background:T.surface,borderRadius:16,border:`1px solid ${T.hairline}`,boxShadow:'0 8px 32px rgba(26,26,46,0.06)'}}>
-      <div style={{textAlign:'center',marginBottom:28}}><div style={{fontSize:32,fontWeight:800,color:T.text}}>119<span style={{color:'rgba(66,133,244,0.95)'}}>HS</span></div><div style={{fontSize:10,color:T.faint,textTransform:'uppercase',letterSpacing:'0.2em',marginTop:6}}>Programme Management</div></div>
-      <input value={u} onChange={e=>{setU(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Username" style={{...S.input,marginBottom:10}}/>
-      <input type="password" value={p} onChange={e=>{setP(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Password" style={{...S.input,marginBottom:14}}/>
-      {err&&<div style={{fontSize:12,color:'#e74c3c',marginBottom:10,textAlign:'center'}}>{err}</div>}
-      <button onClick={go} disabled={loading} style={{width:'100%',padding:14,background:'rgba(66,133,244,0.92)',border:'none',borderRadius:10,color:'#fff',fontSize:15,fontWeight:700,cursor:'pointer',opacity:loading?0.5:1}}>{loading?'Signing in...':'Sign In'}</button>
+  return<div className="login-landing">
+    <div className="login-landing__left">
+      <div className="login-landing__brand">
+        <Wordmark119HS/>
+        <div className="login-landing__tagline">Programme management</div>
+      </div>
+      <div className="login-landing__form-wrap">
+        <div className="login-landing__form">
+          <input className="login-landing__field" value={u} onChange={e=>{setU(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Username" autoComplete="username"/>
+          <input className="login-landing__field" type="password" value={p} onChange={e=>{setP(e.target.value);setErr('')}} onKeyDown={e=>e.key==='Enter'&&go()} placeholder="Password" autoComplete="current-password"/>
+          {err&&<div className="login-landing__error">{err}</div>}
+          <button type="button" className="login-landing__submit" onClick={()=>void go()} disabled={loading}>{loading?'Signing in...':'Sign In'}</button>
+        </div>
+      </div>
+    </div>
+    <div className="login-landing__right" style={photoUrl?{backgroundImage:`url(${photoUrl})`}:undefined}>
+      {!photoUrl&&<div className="login-landing__fallback" aria-hidden/>}
+    </div>
+  </div>;
+}
+
+function formatSitePhotoUpdated(iso){
+  if(!iso)return null;
+  try{return new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(_){return null;}
+}
+
+function SettingsPage(){
+  const[info,setInfo]=useState({url:null,updated_at:null});const[uploading,setUploading]=useState(false);const[err,setErr]=useState('');const fileRef=useRef(null);
+  const load=useCallback(async()=>{
+    try{
+      const d=await api.getSitePhoto();
+      setInfo({url:d?.url??null,updated_at:d?.updated_at??null});
+    }catch(_){setInfo({url:null,updated_at:null});}
+  },[]);
+  useEffect(()=>{void load()},[load]);
+  async function onPick(e){
+    const f=e.target.files?.[0];
+    e.target.value='';
+    if(!f)return;
+    setErr('');
+    setUploading(true);
+    try{
+      const out=await api.uploadSitePhoto(f);
+      if(out?.error){setErr(String(out.error));return;}
+      if(out?.url)setInfo({url:out.url,updated_at:out.updated_at||null});
+      else await load();
+    }catch(er){setErr(er?.message||'Upload failed');}
+    finally{setUploading(false);}
+  }
+  const thumbSrc=info.url?`${api.absoluteUrl(info.url)}${info.updated_at?`?v=${encodeURIComponent(info.updated_at)}`:''}`:'';
+  const updatedLabel=formatSitePhotoUpdated(info.updated_at);
+  return<div style={{flex:1,overflowY:'auto',padding:16,background:T.bg}}>
+    <h2 style={{margin:'0 0 4px',fontSize:20,fontWeight:700,color:T.text}}>Settings</h2>
+    <p style={{fontSize:11,color:T.faint,marginBottom:18}}>Site appearance</p>
+    <div style={{maxWidth:520,padding:16,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:12}}>
+      <div style={{fontSize:11,fontWeight:700,color:T.text,letterSpacing:'0.06em',textTransform:'uppercase',marginBottom:6}}>Site photo</div>
+      <p style={{fontSize:12,color:T.muted,margin:'0 0 14px',lineHeight:1.45}}>This image appears on the login page.</p>
+      <div style={{marginBottom:14,minHeight:112}}>
+        {info.url&&thumbSrc?<img src={thumbSrc} alt="" style={{display:'block',width:200,maxWidth:'100%',height:'auto',borderRadius:8,border:`1px solid ${T.hairline}`,objectFit:'cover'}}/>:
+          <div style={{width:200,maxWidth:'100%',height:112,borderRadius:8,background:'#1e293b',border:`1px solid ${T.hairline}`,backgroundImage:'linear-gradient(rgba(255,255,255,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.05) 1px,transparent 1px)',backgroundSize:'20px 20px'}}/>}
+      </div>
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" style={{display:'none'}} onChange={onPick}/>
+      <button type="button" disabled={uploading} onClick={()=>fileRef.current?.click()} style={{...S.btn,...S.btnAct,padding:'10px 16px',fontSize:12,opacity:uploading?0.5:1}}>{uploading?'Uploading…':'Upload new photo'}</button>
+      <p style={{fontSize:10,color:T.faint,marginTop:10,lineHeight:1.5}}>Recommended: landscape, min 1200px wide.<br/>Accepted: JPG, PNG (max 5MB).</p>
+      {err&&<div style={{fontSize:12,color:'#e74c3c',marginTop:10}}>{err}</div>}
+      {updatedLabel&&<p style={{fontSize:11,color:T.muted,marginTop:12}}>Last updated: {updatedLabel}</p>}
     </div>
   </div>;
 }
@@ -1186,7 +1266,7 @@ function MainApp({user,onLogout}){
     if(user.role!=='viewer')return;
     if(['zones','programme','templates'].includes(page))setPage('dashboard');
   },[page,user.role]);
-  useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','plan','gantt'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
+  useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan','gantt'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
   const canSee=t=>user.tabs.includes(t),isAdmin=user.role==='admin',canTick=user.role!=='viewer',canEdit=canTick;
@@ -1202,12 +1282,15 @@ function MainApp({user,onLogout}){
       {id:'zones',label:'Zones',icon:'◇'},
       {id:'programme',label:'Programme',icon:'◎'},
     ]:[]),
-    ...(isAdmin?[{id:'templates',label:'Templates',icon:'⧉'}]:[]),
+    ...(isAdmin?[
+      {id:'templates',label:'Templates',icon:'⧉'},
+      {id:'settings',label:'Settings',icon:'⚙'},
+    ]:[]),
   ];
 
   return<div style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <div className="app-header-bar" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 14px',borderBottom:`1px solid ${T.hairline}`,flexShrink:0,background:T.surface}}>
-      <div style={{display:'flex',alignItems:'center',gap:10}}><span style={{fontSize:16,fontWeight:800,color:T.text}}>119<span style={{color:'rgba(66,133,244,0.95)'}}>HS</span></span>
+      <div style={{display:'flex',alignItems:'center',gap:10}}><Wordmark119HS variant="nav"/>
         {page!=='plan'&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}</div>
       <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:10,color:T.faint}}>{user.name}</span><button onClick={onLogout} style={{...S.btn,fontSize:10,padding:'4px 10px'}}>Logout</button></div>
     </div>
@@ -1218,11 +1301,12 @@ function MainApp({user,onLogout}){
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
       {page==='update'&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
-      {page==='plan'&&<PlanPage userTabs={user.tabs} isAdmin={isAdmin}/>}
+      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='zones'&&canEdit&&<ZoneSetupPage tab={tab} canEdit={canEdit} isAdmin={isAdmin}/>}
       {page==='programme'&&canEdit&&<ProgrammePage tab={tab} canEdit={canEdit} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEdit} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
+      {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>
     <div className="app-bottom-nav" style={{display:'flex',borderTop:`1px solid ${T.hairline}`,flexShrink:0,background:T.nav,boxShadow:'0 -4px 16px rgba(26,26,46,0.04)'}}>
       {navItems.map(p=><button key={p.id} onClick={()=>setPage(p.id)} style={{flex:1,padding:'10px 2px',background:'transparent',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:18,opacity:page===p.id?1:0.35,color:T.text}}>{p.icon}</span><span style={{fontSize:7,fontWeight:600,color:page===p.id?'rgba(66,133,244,1)':T.faint,textTransform:'uppercase',textAlign:'center',lineHeight:1.1}}>{p.label}</span></button>)}
