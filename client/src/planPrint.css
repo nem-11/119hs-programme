@@ -78,15 +78,25 @@ body.zone-setup-print-mode {
     overflow: visible !important;
     height: auto !important;
     max-height: none !important;
+    min-height: 0 !important;
   }
 
   body.zone-setup-print-mode .zone-setup-print-root aside {
     display: none !important;
   }
 
+  /* Full drawing plate (including architectural title block at bottom of sheet image) */
   body.zone-setup-print-mode .zone-setup-print-canvas {
     overflow: visible !important;
-    min-height: 70vh !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    page-break-inside: avoid;
+  }
+
+  body.zone-setup-print-mode .zone-setup-on-plate-day-key {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

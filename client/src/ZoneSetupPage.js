@@ -1,4 +1,5 @@
 import React,{useState,useEffect,useRef,useCallback,useMemo} from 'react';
+import {flushSync} from 'react-dom';
 import * as api from './api';
 import {T,S,shadowCard} from './uiTheme';
 import {parseZoneGeometry,pointInGeom,svgPolygonPoints} from './zoneGeom';
@@ -10,7 +11,7 @@ import {
   dateKey,
   formatShort,
 } from './constants';
-import { dayKeyInItemRange } from './planUtils';
+import { dayKeyInItemRange, abbrevActivity } from './planUtils';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {buildActivityLookup,resolveActivityId,alignTemplateDurations} from './programmeSchedule';
 import './planPrint.css';
@@ -69,6 +70,20 @@ function zoneLayerDisplay(z, layerActId, nameForActivityId){
   return{colorName:null,muted:true,activityLine:''};
 }
 
+/** Prefer non-done over done, then earliest start — matches Plan/Gantt day picking. */
+function pickProgrammeRowForDay(rows,dayKey){
+  if(!rows?.length||!dayKey)return null;
+  const onDay=rows.filter((r)=>dayKeyInItemRange(dayKey,r.start_date,r.end_date));
+  if(!onDay.length)return null;
+  onDay.sort((a,b)=>{
+    const da=String(a.status||'').toLowerCase()==='done';
+    const db=String(b.status||'').toLowerCase()==='done';
+    if(da!==db)return da?1:-1;
+    return String(a.start_date).localeCompare(String(b.start_date));
+  });
+  return onDay[0];
+}
+
 function mergedZoneDisplay(z,layerActId,nameForActivityId,programmeRowsSorted,dayHighlightKey){
   const base=zoneLayerDisplay(z,layerActId,nameForActivityId);
   const hasProg=programmeRowsSorted&&programmeRowsSorted.length>0;
@@ -77,18 +92,25 @@ function mergedZoneDisplay(z,layerActId,nameForActivityId,programmeRowsSorted,da
   let activityLine=base.activityLine;
   if(hasProg){
     const sorted=programmeRowsSorted;
-    const prim=sorted[0]?.activity_name;
-    if(prim){
-      colorName=prim;
-      muted=false;
-    }
     if(dayHighlightKey){
+      const dayPick=pickProgrammeRowForDay(sorted,dayHighlightKey);
+      if(dayPick?.activity_name){
+        colorName=dayPick.activity_name;
+        muted=false;
+      }
       const onDay=sorted.filter((r)=>dayKeyInItemRange(dayHighlightKey,r.start_date,r.end_date));
       if(onDay.length){
         activityLine=onDay.map((r)=>`${r.activity_name} (${r.status||'planned'})`).join(' · ');
       }
-    }else if((!activityLine||base.muted)&&prim){
-      activityLine=sorted.length>1?`${prim} (+${sorted.length-1})`:prim;
+    }else{
+      const prim=sorted[0]?.activity_name;
+      if(prim){
+        colorName=prim;
+        muted=false;
+      }
+      if((!activityLine||base.muted)&&prim){
+        activityLine=sorted.length>1?`${prim} (+${sorted.length-1})`:prim;
+      }
     }
   }
   return{colorName,muted,activityLine,hasProg};
@@ -109,9 +131,9 @@ function zoneCanvasPaint(z,sel,layerActId,nameForActivityId,opts){
   }else{
     const name=disp.colorName||'Activity';
     fill=actColor(name,Math.max(0.34,fa));
-    stroke=dayRing?'rgba(37,99,235,0.98)':actColor(name,sa);
+    stroke=actColor(name,dayRing?1:sa);
   }
-  const strokeW=dayRing?0.62:sel?0.48:0.42;
+  const strokeW=dayRing?0.58:sel?0.48:0.42;
   return{fill,stroke,strokeWidth:strokeW,disp,hasItems};
 }
 
@@ -963,6 +985,9 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     const slug=(d?.name||'plan').replace(/[^\w\-]+/g,'_').slice(0,40);
     titleRestoreRef.current=document.title;
     document.title=`119HS_Zones_${slug}_${dateKey(new Date())}`;
+    flushSync(()=>{
+      setView({scale:1,tx:0,ty:0});
+    });
     document.body.classList.add('zone-setup-print-mode');
     requestAnimationFrame(()=>window.print());
   }
@@ -1111,6 +1136,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
           {drawData?.image_data?(
             <>
               <div
+                className="zone-setup-no-print"
                 style={{
                   position:'absolute',
                   top:10,
@@ -1128,70 +1154,6 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                   <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(0.1)}}>+</button>
                   <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(-0.1)}}>−</button>
                   <button type="button" style={{...zoomBtnStyle,fontSize:11}} onClick={e=>{e.stopPropagation();resetView()}}>Reset</button>
-                </div>
-                <div
-                  className="zone-setup-day-legend"
-                  style={{
-                    pointerEvents:'auto',
-                    background:'rgba(255,255,255,0.96)',
-                    backdropFilter:'blur(12px)',
-                    WebkitBackdropFilter:'blur(12px)',
-                    borderRadius:12,
-                    border:`1px solid ${T.hairline}`,
-                    boxShadow:'0 6px 22px rgba(26,26,46,0.14)',
-                    padding:'12px 12px 10px',
-                    minWidth:200,
-                    maxWidth:'min(340px, 52vw)',
-                    maxHeight:'min(52vh, 420px)',
-                    overflowY:'auto',
-                    flexShrink:1,
-                    WebkitPrintColorAdjust:'exact',
-                    printColorAdjust:'exact',
-                  }}
-                >
-                  <div style={{fontSize:9,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.14em',marginBottom:6}}>
-                    Activities on this day
-                  </div>
-                  <div style={{fontSize:12,fontWeight:800,color:T.text,lineHeight:1.25,marginBottom:10}}>
-                    {formatShort(new Date(`${zoneVizDate}T12:00:00`))}
-                  </div>
-                  {vizDayActivityLegend.length===0?(
-                    <div style={{fontSize:11,color:T.muted,lineHeight:1.45}}>
-                      No programme rows touch this date on this drawing. Move the date above or check Programme.
-                    </div>
-                  ):(
-                    <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                      {vizDayActivityLegend.map((name)=>{
-                        const n=itemsForZoneDay.filter((r)=>String(r.activity_name).trim()===name).length;
-                        return (
-                          <div key={name} style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                            <span
-                              title={name}
-                              style={{
-                                width:16,
-                                height:22,
-                                borderRadius:4,
-                                flexShrink:0,
-                                marginTop:1,
-                                background:actColor(name,0.92),
-                                border:`2px solid ${actColor(name,1)}`,
-                                boxSizing:'border-box',
-                                WebkitPrintColorAdjust:'exact',
-                                printColorAdjust:'exact',
-                              }}
-                            />
-                            <span style={{fontSize:11,color:T.text,fontWeight:700,lineHeight:1.35,flex:1,minWidth:0}}>
-                              {name}
-                              {n>1?<span style={{fontWeight:600,color:T.faint,marginLeft:6}}>({n} blocks)</span>:null}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  <div style={{fontSize:9,color:T.faint,marginTop:10,lineHeight:1.35}}>
-                    Swatches use the same colours as zone fills for this date.
-                  </div>
                 </div>
                 {drawingActivityStrip.length>0&&(
                   <div
@@ -1277,6 +1239,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       return a?.name||'';
                     };
                     const prows=programmeByZoneId.get(Number(z.id))||[];
+                    const dayPick=pickProgrammeRowForDay(prows,zoneVizDate);
                     const dayRing=zoneIdsWithActivityOnDay.has(Number(z.id));
                     const paint=zoneCanvasPaint(z,sel,layerFilterActId,resolveAct,{
                       programmeRowsSorted:prows,
@@ -1290,11 +1253,25 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                     const zoneTitle=zoneDisplayName(z.name)||'Zone';
                     const subFill=d.muted||!d.colorName?'rgba(100,100,110,0.95)':actColor(d.colorName,0.93);
                     const labelLines=[];
-                    if(towerStr)labelLines.push({text:towerStr,fs:1.18,fill:'rgba(26,26,46,0.55)',weight:700});
-                    labelLines.push({text:zoneTitle,fs:1.88,fill:'rgba(26,26,46,0.96)',weight:800});
-                    if(hasSub)labelLines.push({text:d.activityLine,fs:1.34,fill:subFill,weight:650});
+                    if(dayPick){
+                      const done=String(dayPick.status||'').toLowerCase()==='done';
+                      if(towerStr)labelLines.push({text:towerStr,fs:1.12,fill:'rgba(26,26,46,0.55)',weight:700});
+                      labelLines.push({text:zoneTitle,fs:1.52,fill:'rgba(26,26,46,0.96)',weight:800});
+                      labelLines.push({
+                        text:`${abbrevActivity(dayPick.activity_name)}${done?' ✓':''}`,
+                        fs:1.18,
+                        fill:subFill,
+                        weight:700,
+                      });
+                    }else{
+                      if(towerStr)labelLines.push({text:towerStr,fs:1.18,fill:'rgba(26,26,46,0.55)',weight:700});
+                      labelLines.push({text:zoneTitle,fs:1.88,fill:'rgba(26,26,46,0.96)',weight:800});
+                      if(hasSub)labelLines.push({text:d.activityLine,fs:1.34,fill:subFill,weight:650});
+                    }
                     const mid=(labelLines.length-1)/2;
-                    const tipLine=d.activityLine||[towerStr,zoneTitle].filter(Boolean).join(' ')||'Zone';
+                    const tipLine=dayPick
+                      ? `${[towerStr,zoneTitle].filter(Boolean).join(' ')} — ${dayPick.activity_name} (${dayPick.status||'planned'})`
+                      : (d.activityLine||[towerStr,zoneTitle].filter(Boolean).join(' ')||'Zone');
                     return<g key={z.id}>
                       <title>{`${towerStr} ${zoneTitle}`.trim()}: {tipLine}</title>
                       {g.kind==='rect'?(
@@ -1354,6 +1331,66 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       width={Math.abs(rectDraft.w)} height={Math.abs(rectDraft.h)} fill="rgba(66,133,244,0.12)" stroke="rgba(66,133,244,0.85)" strokeWidth={0.35}/>
                   )}
                 </svg>
+                <div
+                  className="zone-setup-on-plate-day-key"
+                  style={{
+                    position:'absolute',
+                    top:'1.2%',
+                    right:'1.2%',
+                    zIndex:12,
+                    maxWidth:'38%',
+                    minWidth:120,
+                    pointerEvents:'none',
+                    background:'rgba(255,255,255,0.96)',
+                    borderRadius:10,
+                    border:`1px solid ${T.hairline}`,
+                    boxShadow:'0 4px 18px rgba(26,26,46,0.12)',
+                    padding:'8px 10px 8px',
+                    WebkitPrintColorAdjust:'exact',
+                    printColorAdjust:'exact',
+                  }}
+                >
+                  <div style={{fontSize:8,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>
+                    Activities on this day
+                  </div>
+                  <div style={{fontSize:11,fontWeight:800,color:T.text,lineHeight:1.2,marginBottom:8}}>
+                    {formatShort(new Date(`${zoneVizDate}T12:00:00`))}
+                  </div>
+                  {vizDayActivityLegend.length===0?(
+                    <div style={{fontSize:9,color:T.muted,lineHeight:1.35}}>No programme on this date.</div>
+                  ):(
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {vizDayActivityLegend.map((name)=>{
+                        const n=itemsForZoneDay.filter((r)=>String(r.activity_name).trim()===name).length;
+                        return (
+                          <div key={name} style={{display:'flex',alignItems:'flex-start',gap:6}}>
+                            <span
+                              style={{
+                                width:12,
+                                height:16,
+                                borderRadius:3,
+                                flexShrink:0,
+                                marginTop:1,
+                                background:actColor(name,0.92),
+                                border:`1.5px solid ${actColor(name,1)}`,
+                                boxSizing:'border-box',
+                                WebkitPrintColorAdjust:'exact',
+                                printColorAdjust:'exact',
+                              }}
+                            />
+                            <span style={{fontSize:9,color:T.text,fontWeight:700,lineHeight:1.3,flex:1,minWidth:0}}>
+                              {name}
+                              {n>1?<span style={{fontWeight:600,color:T.faint,marginLeft:4}}>(×{n})</span>:null}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{fontSize:7,color:T.faint,marginTop:6,lineHeight:1.3}}>
+                    Zone labels show abbreviations — full names here.
+                  </div>
+                </div>
               </div>
             </>
           ):(
