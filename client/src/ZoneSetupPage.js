@@ -6,9 +6,7 @@ import {isPdfFile,rasterizePdfFirstPageToJpeg} from './pdfDrawing';
 import {
   actColor,
   PROJECT_PROGRAMME_TAB,
-  GW_SEQUENCE,
-  INT_SEQUENCE,
-  parseZoneNameForActivity,
+  zoneDisplayName,
   dateKey,
   formatShort,
 } from './constants';
@@ -101,18 +99,19 @@ function zoneCanvasPaint(z,sel,layerActId,nameForActivityId,opts){
   const disp=mergedZoneDisplay(z,layerActId,nameForActivityId,programmeRowsSorted,dayHighlightKey);
   const hasItems=disp.hasProg;
   const hasColor=Boolean(disp.colorName&&!disp.muted);
-  const fa=sel?0.34:hasItems?0.3:hasColor?0.28:0.14;
-  const sa=sel?0.95:hasColor||hasItems?0.62:0.55;
+  /** Stronger fills so zones read clearly over the JPEG plan (still translucent). */
+  const fa=sel?0.46:hasItems?0.42:hasColor?0.38:0.16;
+  const sa=sel?1:hasColor||hasItems?0.92:0.58;
   let fill,stroke;
   if(!hasColor&&!hasItems){
-    fill=sel?'rgba(120,120,130,0.16)':'rgba(120,120,130,0.07)';
-    stroke=dayRing?'rgba(37,99,235,0.9)':sel?'rgba(90,90,100,0.88)':'rgba(90,90,100,0.35)';
+    fill=sel?'rgba(95,95,105,0.22)':'rgba(115,115,125,0.1)';
+    stroke=dayRing?'rgba(37,99,235,0.95)':sel?'rgba(55,55,65,0.88)':'rgba(75,75,85,0.42)';
   }else{
     const name=disp.colorName||'Activity';
-    fill=actColor(name,Math.max(0.25,fa));
-    stroke=dayRing?'rgba(37,99,235,0.95)':actColor(name,sa);
+    fill=actColor(name,Math.max(0.34,fa));
+    stroke=dayRing?'rgba(37,99,235,0.98)':actColor(name,sa);
   }
-  const strokeW=dayRing?0.55:0.35;
+  const strokeW=dayRing?0.62:sel?0.48:0.42;
   return{fill,stroke,strokeWidth:strokeW,disp,hasItems};
 }
 
@@ -319,12 +318,6 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
   const filteredActs=activities.filter(a=>a.type===typeTab);
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
-  /** Sequence used to parse zone names (tower | activity patterns, etc.). */
-  const activitySeqForParse=useMemo(()=>{
-    if(typeTab==='groundworks')return GW_SEQUENCE;
-    if(typeTab==='internals')return INT_SEQUENCE;
-    return filteredActs.map((a)=>a.name);
-  },[typeTab,filteredActs]);
   /** Activities present on this drawing’s zones (stack + legacy activity_id) — legend + layer filter. */
   const drawingActivityStrip=useMemo(()=>{
     const seen=new Map();
@@ -423,6 +416,20 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     out.sort(cmpZoneDayRow);
     return out;
   },[itemsForZoneDay,zones]);
+
+  /** Distinct activity names on the selected day — drives the top-right day legend. */
+  const vizDayActivityLegend=useMemo(()=>{
+    const names=[];
+    const seen=new Set();
+    for(const r of itemsForZoneDay){
+      const n=String(r.activity_name||'').trim();
+      if(!n||seen.has(n))continue;
+      seen.add(n);
+      names.push(n);
+    }
+    names.sort((a,b)=>a.localeCompare(b));
+    return names;
+  },[itemsForZoneDay]);
 
   function shiftZoneVizDate(delta){
     const d=new Date(`${zoneVizDate}T12:00:00`);
@@ -1040,7 +1047,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
       {drawData?.image_data&&drawingActivityStrip.length>0&&(
         <div className="zone-setup-no-print" style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,overflowX:'auto',flexShrink:0,flexWrap:'nowrap'}}>
           <span style={{fontSize:10,color:T.muted,flexShrink:0,fontWeight:600}}>Layer filter</span>
-          <span style={{fontSize:9,color:T.faint,flexShrink:0}}>Key on map ↗</span>
+          <span style={{fontSize:9,color:T.faint,flexShrink:0}}>See map ↗</span>
           <button type="button" onClick={()=>setLayerFilterActId(null)} style={{...S.btn,padding:'4px 10px',fontSize:10,flexShrink:0,whiteSpace:'nowrap',...(layerFilterActId==null?S.btnAct:{})}} title="Colour each zone by its first programme activity">All layers</button>
           {drawingActivityStrip.map((a)=>(
             <button key={a.activity_id} type="button" onClick={()=>setLayerFilterActId(Number(layerFilterActId)===Number(a.activity_id)?null:a.activity_id)} style={{...S.btn,padding:'4px 10px',fontSize:10,whiteSpace:'nowrap',flexShrink:0,maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',...(Number(layerFilterActId)===Number(a.activity_id)?S.btnAct:{})}} title={a.name}>{a.name}</button>
@@ -1113,33 +1120,100 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                   flexDirection:'row-reverse',
                   gap:10,
                   alignItems:'flex-start',
-                  maxWidth:'calc(100% - 20px)',
+                  maxWidth:'min(calc(100% - 20px), 560px)',
                   pointerEvents:'none',
                 }}
               >
-                <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'stretch',pointerEvents:'auto'}}>
+                <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'stretch',pointerEvents:'auto',flexShrink:0}}>
                   <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(0.1)}}>+</button>
                   <button type="button" style={zoomBtnStyle} onClick={e=>{e.stopPropagation();zoomBy(-0.1)}}>−</button>
                   <button type="button" style={{...zoomBtnStyle,fontSize:11}} onClick={e=>{e.stopPropagation();resetView()}}>Reset</button>
+                </div>
+                <div
+                  className="zone-setup-day-legend"
+                  style={{
+                    pointerEvents:'auto',
+                    background:'rgba(255,255,255,0.96)',
+                    backdropFilter:'blur(12px)',
+                    WebkitBackdropFilter:'blur(12px)',
+                    borderRadius:12,
+                    border:`1px solid ${T.hairline}`,
+                    boxShadow:'0 6px 22px rgba(26,26,46,0.14)',
+                    padding:'12px 12px 10px',
+                    minWidth:200,
+                    maxWidth:'min(340px, 52vw)',
+                    maxHeight:'min(52vh, 420px)',
+                    overflowY:'auto',
+                    flexShrink:1,
+                    WebkitPrintColorAdjust:'exact',
+                    printColorAdjust:'exact',
+                  }}
+                >
+                  <div style={{fontSize:9,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.14em',marginBottom:6}}>
+                    Activities on this day
+                  </div>
+                  <div style={{fontSize:12,fontWeight:800,color:T.text,lineHeight:1.25,marginBottom:10}}>
+                    {formatShort(new Date(`${zoneVizDate}T12:00:00`))}
+                  </div>
+                  {vizDayActivityLegend.length===0?(
+                    <div style={{fontSize:11,color:T.muted,lineHeight:1.45}}>
+                      No programme rows touch this date on this drawing. Move the date above or check Programme.
+                    </div>
+                  ):(
+                    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                      {vizDayActivityLegend.map((name)=>{
+                        const n=itemsForZoneDay.filter((r)=>String(r.activity_name).trim()===name).length;
+                        return (
+                          <div key={name} style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                            <span
+                              title={name}
+                              style={{
+                                width:16,
+                                height:22,
+                                borderRadius:4,
+                                flexShrink:0,
+                                marginTop:1,
+                                background:actColor(name,0.92),
+                                border:`2px solid ${actColor(name,1)}`,
+                                boxSizing:'border-box',
+                                WebkitPrintColorAdjust:'exact',
+                                printColorAdjust:'exact',
+                              }}
+                            />
+                            <span style={{fontSize:11,color:T.text,fontWeight:700,lineHeight:1.35,flex:1,minWidth:0}}>
+                              {name}
+                              {n>1?<span style={{fontWeight:600,color:T.faint,marginLeft:6}}>({n} blocks)</span>:null}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{fontSize:9,color:T.faint,marginTop:10,lineHeight:1.35}}>
+                    Swatches use the same colours as zone fills for this date.
+                  </div>
                 </div>
                 {drawingActivityStrip.length>0&&(
                   <div
                     style={{
                       pointerEvents:'auto',
-                      background:'rgba(255,255,255,0.93)',
-                      backdropFilter:'blur(10px)',
-                      WebkitBackdropFilter:'blur(10px)',
+                      background:'rgba(255,255,255,0.96)',
+                      backdropFilter:'blur(12px)',
+                      WebkitBackdropFilter:'blur(12px)',
                       borderRadius:12,
                       border:`1px solid ${T.hairline}`,
-                      boxShadow:shadowCard,
+                      boxShadow:'0 6px 22px rgba(26,26,46,0.14)',
                       padding:'10px 10px 8px',
-                      minWidth:168,
-                      maxWidth:236,
-                      maxHeight:'min(40vh,300px)',
+                      minWidth:176,
+                      maxWidth:240,
+                      maxHeight:'min(36vh,280px)',
                       overflowY:'auto',
+                      flexShrink:0,
+                      WebkitPrintColorAdjust:'exact',
+                      printColorAdjust:'exact',
                     }}
                   >
-                    <div style={{fontSize:9,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.14em',marginBottom:8}}>Programme key</div>
+                    <div style={{fontSize:9,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.14em',marginBottom:8}}>Zone stack · filter</div>
                     <button
                       type="button"
                       onClick={(e)=>{e.stopPropagation();setLayerFilterActId(null)}}
@@ -1151,8 +1225,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       }}
                       title="Fill colour from first activity in each zone’s stack"
                     >
-                      <span style={{width:12,height:12,borderRadius:3,flexShrink:0,background:'linear-gradient(135deg,rgba(120,120,130,0.35),rgba(160,160,170,0.2))',border:`1px solid ${T.hairline}`}} aria-hidden/>
-                      <span style={{flex:1,lineHeight:1.25}}>Default stack colours</span>
+                      <span style={{width:14,height:14,borderRadius:4,flexShrink:0,background:'linear-gradient(135deg,rgba(120,120,130,0.45),rgba(160,160,170,0.28))',border:`1px solid rgba(26,26,46,0.2)`}} aria-hidden/>
+                      <span style={{flex:1,lineHeight:1.25}}>All layers</span>
                     </button>
                     {drawingActivityStrip.map((a)=>{
                       const on=Number(layerFilterActId)===Number(a.activity_id);
@@ -1164,15 +1238,15 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                         style={{
                           display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
                           border:'none',borderRadius:8,cursor:'pointer',padding:'6px 8px',marginBottom:3,
-                          background:on?'rgba(66,133,244,0.16)':'transparent',
+                          background:on?'rgba(66,133,244,0.18)':'transparent',
                           color:T.text,fontSize:11,fontWeight:600,
                         }}
-                        title={`Highlight zones where this activity appears in the stack — click again to clear`}
+                        title="Highlight zones where this activity appears in the stack"
                       >
                         <span style={{
-                          width:12,height:12,borderRadius:3,flexShrink:0,
-                          background:actColor(a.name,0.82),
-                          boxShadow:`inset 0 0 0 1px ${actColor(a.name,0.35)}`,
+                          width:14,height:14,borderRadius:4,flexShrink:0,
+                          background:actColor(a.name,0.9),
+                          boxShadow:`inset 0 0 0 1px ${actColor(a.name,0.55)}`,
                         }} aria-hidden/>
                         <span style={{flex:1,lineHeight:1.25,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.name}</span>
                       </button>
@@ -1212,9 +1286,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                     const {cx,cy}=zoneLabelAnchor(g,z);
                     const d=paint.disp;
                     const hasSub=Boolean(d.activityLine);
-                    const parsed=parseZoneNameForActivity(z.name,activitySeqForParse);
                     const towerStr=(z.tower||'').trim();
-                    const zoneTitle=(parsed.zoneLabel||z.name||'').trim()||'Zone';
+                    const zoneTitle=zoneDisplayName(z.name)||'Zone';
                     const subFill=d.muted||!d.colorName?'rgba(100,100,110,0.95)':actColor(d.colorName,0.93);
                     const labelLines=[];
                     if(towerStr)labelLines.push({text:towerStr,fs:1.18,fill:'rgba(26,26,46,0.55)',weight:700});

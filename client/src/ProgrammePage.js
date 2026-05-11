@@ -444,14 +444,15 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   const planNm=primaryProgrammeNameByZone.get(Number(z.id))||'';
                   const actNm=stackNm||planNm;
                   const hasProg=Boolean(planNm);
-                  const fill=sel?(actNm?actColor(actNm,0.32):'rgba(120,120,130,0.12)'):(actNm?actColor(actNm,hasProg?0.3:0.28):'rgba(120,120,130,0.06)');
-                  const stroke=sel?(actNm?actColor(actNm,0.88):'rgba(90,90,100,0.85)'):(actNm?actColor(actNm,0.45):'rgba(90,90,100,0.35)');
+                  const fill=sel?(actNm?actColor(actNm,0.44):'rgba(95,95,105,0.2)'):(actNm?actColor(actNm,hasProg?0.42:0.38):'rgba(115,115,125,0.1)');
+                  const stroke=sel?(actNm?actColor(actNm,0.98):'rgba(55,55,65,0.88)'):(actNm?actColor(actNm,0.92):'rgba(75,75,85,0.45)');
                   const bb=g.kind==='rect'?g:{x:z.x,y:z.y,w:z.w,h:z.h};
                   const cx=(bb.x||0)+(bb.w||0)/2,cy=(bb.y||0)+(bb.h||0)/2;
+                  const sw=sel?0.48:0.42;
                   const frag=g.kind==='rect'?(
-                    <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={fill} stroke={stroke} strokeWidth={0.35}/>
+                    <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={fill} stroke={stroke} strokeWidth={sw}/>
                   ):(
-                    <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={0.35}/>
+                    <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={sw}/>
                   );
                   const nActs=sortZoneActs(z).length;
                   const tip=`${z.tower||''} ${z.name||''}`.trim();

@@ -125,5 +125,20 @@ export function parseZoneNameForActivity(raw,sequence){
   }
   return{zoneLabel:zoneLabel||r,linkedActivity};
 }
+
+/**
+ * Label shown on floor plans and zone lists: the full stored zone name.
+ * If the name uses the explicit `Zone label | notes` convention, only the left segment is shown.
+ * Unlike {@link parseZoneNameForActivity}, this does **not** strip activity keywords (e.g. "Pour" in "Pour 5").
+ */
+export function zoneDisplayName(raw){
+  const r=String(raw??'').trim();
+  if(!r)return'';
+  if(r.includes('|')){
+    const left=r.split('|').map(x=>x.trim())[0];
+    return left||r;
+  }
+  return r;
+}
 export function formatDate(d){const D=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"],M=["January","February","March","April","May","June","July","August","September","October","November","December"];return`${D[d.getDay()]} ${d.getDate()} ${M[d.getMonth()]}`}
 export function formatShort(d){const D=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${D[d.getDay()]} ${d.getDate()} ${M[d.getMonth()]}`}
