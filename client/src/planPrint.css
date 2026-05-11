@@ -50,3 +50,74 @@ body.plan-print-mode {
     padding: 3px 4px !important;
   }
 }
+
+/* Zone setup: print floor plan + zone markup (hides chrome & side panel). */
+body.zone-setup-print-mode .app-header-bar,
+body.zone-setup-print-mode .app-date-nav,
+body.zone-setup-print-mode .app-bottom-nav {
+  display: none !important;
+}
+
+body.zone-setup-print-mode {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@media print {
+  body.zone-setup-print-mode {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: #fff !important;
+  }
+
+  body.zone-setup-print-mode .zone-setup-no-print {
+    display: none !important;
+  }
+
+  body.zone-setup-print-mode .zone-setup-print-root {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  body.zone-setup-print-mode .zone-setup-print-root aside {
+    display: none !important;
+  }
+
+  body.zone-setup-print-mode .zone-setup-print-canvas {
+    overflow: visible !important;
+    min-height: 70vh !important;
+  }
+}
+
+/* Zones: print only the selected day's activity table (not the floor plan). */
+.zone-setup-day-print-sheet {
+  display: none;
+}
+
+body.zone-setup-day-list-print-mode .app-header-bar,
+body.zone-setup-day-list-print-mode .app-date-nav,
+body.zone-setup-day-list-print-mode .app-bottom-nav {
+  display: none !important;
+}
+
+body.zone-setup-day-list-print-mode {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+@media print {
+  body.zone-setup-day-list-print-mode {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: #fff !important;
+  }
+
+  body.zone-setup-day-list-print-mode .zone-setup-print-root > *:not(.zone-setup-day-print-sheet) {
+    display: none !important;
+  }
+
+  body.zone-setup-day-list-print-mode .zone-setup-day-print-sheet {
+    display: block !important;
+  }
+}

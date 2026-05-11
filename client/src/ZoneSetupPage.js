@@ -9,9 +9,13 @@ import {
   GW_SEQUENCE,
   INT_SEQUENCE,
   parseZoneNameForActivity,
+  dateKey,
+  formatShort,
 } from './constants';
+import { dayKeyInItemRange } from './planUtils';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {buildActivityLookup,resolveActivityId,alignTemplateDurations} from './programmeSchedule';
+import './planPrint.css';
 
 function sortZoneActs(z){
   return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
@@ -67,19 +71,56 @@ function zoneLayerDisplay(z, layerActId, nameForActivityId){
   return{colorName:null,muted:true,activityLine:''};
 }
 
-function zoneCanvasPaint(z, sel, layerActId, nameForActivityId){
-  const disp=zoneLayerDisplay(z,layerActId,nameForActivityId);
-  const fa=sel?0.22:0.12;
-  const sa=sel?0.95:0.55;
-  let fill,stroke;
-  if(!disp.colorName||disp.muted){
-    fill=sel?'rgba(120,120,130,0.16)':'rgba(120,120,130,0.07)';
-    stroke=sel?'rgba(90,90,100,0.88)':'rgba(90,90,100,0.35)';
-  }else{
-    fill=actColor(disp.colorName,fa);
-    stroke=actColor(disp.colorName,sa);
+function mergedZoneDisplay(z,layerActId,nameForActivityId,programmeRowsSorted,dayHighlightKey){
+  const base=zoneLayerDisplay(z,layerActId,nameForActivityId);
+  const hasProg=programmeRowsSorted&&programmeRowsSorted.length>0;
+  let colorName=base.colorName;
+  let muted=base.muted;
+  let activityLine=base.activityLine;
+  if(hasProg){
+    const sorted=programmeRowsSorted;
+    const prim=sorted[0]?.activity_name;
+    if(prim){
+      colorName=prim;
+      muted=false;
+    }
+    if(dayHighlightKey){
+      const onDay=sorted.filter((r)=>dayKeyInItemRange(dayHighlightKey,r.start_date,r.end_date));
+      if(onDay.length){
+        activityLine=onDay.map((r)=>`${r.activity_name} (${r.status||'planned'})`).join(' · ');
+      }
+    }else if((!activityLine||base.muted)&&prim){
+      activityLine=sorted.length>1?`${prim} (+${sorted.length-1})`:prim;
+    }
   }
-  return{fill,stroke,disp};
+  return{colorName,muted,activityLine,hasProg};
+}
+
+function zoneCanvasPaint(z,sel,layerActId,nameForActivityId,opts){
+  const{programmeRowsSorted=[],dayHighlightKey=null,dayRing=false}=opts||{};
+  const disp=mergedZoneDisplay(z,layerActId,nameForActivityId,programmeRowsSorted,dayHighlightKey);
+  const hasItems=disp.hasProg;
+  const hasColor=Boolean(disp.colorName&&!disp.muted);
+  const fa=sel?0.34:hasItems?0.3:hasColor?0.28:0.14;
+  const sa=sel?0.95:hasColor||hasItems?0.62:0.55;
+  let fill,stroke;
+  if(!hasColor&&!hasItems){
+    fill=sel?'rgba(120,120,130,0.16)':'rgba(120,120,130,0.07)';
+    stroke=dayRing?'rgba(37,99,235,0.9)':sel?'rgba(90,90,100,0.88)':'rgba(90,90,100,0.35)';
+  }else{
+    const name=disp.colorName||'Activity';
+    fill=actColor(name,Math.max(0.25,fa));
+    stroke=dayRing?'rgba(37,99,235,0.95)':actColor(name,sa);
+  }
+  const strokeW=dayRing?0.55:0.35;
+  return{fill,stroke,strokeWidth:strokeW,disp,hasItems};
+}
+
+function cmpZoneDayRow(a,b){
+  const opt={numeric:true,sensitivity:'base'};
+  const tw=String(a.tower||'').localeCompare(String(b.tower||''),undefined,opt);
+  if(tw!==0)return tw;
+  return String(a.zoneName||'').localeCompare(String(b.zoneName||''),undefined,opt);
 }
 
 function buildActivitiesFromTemplate(t, activitiesOfTab){
@@ -255,6 +296,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   const[zTower,setZTower]=useState('T2');
   const[draftZoneActs,setDraftZoneActs]=useState([]);
   const[layerFilterActId,setLayerFilterActId]=useState(null);
+  const[zoneVizDate,setZoneVizDate]=useState(()=>dateKey(new Date()));
+  const[drawingPlanItems,setDrawingPlanItems]=useState([]);
   const[addActPick,setAddActPick]=useState('');
   const[uploadErr,setUploadErr]=useState('');
   const viewportRef=useRef(null);
@@ -323,6 +366,69 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     api.getDrawing(selDraw).then(d=>setDrawData(d));
     api.getZonesForDrawing(selDraw).then(z=>setZones(z||[]));
   },[selDraw]);
+
+  useEffect(()=>{
+    if(!selDraw){setDrawingPlanItems([]);return}
+    let cancelled=false;
+    (async()=>{
+      const rows=await api.getProgrammeItemsByDrawing(selDraw);
+      if(!cancelled)setDrawingPlanItems(Array.isArray(rows)?rows:[]);
+    })();
+    return()=>{cancelled=true};
+  },[selDraw]);
+
+  const programmeByZoneId=useMemo(()=>{
+    const m=new Map();
+    for(const row of drawingPlanItems){
+      const id=Number(row.zone_id);
+      if(!Number.isFinite(id))continue;
+      if(!m.has(id))m.set(id,[]);
+      m.get(id).push(row);
+    }
+    for(const arr of m.values()){
+      arr.sort((a,b)=>String(a.start_date).localeCompare(String(b.start_date)));
+    }
+    return m;
+  },[drawingPlanItems]);
+
+  const itemsForZoneDay=useMemo(
+    ()=>drawingPlanItems.filter((r)=>dayKeyInItemRange(zoneVizDate,r.start_date,r.end_date)),
+    [drawingPlanItems,zoneVizDate],
+  );
+
+  const zoneIdsWithActivityOnDay=useMemo(()=>{
+    const s=new Set();
+    for(const r of itemsForZoneDay){
+      const id=Number(r.zone_id);
+      if(Number.isFinite(id))s.add(id);
+    }
+    return s;
+  },[itemsForZoneDay]);
+
+  const dayListRows=useMemo(()=>{
+    const zmap=new Map(zones.map((z)=>[Number(z.id),z]));
+    const byZone=new Map();
+    for(const r of itemsForZoneDay){
+      const id=Number(r.zone_id);
+      if(!byZone.has(id))byZone.set(id,[]);
+      byZone.get(id).push(r);
+    }
+    const out=[];
+    for(const[zid,rows]of byZone){
+      const z=zmap.get(zid);
+      const tower=String(z?.tower??rows[0]?.tower??'').trim();
+      const zoneName=String(z?.name??rows[0]?.zone_name??'').trim()||`Zone ${zid}`;
+      out.push({zid,tower,zoneName,rows});
+    }
+    out.sort(cmpZoneDayRow);
+    return out;
+  },[itemsForZoneDay,zones]);
+
+  function shiftZoneVizDate(delta){
+    const d=new Date(`${zoneVizDate}T12:00:00`);
+    d.setDate(d.getDate()+delta);
+    setZoneVizDate(dateKey(d));
+  }
 
   useEffect(()=>{
     if(selectedId!=null){
@@ -830,6 +936,37 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
   const zoomBtnStyle={...S.btn,padding:'6px 10px',fontSize:14,fontWeight:700,minWidth:36,lineHeight:1};
 
+  const titleRestoreRef=useRef(typeof document!=='undefined'?document.title:'');
+  useEffect(()=>{
+    const afterPrint=()=>{
+      document.body.classList.remove('zone-setup-print-mode');
+      document.body.classList.remove('zone-setup-day-list-print-mode');
+      if(titleRestoreRef.current)document.title=titleRestoreRef.current;
+    };
+    window.addEventListener('afterprint',afterPrint);
+    return()=>{
+      window.removeEventListener('afterprint',afterPrint);
+      document.body.classList.remove('zone-setup-print-mode');
+      document.body.classList.remove('zone-setup-day-list-print-mode');
+    };
+  },[]);
+
+  function runZonePrint(){
+    const d=drawings.find(x=>Number(x.id)===Number(selDraw));
+    const slug=(d?.name||'plan').replace(/[^\w\-]+/g,'_').slice(0,40);
+    titleRestoreRef.current=document.title;
+    document.title=`119HS_Zones_${slug}_${dateKey(new Date())}`;
+    document.body.classList.add('zone-setup-print-mode');
+    requestAnimationFrame(()=>window.print());
+  }
+
+  function runDayListPrint(){
+    titleRestoreRef.current=document.title;
+    document.title=`119HS_Zones_Day_${zoneVizDate}`;
+    document.body.classList.add('zone-setup-day-list-print-mode');
+    requestAnimationFrame(()=>window.print());
+  }
+
   let canvasCursor='default';
   if(panning||(spaceDown.current&&panDrag.current))canvasCursor='grabbing';
   else if(tool==='pan'||spaceDown.current)canvasCursor='grab';
@@ -851,8 +988,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   const {scale,tx,ty}=view;
 
   return(
-    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg,minHeight:0}}>
-      <div className="app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+    <div className="zone-setup-print-root" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg,minHeight:0}}>
+      <div className="zone-setup-no-print app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
         {drawings.filter(d=>d.tab===tab).length>0&&(
           <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
             {drawings.filter(d=>d.tab===tab).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
@@ -871,19 +1008,37 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
           </>}
         </>}
         {isAdmin&&selDraw&&<button type="button" onClick={removeDrawing} style={{...S.btn,...S.btnDanger,padding:'6px 10px',fontSize:11}}>Delete drawing</button>}
+        {drawData?.image_data&&(
+          <button type="button" onClick={()=>runZonePrint()} style={{...S.btn,...S.btnPrimary,padding:'6px 12px',fontSize:11}} title="Browser print / Save as PDF">
+            Print plan
+          </button>
+        )}
       </div>
       {uploadErr&&(
-        <div style={{padding:'8px 12px',fontSize:12,color:'#c0392b',background:'rgba(231,76,60,0.08)',borderBottom:`1px solid ${T.hairline}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
+        <div className="zone-setup-no-print" style={{padding:'8px 12px',fontSize:12,color:'#c0392b',background:'rgba(231,76,60,0.08)',borderBottom:`1px solid ${T.hairline}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
           <span>{uploadErr}</span>
           <button type="button" onClick={()=>setUploadErr('')} style={{...S.btn,padding:'4px 10px',fontSize:11,flexShrink:0}}>Dismiss</button>
         </div>
       )}
-      <div style={{padding:'8px 12px',fontSize:11,color:T.muted,lineHeight:1.45,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.05)'}}>
+      <div className="zone-setup-no-print" style={{padding:'8px 12px',fontSize:11,color:T.muted,lineHeight:1.45,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.05)'}}>
         <strong style={{color:T.text}}>Zone Setup</strong> — scroll to zoom · <strong>Pan</strong> tool or middle-click drag or Space+drag to pan · <strong>double-click a zone</strong> to edit in the panel · Esc cancels drawing
       </div>
 
+      {drawData?.image_data&&(
+        <div className="zone-setup-no-print" style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:8,padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.06)'}}>
+          <span style={{fontSize:10,color:T.muted,fontWeight:700}}>Day on plan</span>
+          <button type="button" onClick={()=>shiftZoneVizDate(-1)} style={{...S.btn,padding:'4px 10px',fontSize:11}} aria-label="Previous day">←</button>
+          <input type="date" value={zoneVizDate} onChange={(e)=>setZoneVizDate(e.target.value||zoneVizDate)} style={{...S.input,fontSize:12,padding:'4px 8px'}}/>
+          <button type="button" onClick={()=>shiftZoneVizDate(1)} style={{...S.btn,padding:'4px 10px',fontSize:11}} aria-label="Next day">→</button>
+          <button type="button" onClick={()=>setZoneVizDate(dateKey(new Date()))} style={{...S.btn,padding:'4px 10px',fontSize:11}}>Today</button>
+          <button type="button" onClick={()=>runDayListPrint()} style={{...S.btn,...S.btnPrimary,padding:'4px 12px',fontSize:11}} title="Print zone list for this day">
+            Print day list
+          </button>
+          <span style={{fontSize:10,color:T.faint}}>{formatShort(new Date(`${zoneVizDate}T12:00:00`))}</span>
+        </div>
+      )}
       {drawData?.image_data&&drawingActivityStrip.length>0&&(
-        <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,overflowX:'auto',flexShrink:0,flexWrap:'nowrap'}}>
+        <div className="zone-setup-no-print" style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,overflowX:'auto',flexShrink:0,flexWrap:'nowrap'}}>
           <span style={{fontSize:10,color:T.muted,flexShrink:0,fontWeight:600}}>Layer filter</span>
           <span style={{fontSize:9,color:T.faint,flexShrink:0}}>Key on map ↗</span>
           <button type="button" onClick={()=>setLayerFilterActId(null)} style={{...S.btn,padding:'4px 10px',fontSize:10,flexShrink:0,whiteSpace:'nowrap',...(layerFilterActId==null?S.btnAct:{})}} title="Colour each zone by its first programme activity">All layers</button>
@@ -897,6 +1052,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         <div
           ref={viewportRef}
           tabIndex={-1}
+          className="zone-setup-print-canvas"
           style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',overflow:'hidden',cursor:canvasCursor}}
           onMouseDown={onMouseDownViewport}
           onDoubleClick={onDoubleClickViewport}
@@ -1046,7 +1202,13 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       const a=activities.find(x=>Number(x.id)===Number(id));
                       return a?.name||'';
                     };
-                    const paint=zoneCanvasPaint(z,sel,layerFilterActId,resolveAct);
+                    const prows=programmeByZoneId.get(Number(z.id))||[];
+                    const dayRing=zoneIdsWithActivityOnDay.has(Number(z.id));
+                    const paint=zoneCanvasPaint(z,sel,layerFilterActId,resolveAct,{
+                      programmeRowsSorted:prows,
+                      dayHighlightKey:zoneVizDate,
+                      dayRing,
+                    });
                     const {cx,cy}=zoneLabelAnchor(g,z);
                     const d=paint.disp;
                     const hasSub=Boolean(d.activityLine);
@@ -1059,11 +1221,13 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                     labelLines.push({text:zoneTitle,fs:1.88,fill:'rgba(26,26,46,0.96)',weight:800});
                     if(hasSub)labelLines.push({text:d.activityLine,fs:1.34,fill:subFill,weight:650});
                     const mid=(labelLines.length-1)/2;
+                    const tipLine=d.activityLine||[towerStr,zoneTitle].filter(Boolean).join(' ')||'Zone';
                     return<g key={z.id}>
+                      <title>{`${towerStr} ${zoneTitle}`.trim()}: {tipLine}</title>
                       {g.kind==='rect'?(
-                        <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={0.35}/>
+                        <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth||0.35}/>
                       ):(
-                        <polygon points={svgPolygonPoints(g)} fill={paint.fill} stroke={paint.stroke} strokeWidth={0.35}/>
+                        <polygon points={svgPolygonPoints(g)} fill={paint.fill} stroke={paint.stroke} strokeWidth={paint.strokeWidth||0.35}/>
                       )}
                       {labelLines.map((L,i)=>(
                         <text
@@ -1129,8 +1293,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         </div>
 
         {hasFloorPlan&&(
-          <aside style={{
-            width:252,
+          <aside className="zone-setup-no-print" style={{
+            width:280,
             flexShrink:0,
             borderLeft:'1px solid rgba(26,26,46,0.06)',
             background:'rgba(252,252,254,0.92)',
@@ -1141,6 +1305,33 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
             minHeight:0,
             boxShadow:'inset 1px 0 0 rgba(255,255,255,0.7)',
           }}>
+            <div style={{padding:12,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.04)',flexShrink:0}}>
+              <div style={{fontSize:10,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>
+                This day on drawing
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>{formatShort(new Date(`${zoneVizDate}T12:00:00`))}</div>
+              {dayListRows.length===0?(
+                <div style={{fontSize:11,color:T.muted,lineHeight:1.45}}>No programme rows touch this date for zones on this plan.</div>
+              ):(
+                <ul style={{margin:0,padding:0,listStyle:'none',display:'flex',flexDirection:'column',gap:10}}>
+                  {dayListRows.map(({zid,tower,zoneName,rows})=>(
+                    <li key={zid} style={{fontSize:11,color:T.text,lineHeight:1.4}}>
+                      <div style={{fontWeight:700}}>{[tower,zoneName].filter(Boolean).join(' · ')}</div>
+                      {rows.map((r)=>(
+                        <div key={r.id} style={{marginTop:4,color:T.muted}}>
+                          <span style={{fontWeight:600,color:T.text}}>{r.activity_name}</span>
+                          {' · '}
+                          <span>{String(r.status||'planned')}</span>
+                          {r.start_date&&r.end_date?(
+                            <span style={{fontSize:10,color:T.faint}}>{' '}({r.start_date} → {r.end_date})</span>
+                          ):null}
+                        </div>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             {!showSidebar?(
               <div style={{padding:'16px 14px',display:'flex',flexDirection:'column',gap:8,justifyContent:'flex-start'}}>
                 <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:'0.02em'}}>Zone details</span>
@@ -1240,6 +1431,39 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
             )}
           </aside>
         )}
+      </div>
+
+      <div className="zone-setup-day-print-sheet" aria-hidden="true">
+        <div style={{ fontFamily: 'system-ui,sans-serif', padding: 16, color: '#1a1a2e' }}>
+          <h1 style={{ fontSize: 18, margin: '0 0 4px', fontWeight: 800 }}>Zone programme — {formatShort(new Date(`${zoneVizDate}T12:00:00`))}</h1>
+          <div style={{ fontSize: 11, color: '#666', marginBottom: 14 }}>{drawings.find((x) => Number(x.id) === Number(selDraw))?.name || 'Drawing'}</div>
+          {dayListRows.length === 0 ? (
+            <p style={{ fontSize: 12 }}>No activities scheduled on this date.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <thead>
+                <tr style={{ textAlign: 'left', borderBottom: '1px solid #ccc' }}>
+                  <th style={{ padding: '6px 8px' }}>Zone</th>
+                  <th style={{ padding: '6px 8px' }}>Tower</th>
+                  <th style={{ padding: '6px 8px' }}>Activity</th>
+                  <th style={{ padding: '6px 8px' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayListRows.flatMap(({ tower, zoneName, rows }) =>
+                  rows.map((r) => (
+                    <tr key={r.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: '6px 8px', fontWeight: 600 }}>{zoneName}</td>
+                      <td style={{ padding: '6px 8px' }}>{tower || '—'}</td>
+                      <td style={{ padding: '6px 8px' }}>{r.activity_name}</td>
+                      <td style={{ padding: '6px 8px' }}>{String(r.status || 'planned')}</td>
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </div>
   );

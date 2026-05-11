@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as api from './api';
 import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
 import { T, S } from './uiTheme';
-import { calendarDaysBetween, zoneRowLabel, abbrevActivity } from './planUtils';
+import { calendarDaysBetween, zoneRowLabel, abbrevActivity, isWeekendKey } from './planUtils';
+import ActivityInspectModal from './ActivityInspectModal';
 
 function parseKey(k) {
   const [y, m, d] = String(k || '')
@@ -47,6 +48,16 @@ function todayMarkerPct(winStart, winEnd) {
 }
 
 export default function GanttPage({ tab, userTabs, isAdmin }) {
+  const [inspect, setInspect] = useState(null);
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    const fn = () => setCoarsePointer(mq.matches);
+    fn();
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
+
   const [rows, setRows] = useState([]);
   const [loadErr, setLoadErr] = useState('');
   const [preset, setPreset] = useState('fit');
@@ -242,10 +253,17 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
   }
 
   const todayPct = todayMarkerPct(startDate, endDate);
-  const timelineMinWidth = Math.max(480, dayTicks.length * 6);
+  const todayKeyStr = dateKey(new Date());
+  const timelineMinWidth = Math.max(520, dayTicks.length * 11);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
+      <ActivityInspectModal
+        open={Boolean(inspect)}
+        onClose={() => setInspect(null)}
+        row={inspect?.row}
+        zoneLabel={inspect?.zoneLabel}
+      />
       <div className="app-page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <div>
@@ -383,34 +401,96 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
         )}
         {zoneRows.length > 0 && (
           <div style={{ minWidth: 720 }}>
-            <div style={{ display: 'flex', alignItems: 'stretch', marginBottom: 6, position: 'sticky', top: 0, zIndex: 2, background: T.bg, paddingBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'stretch', marginBottom: 2, position: 'sticky', top: 0, zIndex: 2, background: T.bg, paddingBottom: 4 }}>
               <div style={{ width: 200, flexShrink: 0, fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Zone / activity
               </div>
+              <div style={{ flex: 1, minWidth: timelineMinWidth, position: 'relative', height: 18, borderBottom: `1px solid ${T.hairline}` }}>
+                {dayTicks.map((dk, i) => {
+                  const d = parseKey(dk);
+                  const g = barGeometry(startDate, endDate, dk, dk);
+                  if (!g || !d) return null;
+                  const showMonth = i === 0 || d.getDate() === 1;
+                  if (!showMonth) return null;
+                  return (
+                    <span
+                      key={`m-${dk}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${g.leftPct}%`,
+                        fontSize: 9,
+                        fontWeight: 800,
+                        color: T.text,
+                        letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {d.toLocaleDateString('en-GB', { month: 'short', year: d.getMonth() === 0 && i > 0 ? 'numeric' : undefined })}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'stretch', marginBottom: 6, position: 'sticky', top: 18, zIndex: 2, background: T.bg, paddingBottom: 2 }}>
+              <div style={{ width: 200, flexShrink: 0 }} />
               <div
                 style={{
                   flex: 1,
                   minWidth: timelineMinWidth,
                   position: 'relative',
-                  height: 22,
+                  height: 24,
                   borderBottom: `1px solid ${T.hairline}`,
                 }}
               >
                 {dayTicks.map((dk, i) => {
+                  const g = barGeometry(startDate, endDate, dk, dk);
+                  if (!g) return null;
                   const d = parseKey(dk);
-                  const show = i === 0 || d.getDate() === 1 || d.getDay() === 1;
+                  const weekIdx = Math.floor(i / 7);
+                  const alt = weekIdx % 2 === 1;
+                  const wk = isWeekendKey(dk);
+                  const isToday = dk === todayKeyStr;
+                  return (
+                    <div
+                      key={`bg-${dk}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${g.leftPct}%`,
+                        width: `${g.widthPct}%`,
+                        top: 0,
+                        bottom: 0,
+                        background: isToday
+                          ? 'rgba(66,133,244,0.2)'
+                          : wk
+                            ? 'rgba(100,100,120,0.14)'
+                            : alt
+                              ? 'rgba(26,26,46,0.07)'
+                              : 'rgba(26,26,46,0.03)',
+                        pointerEvents: 'none',
+                        zIndex: 0,
+                      }}
+                    />
+                  );
+                })}
+                {dayTicks.map((dk, i) => {
+                  const d = parseKey(dk);
+                  const g = barGeometry(startDate, endDate, dk, dk);
+                  if (!d || !g) return null;
+                  const isMonday = d.getDay() === 1;
+                  const show = i === 0 || d.getDate() === 1 || isMonday;
                   if (!show) return null;
-                  const leftPct = barGeometry(startDate, endDate, dk, dk)?.leftPct ?? 0;
                   return (
                     <span
                       key={dk}
                       style={{
                         position: 'absolute',
-                        left: `${leftPct}%`,
-                        transform: 'translateX(-2px)',
+                        left: `${g.leftPct}%`,
+                        transform: 'translateX(1px)',
                         fontSize: 9,
                         color: T.muted,
                         whiteSpace: 'nowrap',
+                        zIndex: 1,
                       }}
                     >
                       {formatShort(d)}
@@ -445,15 +525,36 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                     )}
                   </div>
                   <div style={{ flex: 1, minWidth: timelineMinWidth, position: 'relative', height: 28, padding: '4px 0' }}>
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: '4px 0',
-                        borderRadius: 6,
-                        background: `repeating-linear-gradient(90deg, transparent, transparent 14px, ${T.hairline} 14px, ${T.hairline} 15px)`,
-                        opacity: 0.35,
-                      }}
-                    />
+                    {dayTicks.map((dk, i) => {
+                      const g = barGeometry(startDate, endDate, dk, dk);
+                      if (!g) return null;
+                      const weekIdx = Math.floor(i / 7);
+                      const alt = weekIdx % 2 === 1;
+                      const wk = isWeekendKey(dk);
+                      const isToday = dk === todayKeyStr;
+                      return (
+                        <div
+                          key={`rowbg-${z.zone_id}-${dk}`}
+                          style={{
+                            position: 'absolute',
+                            left: `${g.leftPct}%`,
+                            width: `${g.widthPct}%`,
+                            top: 4,
+                            bottom: 4,
+                            background: isToday
+                              ? 'rgba(66,133,244,0.14)'
+                              : wk
+                                ? 'rgba(100,100,120,0.1)'
+                                : alt
+                                  ? 'rgba(26,26,46,0.06)'
+                                  : 'rgba(26,26,46,0.02)',
+                            pointerEvents: 'none',
+                            zIndex: 0,
+                            borderRadius: 4,
+                          }}
+                        />
+                      );
+                    })}
                     {todayPct != null && (
                       <div
                         title="Today"
@@ -464,8 +565,8 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                           bottom: 0,
                           width: 2,
                           marginLeft: -1,
-                          background: 'rgba(231,76,60,0.85)',
-                          zIndex: 1,
+                          background: 'rgba(231,76,60,0.9)',
+                          zIndex: 2,
                           pointerEvents: 'none',
                         }}
                       />
@@ -480,7 +581,21 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                       return (
                         <div
                           key={it.id}
-                          title={tip}
+                          title={coarsePointer ? undefined : tip}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (coarsePointer) {
+                              setInspect({ row: it, zoneLabel: zoneRowLabel(z) });
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if ((e.key === 'Enter' || e.key === ' ') && coarsePointer) {
+                              e.preventDefault();
+                              setInspect({ row: it, zoneLabel: zoneRowLabel(z) });
+                            }
+                          }}
                           style={{
                             position: 'absolute',
                             left: `${geo.leftPct}%`,
@@ -499,7 +614,8 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                             fontWeight: 700,
                             color: T.text,
                             textShadow: '0 0 6px rgba(255,255,255,0.9)',
-                            cursor: 'default',
+                            cursor: coarsePointer ? 'pointer' : 'default',
+                            zIndex: 3,
                           }}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{abbrevActivity(it.activity_name)}</span>

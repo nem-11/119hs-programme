@@ -19,7 +19,7 @@ import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
 import GanttPage from './GanttPage';
-import { alignTemplateDurations } from './programmeSchedule';
+import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 
 class AppErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null};}
@@ -43,6 +43,54 @@ function flattenDaySections(dayData){
     else Object.entries(zones).forEach(([z,acts])=>sections.push({pfx:z==='_default'?tw:`${tw}|${z}`,acts}));
   });
   return sections;
+}
+
+/** Build Update-tab sections from plan programme rows (same completion keys as legacy schedule). */
+function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
+  const sel = new Set(selectedTabs);
+  const bySection = new Map();
+  const metaByCk = new Map();
+  for (const r of rows || []) {
+    if (!r || !sel.has(String(r.drawing_tab || ''))) continue;
+    const dk = String(dateK);
+    if (dk < String(r.start_date) || dk > String(r.end_date)) continue;
+    const tw = String(r.tower || '').trim();
+    const zn = String(r.zone_name || '').trim();
+    const act = String(r.activity_name || '').trim();
+    if (!tw || !zn || !act) continue;
+    const pfx = `${tw}|${zn}`;
+    const label = `${tw} ${zn}`;
+    const ck = `${pfx}|${act}`;
+    if (!bySection.has(pfx)) {
+      bySection.set(pfx, { label, pfx, acts: [], drawing_tab: r.drawing_tab });
+    }
+    const sec = bySection.get(pfx);
+    if (!sec.acts.includes(act)) sec.acts.push(act);
+    if (!metaByCk.has(ck)) {
+      metaByCk.set(ck, {
+        programme_item_id: r.id,
+        zone_id: r.zone_id,
+        start_date: r.start_date,
+        end_date: r.end_date,
+        status: r.status,
+      });
+    }
+  }
+  const sections = [...bySection.values()];
+  sections.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+  return { sections, metaByCk };
+}
+
+function seqForDrawingTab(t) {
+  if (t === PROJECT_PROGRAMME_TAB) return [];
+  if (t === 'groundworks') return GW_SEQUENCE;
+  return INT_SEQUENCE;
+}
+
+function dayOrdKey(key) {
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(key || '').trim());
+  if (!m) return 0;
+  return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000);
 }
 const MILESTONE_STATUSES=['planned','critical','unconfirmed','gated'];
 
@@ -1046,79 +1094,457 @@ function buildLookAheadExportRows(gw,int_s,project_s,comp,anchorDate,tab){
   return rows;
 }
 
-function UpdPage({date,sched,comp,tab,canTick,userName,onSubmitted}){
-  const k=dateKey(date),dayData=sched[k]||{},
-    seq=tab===PROJECT_PROGRAMME_TAB?[]:tab==='groundworks'?GW_SEQUENCE:INT_SEQUENCE;
-  const compSnap=comp[k]?JSON.stringify(comp[k]):'';
-  const[draft,setDraft]=useState(()=>comp[k]?JSON.parse(JSON.stringify(comp[k])):{});
-  const[submitting,setSubmitting]=useState(false);
-  const[toast,setToast]=useState('');
-  useEffect(()=>{setDraft(comp[k]?JSON.parse(JSON.stringify(comp[k])):{});},[k,compSnap]);
-  const dc=draft;
-  const sections=[];Object.entries(dayData).forEach(([tw,zones])=>{if(Array.isArray(zones))sections.push({label:tw,acts:zones,pfx:tw});else Object.entries(zones).forEach(([z,acts])=>{sections.push({label:z==='_default'?tw:`${tw} ${z}`,acts,pfx:z==='_default'?tw:`${tw}|${z}`})})});
-  let tot=0,done=0;sections.forEach(s=>{tot+=s.acts.length;s.acts.forEach(a=>{if(dc[`${s.pfx}|${a}`])done++})});const pct=tot>0?Math.round(done/tot*100):0;
-  const baseline=comp[k]?JSON.parse(JSON.stringify(comp[k])):{};
-  const allKeys=new Set([...Object.keys(baseline),...Object.keys(dc)]);
-  let dirty=false;for(const ck of allKeys){if(!!baseline[ck]!==!!dc[ck]){dirty=true;break}}
-  function toggleDraft(ck){if(!canTick)return;setDraft(p=>{const n={...p};if(n[ck])delete n[ck];else n[ck]={by:userName,at:'…'};return n})}
-  async function submitDay(){
-    if(!canTick||submitting||!dirty)return;
-    setSubmitting(true);setToast('');
-    try{
-      const fresh=await api.getCompletions();if(!fresh)return;
-      const cur=fresh[k]||{};
-      const want=dc;
-      const keys=new Set([...Object.keys(cur),...Object.keys(want)]);
-      for(const ck of keys){const w=!!want[ck],h=!!cur[ck];if(w!==h)await api.toggleCompletion(k,ck,userName)}
-      if(onSubmitted)await onSubmitted();
-      setToast('Locked in — programme updated for everyone');
-      setTimeout(()=>setToast(''),2800);
-    }catch(_){setToast('Submit failed — try again')}
-    finally{setSubmitting(false)}
+function UpdPage({ date, comp, tab, userTabs, isAdmin, canTick, userName, onSubmitted }) {
+  const k = dateKey(date);
+  const [planRows, setPlanRows] = useState([]);
+  const [loadErr, setLoadErr] = useState('');
+  const [selectedTabs, setSelectedTabs] = useState(() => (userTabs?.length ? [...userTabs] : ['groundworks', 'internals']));
+
+  useEffect(() => {
+    setSelectedTabs([tab]);
+  }, [tab]);
+
+  const reloadPlan = useCallback(async () => {
+    setLoadErr('');
+    try {
+      let data;
+      if (isAdmin) {
+        data = await api.getPlanProgrammeFullExport();
+        if (!Array.isArray(data)) data = await api.getPlanProgramme();
+      } else {
+        data = await api.getPlanProgramme();
+      }
+      setPlanRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setLoadErr(e?.message || 'Failed to load programme');
+      setPlanRows([]);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    void reloadPlan();
+  }, [reloadPlan]);
+
+  const permittedTabs = useMemo(() => {
+    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
+    if (!isAdmin) return base;
+    const s = new Set(base);
+    for (const r of planRows) {
+      if (r.drawing_tab) s.add(String(r.drawing_tab));
+    }
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [isAdmin, userTabs, planRows]);
+
+  useEffect(() => {
+    if (!permittedTabs.length) return;
+    setSelectedTabs((prev) => {
+      const kept = prev.filter((t) => permittedTabs.includes(t));
+      if (kept.length) return kept;
+      return [permittedTabs[0]];
+    });
+  }, [permittedTabs]);
+
+  const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
+
+  const { sections, metaByCk } = useMemo(
+    () => buildUpdateSectionsFromPlanRows(planRows, k, selectedTabs),
+    [planRows, k, selectedTabs]
+  );
+
+  const compSnap = comp[k] ? JSON.stringify(comp[k]) : '';
+  const [draft, setDraft] = useState(() => (comp[k] ? JSON.parse(JSON.stringify(comp[k])) : {}));
+  const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState('');
+  useEffect(() => {
+    setDraft(comp[k] ? JSON.parse(JSON.stringify(comp[k])) : {});
+  }, [k, compSnap]);
+
+  const dc = draft;
+  let tot = 0,
+    done = 0;
+  sections.forEach((s) => {
+    tot += s.acts.length;
+    s.acts.forEach((a) => {
+      if (dc[`${s.pfx}|${a}`]) done++;
+    });
+  });
+  const pct = tot > 0 ? Math.round((done / tot) * 100) : 0;
+  const baseline = comp[k] ? JSON.parse(JSON.stringify(comp[k])) : {};
+  const allKeys = new Set([...Object.keys(baseline), ...Object.keys(dc)]);
+  let dirty = false;
+  for (const ck of allKeys) {
+    if (!!baseline[ck] !== !!dc[ck]) {
+      dirty = true;
+      break;
+    }
   }
-  return<div style={{overflowY:'auto',flex:1,background:T.bg,paddingBottom:canTick&&dirty?80:12}}>
-    {tot>0&&<div style={{margin:12,padding:'14px 16px',background:'linear-gradient(135deg,rgba(66,133,244,0.1),rgba(46,178,96,0.06))',borderRadius:14,border:'1px solid rgba(66,133,244,0.18)',boxShadow:'0 2px 8px rgba(26,26,46,0.04)'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}><span style={{fontSize:14,fontWeight:700,color:T.text}}>Today's Progress</span><span style={{fontSize:28,fontWeight:800,color:pct===100?'rgba(46,178,96,1)':'rgba(66,133,244,1)'}}>{pct}%</span></div>
-      <div style={{height:6,background:'rgba(26,26,46,0.08)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:pct===100?'rgba(46,178,96,0.85)':'rgba(66,133,244,0.85)',borderRadius:3,transition:'width 0.4s'}}/></div>
-      <div style={{fontSize:11,color:T.muted,marginTop:6}}>{done}/{tot} activities</div>
-    </div>}
-    {sections.length>0&&<div style={{margin:'0 12px 12px',padding:'16px 18px',background:T.surface,borderRadius:14,border:`1px solid ${T.hairline}`,boxShadow:'0 2px 10px rgba(26,26,46,0.05)'}}>
-      <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:6}}>Lock in for the team</div>
-      <p style={{fontSize:11,color:T.muted,margin:'0 0 14px',lineHeight:1.5,maxWidth:'42em'}}>
-        Tick scheduled activities on this screen, then submit. Your completions are saved on the server and feed overall programme completion for everyone (dashboard, lookahead, exports).
-      </p>
-      {canTick?(
-        <>
-          <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{width:'100%',...S.btn,...(dirty&&!submitting?S.btnPrimary:{}),padding:'14px 18px',fontSize:14,fontWeight:700,opacity:!dirty||submitting?0.5:1,cursor:!dirty||submitting?'default':'pointer'}}>{submitting?'Saving…':dirty?'Submit & lock in day’s progress':'No changes to submit yet'}</button>
-          {dirty&&!submitting&&<div style={{fontSize:10,color:'rgba(244,165,26,0.95)',marginTop:10,fontWeight:600}}>Unsaved ticks — submit to sync the programme.</div>}
-        </>
-      ):<div style={{fontSize:11,color:T.muted,lineHeight:1.45}}>Viewer access: you can see progress but cannot submit updates.</div>}
-    </div>}
-    {sections.map(sec=>{const sd=sec.acts.filter(a=>!!dc[`${sec.pfx}|${a}`]).length;const zSub=zoneSubtitleForSection(sec,seq,tab);
-      return<div key={sec.label} style={{margin:'8px 12px',borderRadius:14,overflow:'hidden',border:`1px solid ${T.hairline}`,background:T.surface,boxShadow:'0 1px 4px rgba(26,26,46,0.04)'}}>
-        <div style={{padding:'12px 16px',background:'rgba(26,26,46,0.03)',display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:13,fontWeight:700,color:T.text}}>{sec.label}</div>
-            {zSub&&<div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.4}}>{zSub}</div>}
-          </div>
-          <span style={{fontSize:11,color:sd===sec.acts.length?'rgba(46,178,96,0.85)':T.muted,fontWeight:600,flexShrink:0}}>{sd}/{sec.acts.length}</span>
+
+  function toggleProgrammeTab(t) {
+    setSelectedTabs((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) {
+        next.delete(t);
+        if (next.size === 0) return [t];
+      } else {
+        next.add(t);
+      }
+      return permittedTabs.filter((x) => next.has(x));
+    });
+  }
+
+  function selectAllProgrammeTabs() {
+    setSelectedTabs([...permittedTabs]);
+  }
+
+  function toggleDraft(ck) {
+    if (!canTick) return;
+    setDraft((p) => {
+      const n = { ...p };
+      if (n[ck]) delete n[ck];
+      else n[ck] = { by: userName, at: '…' };
+      return n;
+    });
+  }
+
+  async function submitDay() {
+    if (!canTick || submitting || !dirty) return;
+    setSubmitting(true);
+    setToast('');
+    try {
+      const fresh = await api.getCompletions();
+      if (!fresh) return;
+      const cur = fresh[k] || {};
+      const want = dc;
+      const keys = new Set([...Object.keys(cur), ...Object.keys(want)]);
+      for (const ck of keys) {
+        const w = !!want[ck],
+          h = !!cur[ck];
+        if (w !== h) await api.toggleCompletion(k, ck, userName);
+      }
+
+      const newTicks = [];
+      for (const ck of keys) {
+        if (want[ck] && !cur[ck]) newTicks.push(ck);
+      }
+      const zoneToMeta = new Map();
+      for (const ck of newTicks) {
+        const m = metaByCk.get(ck);
+        if (!m) continue;
+        const zid = Number(m.zone_id);
+        if (!Number.isFinite(zid)) continue;
+        if (!zoneToMeta.has(zid)) zoneToMeta.set(zid, []);
+        zoneToMeta.get(zid).push(m);
+      }
+      const patchById = new Map();
+      for (const [zid, metas] of zoneToMeta) {
+        const maxEnd = metas.reduce((mx, m) => (String(m.end_date) > mx ? String(m.end_date) : mx), '');
+        let savedMax = 0;
+        for (const m of metas) {
+          if (String(m.end_date) <= k) continue;
+          savedMax = Math.max(savedMax, dayOrdKey(m.end_date) - dayOrdKey(k));
+        }
+        if (savedMax <= 0 || !maxEnd) continue;
+        for (const r of planRows) {
+          if (Number(r.zone_id) !== zid) continue;
+          if (String(r.status || '').toLowerCase() === 'done') continue;
+          if (String(r.start_date) <= maxEnd) continue;
+          patchById.set(Number(r.id), {
+            start_date: addCalendarDays(r.start_date, -savedMax),
+            end_date: addCalendarDays(r.end_date, -savedMax),
+          });
+        }
+      }
+      if (patchById.size) {
+        const msg = `${patchById.size} later planned row(s) in the same zone(s) can move earlier by the calendar days you saved. Apply this pull to the programme?`;
+        if (window.confirm(msg)) {
+          for (const [id, patch] of patchById) {
+            const out = await api.updateProgrammeItem(id, patch);
+            if (out && out.error) {
+              window.alert(String(out.error));
+              break;
+            }
+          }
+        }
+      }
+
+      if (onSubmitted) await onSubmitted();
+      await reloadPlan();
+      setToast('Locked in — programme updated for everyone');
+      setTimeout(() => setToast(''), 2800);
+    } catch (_) {
+      setToast('Submit failed — try again');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ overflowY: 'auto', flex: 1, background: T.bg, paddingBottom: canTick && dirty ? 80 : 12 }}>
+      {permittedTabs.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '12px 12px 0', padding: '10px 12px', background: T.surface, borderRadius: 12, border: `1px solid ${T.hairline}` }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Scope</span>
+          <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
+          {permittedTabs.length > 1 && (
+            <button type="button" onClick={selectAllProgrammeTabs} style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}>
+              All tabs
+            </button>
+          )}
+          {permittedTabs.map((t) => {
+            const on = selectedSet.has(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => toggleProgrammeTab(t)}
+                style={{
+                  ...S.btn,
+                  ...(on ? S.btnAct : {}),
+                  padding: '6px 12px',
+                  fontSize: 11,
+                  opacity: on ? 1 : 0.55,
+                  boxShadow: on ? undefined : 'inset 0 0 0 1px rgba(26,26,46,0.08)',
+                }}
+              >
+                <span style={{ marginRight: 6, opacity: 0.85 }} aria-hidden>
+                  {on ? '✓' : '○'}
+                </span>
+                {drawingTabLabel(t)}
+              </button>
+            );
+          })}
         </div>
-        {sec.acts.map((act,ai)=>{const ck=`${sec.pfx}|${act}`,cm=dc[ck],dn=!!cm,si=seq.indexOf(act);
-          return<div key={`${act}-${ai}`} onClick={()=>toggleDraft(ck)} style={{padding:'14px 16px',borderTop:`1px solid ${T.hairline}`,display:'flex',alignItems:'center',gap:14,cursor:canTick?'pointer':'default',background:dn?'rgba(46,178,96,0.06)':'transparent',minHeight:56}}>
-            <div style={{width:36,height:36,borderRadius:10,flexShrink:0,border:`2.5px solid ${dn?'rgba(46,178,96,0.65)':'rgba(26,26,46,0.12)'}`,background:dn?'rgba(46,178,96,0.14)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,color:dn?'rgba(46,178,96,0.95)':'transparent'}}>{dn?'✓':''}</div>
-            <div style={{flex:1}}><div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}><span style={{width:8,height:8,borderRadius:2,background:actColor(act,0.9),flexShrink:0}}/><span style={{fontSize:14,fontWeight:600,color:dn?'rgba(46,178,96,0.85)':T.text,textDecoration:dn?'line-through':'none'}}>{act}</span></div>
-            {si>=0&&<div style={{fontSize:9,color:T.faint,marginLeft:14}}>Step {si+1}/{seq.length}{si>0?` — after ${seq[si-1]}`:''}</div>}
-            {dn&&cm&&cm.at!=='…'&&<div style={{fontSize:9,color:T.faint,marginLeft:14,marginTop:1}}>{cm.by} at {cm.at}</div>}
-            {dn&&cm&&cm.at==='…'&&<div style={{fontSize:9,color:T.muted,marginLeft:14,marginTop:1}}>Pending submit</div>}</div>
-          </div>})}
-      </div>})}
-    {sections.length===0&&<div style={{textAlign:'center',padding:'60px 20px',color:T.faint}}><div style={{fontSize:15,fontWeight:600}}>No activities scheduled</div></div>}
-    {canTick&&dirty&&<div style={{position:'fixed',left:0,right:0,bottom:56,padding:'10px 14px',background:T.surface,borderTop:`1px solid ${T.hairline}`,boxShadow:'0 -4px 20px rgba(26,26,46,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,zIndex:20,maxWidth:560,margin:'0 auto'}}>
-      <span style={{fontSize:11,color:T.muted,flex:1}}>Lock in to save today’s ticks and refresh overall programme completion.</span>
-      <button type="button" onClick={submitDay} disabled={!dirty||submitting} style={{...S.btn,...S.btnPrimary,padding:'12px 22px',whiteSpace:'nowrap',opacity:!dirty||submitting?0.45:1}}>{submitting?'Saving…':'Submit & lock in'}</button>
-    </div>}
-    {toast&&<div style={{position:'fixed',bottom:130,left:'50%',transform:'translateX(-50%)',background:toast.includes('failed')?'rgba(231,76,60,0.95)':'rgba(46,178,96,0.95)',color:'#fff',padding:'8px 16px',borderRadius:10,fontSize:13,fontWeight:600,zIndex:25,boxShadow:'0 4px 16px rgba(0,0,0,0.15)'}}>{toast}</div>}
-  </div>;
+      )}
+      {loadErr && (
+        <div style={{ margin: '10px 12px', fontSize: 12, color: '#c0392b' }}>
+          {loadErr}{' '}
+          <button type="button" onClick={() => void reloadPlan()} style={{ ...S.btn, padding: '4px 10px', fontSize: 11 }}>
+            Retry
+          </button>
+        </div>
+      )}
+      {tot > 0 && (
+        <div
+          style={{
+            margin: 12,
+            padding: '14px 16px',
+            background: 'linear-gradient(135deg,rgba(66,133,244,0.1),rgba(46,178,96,0.06))',
+            borderRadius: 14,
+            border: '1px solid rgba(66,133,244,0.18)',
+            boxShadow: '0 2px 8px rgba(26,26,46,0.04)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: T.text }}>Today&apos;s Progress</span>
+            <span style={{ fontSize: 28, fontWeight: 800, color: pct === 100 ? 'rgba(46,178,96,1)' : 'rgba(66,133,244,1)' }}>{pct}%</span>
+          </div>
+          <div style={{ height: 6, background: 'rgba(26,26,46,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${pct}%`,
+                background: pct === 100 ? 'rgba(46,178,96,0.85)' : 'rgba(66,133,244,0.85)',
+                borderRadius: 3,
+                transition: 'width 0.4s',
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
+            {done}/{tot} activities
+          </div>
+        </div>
+      )}
+      {sections.length > 0 && (
+        <div
+          style={{
+            margin: '0 12px 12px',
+            padding: '16px 18px',
+            background: T.surface,
+            borderRadius: 14,
+            border: `1px solid ${T.hairline}`,
+            boxShadow: '0 2px 10px rgba(26,26,46,0.05)',
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 6 }}>Lock in for the team</div>
+          <p style={{ fontSize: 11, color: T.muted, margin: '0 0 14px', lineHeight: 1.5, maxWidth: '42em' }}>
+            Tick scheduled activities on this screen, then submit. Your completions are saved on the server and feed overall programme completion for everyone (dashboard, lookahead, exports).
+          </p>
+          {canTick ? (
+            <>
+              <button
+                type="button"
+                onClick={submitDay}
+                disabled={!dirty || submitting}
+                style={{
+                  width: '100%',
+                  ...S.btn,
+                  ...(dirty && !submitting ? S.btnPrimary : {}),
+                  padding: '14px 18px',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  opacity: !dirty || submitting ? 0.5 : 1,
+                  cursor: !dirty || submitting ? 'default' : 'pointer',
+                }}
+              >
+                {submitting ? 'Saving…' : dirty ? 'Submit & lock in day’s progress' : 'No changes to submit yet'}
+              </button>
+              {dirty && !submitting && (
+                <div style={{ fontSize: 10, color: 'rgba(244,165,26,0.95)', marginTop: 10, fontWeight: 600 }}>Unsaved ticks — submit to sync the programme.</div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.45 }}>Viewer access: you can see progress but cannot submit updates.</div>
+          )}
+        </div>
+      )}
+      {sections.map((sec) => {
+        const sd = sec.acts.filter((a) => !!dc[`${sec.pfx}|${a}`]).length;
+        const seq = seqForDrawingTab(sec.drawing_tab);
+        const zSub = zoneSubtitleForSection(sec, seq, sec.drawing_tab);
+        return (
+          <div
+            key={sec.label}
+            style={{
+              margin: '8px 12px',
+              borderRadius: 14,
+              overflow: 'hidden',
+              border: `1px solid ${T.hairline}`,
+              background: T.surface,
+              boxShadow: '0 1px 4px rgba(26,26,46,0.04)',
+            }}
+          >
+            <div style={{ padding: '12px 16px', background: 'rgba(26,26,46,0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{sec.label}</div>
+                <div style={{ fontSize: 10, color: T.faint, marginTop: 2 }}>{drawingTabLabel(sec.drawing_tab)}</div>
+                {zSub && (
+                  <div style={{ fontSize: 11, color: T.muted, marginTop: 4, lineHeight: 1.4 }}>{zSub}</div>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: sd === sec.acts.length ? 'rgba(46,178,96,0.85)' : T.muted, fontWeight: 600, flexShrink: 0 }}>
+                {sd}/{sec.acts.length}
+              </span>
+            </div>
+            {sec.acts.map((act, ai) => {
+              const ck = `${sec.pfx}|${act}`,
+                cm = dc[ck],
+                dn = !!cm,
+                si = seq.indexOf(act);
+              return (
+                <div
+                  key={`${act}-${ai}`}
+                  onClick={() => toggleDraft(ck)}
+                  style={{
+                    padding: '14px 16px',
+                    borderTop: `1px solid ${T.hairline}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    cursor: canTick ? 'pointer' : 'default',
+                    background: dn ? 'rgba(46,178,96,0.06)' : 'transparent',
+                    minHeight: 56,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      flexShrink: 0,
+                      border: `2.5px solid ${dn ? 'rgba(46,178,96,0.65)' : 'rgba(26,26,46,0.12)'}`,
+                      background: dn ? 'rgba(46,178,96,0.14)' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 18,
+                      color: dn ? 'rgba(46,178,96,0.95)' : 'transparent',
+                    }}
+                  >
+                    {dn ? '✓' : ''}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: actColor(act, 0.9), flexShrink: 0 }} />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: dn ? 'rgba(46,178,96,0.85)' : T.text, textDecoration: dn ? 'line-through' : 'none' }}>{act}</span>
+                    </div>
+                    {si >= 0 && seq.length > 0 && (
+                      <div style={{ fontSize: 9, color: T.faint, marginLeft: 14 }}>
+                        Step {si + 1}/{seq.length}
+                        {si > 0 ? ` — after ${seq[si - 1]}` : ''}
+                      </div>
+                    )}
+                    {dn && cm && cm.at !== '…' && (
+                      <div style={{ fontSize: 9, color: T.faint, marginLeft: 14, marginTop: 1 }}>
+                        {cm.by} at {cm.at}
+                      </div>
+                    )}
+                    {dn && cm && cm.at === '…' && (
+                      <div style={{ fontSize: 9, color: T.muted, marginLeft: 14, marginTop: 1 }}>
+                        Pending submit
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+      {sections.length === 0 && !loadErr && (
+        <div style={{ textAlign: 'center', padding: '60px 20px', color: T.faint }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>No activities scheduled</div>
+          <div style={{ fontSize: 12, marginTop: 8, color: T.muted, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+            For this date, no programme rows match your selected tabs. Widen scope above or add dates on the Programme page.
+          </div>
+        </div>
+      )}
+      {canTick && dirty && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 56,
+            padding: '10px 14px',
+            background: T.surface,
+            borderTop: `1px solid ${T.hairline}`,
+            boxShadow: '0 -4px 20px rgba(26,26,46,0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            zIndex: 20,
+            maxWidth: 560,
+            margin: '0 auto',
+          }}
+        >
+          <span style={{ fontSize: 11, color: T.muted, flex: 1 }}>Lock in to save today’s ticks and refresh overall programme completion.</span>
+          <button type="button" onClick={submitDay} disabled={!dirty || submitting} style={{ ...S.btn, ...S.btnPrimary, padding: '12px 22px', whiteSpace: 'nowrap', opacity: !dirty || submitting ? 0.45 : 1 }}>
+            {submitting ? 'Saving…' : 'Submit & lock in'}
+          </button>
+        </div>
+      )}
+      {toast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 130,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: toast.includes('failed') ? 'rgba(231,76,60,0.95)' : 'rgba(46,178,96,0.95)',
+            color: '#fff',
+            padding: '8px 16px',
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 600,
+            zIndex: 25,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+          }}
+        >
+          {toast}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function LAPage({gw,int_s,project_s,comp,date,tab}){
@@ -1338,7 +1764,7 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} sched={sched} comp={comp} tab={tab} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}

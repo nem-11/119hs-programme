@@ -78,6 +78,7 @@ function completionKeyAllowedForUser(db, user, dateStr, key) {
     const day = sched[String(dateStr)];
     if (scheduleDayCompletionKeys(day).has(String(key))) return true;
   }
+  if (db.completionKeyAllowedOnPlan(String(dateStr), String(key), tabCandidates)) return true;
   return false;
 }
 

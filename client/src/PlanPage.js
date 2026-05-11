@@ -12,6 +12,7 @@ import {
 import { endDateOfSpanStarting } from './programmeSchedule';
 import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
 import './planPrint.css';
+import ActivityInspectModal from './ActivityInspectModal';
 
 /**
  * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
@@ -188,6 +189,15 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
 
   const titleRestore = useRef(typeof document !== 'undefined' ? document.title : '');
   const isMobile = useIsMobile();
+  const [inspect, setInspect] = useState(null);
+  const [coarsePointer, setCoarsePointer] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    const fn = () => setCoarsePointer(!!mq.matches);
+    fn();
+    mq.addEventListener('change', fn);
+    return () => mq.removeEventListener('change', fn);
+  }, []);
 
   const load = useCallback(async () => {
     setLoadErr('');
@@ -450,6 +460,38 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     setVizDate((prev) => dateKey(addDays(new Date(String(prev) + 'T12:00:00'), deltaDays)));
   }, []);
 
+  const shiftGridRange = useCallback((deltaDays) => {
+    setPreset('custom');
+    setStartDate((s) => dateKey(addDays(new Date(String(s) + 'T12:00:00'), deltaDays)));
+    setEndDate((en) => dateKey(addDays(new Date(String(en) + 'T12:00:00'), deltaDays)));
+  }, []);
+
+  const jumpGridToDayColumn = useCallback(
+    (dk) => {
+      setPreset('custom');
+      const span = Math.max(1, calendarDaysBetween(startDate, endDate).length);
+      setStartDate(dk);
+      setEndDate(dateKey(addDays(new Date(String(dk) + 'T12:00:00'), span - 1)));
+      setVizDate(dk);
+    },
+    [startDate, endDate]
+  );
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      const step = e.key === 'ArrowLeft' ? -1 : 1;
+      if (viewMode === 'drawing') shiftVizDate(step);
+      else shiftGridRange(step);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [viewMode, shiftVizDate, shiftGridRange]);
+
   function toggleTower(tw) {
     setTowerWhitelist((prev) => {
       const full = new Set(towersInView);
@@ -634,6 +676,12 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
 
   return (
     <div className="plan-print-root" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
+      <ActivityInspectModal
+        open={Boolean(inspect)}
+        onClose={() => setInspect(null)}
+        row={inspect?.row}
+        zoneLabel={inspect?.zoneLabel}
+      />
       <div className="plan-no-print app-page-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <div>
@@ -753,6 +801,9 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
           </label>
           <div>
             <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
+            <div style={{ fontSize: 9, color: T.faint, marginBottom: 4, maxWidth: 280, lineHeight: 1.35 }}>
+              ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : ''}.
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {['7', '14', '21', '28'].map((p) => (
                 <button
@@ -925,6 +976,16 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                   return (
                     <th
                       key={dk}
+                      role="button"
+                      tabIndex={0}
+                      title="Jump date range to start on this day (same number of columns)"
+                      onClick={() => jumpGridToDayColumn(dk)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter' || ev.key === ' ') {
+                          ev.preventDefault();
+                          jumpGridToDayColumn(dk);
+                        }
+                      }}
                       style={{
                         padding: '8px 6px',
                         borderBottom: `1px solid ${T.hairline}`,
@@ -936,6 +997,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                         maxWidth: 72,
                         background: wk ? 'rgba(26,26,46,0.06)' : T.surface,
                         boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
+                        cursor: 'pointer',
+                        userSelect: 'none',
                       }}
                     >
                       <div>{formatShort(d)}</div>
@@ -1096,7 +1159,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                             return (
                               <div
                                 key={it.id}
-                                title={it.activity_name}
+                                title={coarsePointer ? undefined : it.activity_name}
                                 draggable={isAdmin && !done}
                                 onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
                                 style={{
@@ -1113,9 +1176,14 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                   gap: 4,
                                   WebkitPrintColorAdjust: 'exact',
                                   printColorAdjust: 'exact',
-                                  cursor: isAdmin && !done ? 'grab' : 'default',
+                                  cursor: coarsePointer ? 'pointer' : isAdmin && !done ? 'grab' : 'default',
                                 }}
-                                onClick={async () => {
+                                onClick={async (e) => {
+                                  if (coarsePointer) {
+                                    e.preventDefault();
+                                    setInspect({ row: it, zoneLabel: zoneRowLabel(z) });
+                                    return;
+                                  }
                                   if (!isAdmin || done) return;
                                   const action = window.prompt(
                                     `Edit ${it.activity_name} in ${zoneRowLabel(z)}\nType:\n- move YYYY-MM-DD\n- duration N\n- delete`,
@@ -1208,8 +1276,26 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                     const shape = g.kind === 'poly'
                       ? <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={strokeW} strokeLinejoin="round" />
                       : <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={fill} stroke={stroke} strokeWidth={strokeW} />;
+                    const zLab = [String(z.tower || '').trim(), String(z.name || '').trim()].filter(Boolean).join(' ') || 'Zone';
                     return (
-                      <g key={z.id}>
+                      <g
+                        key={z.id}
+                        style={{ cursor: coarsePointer && hit ? 'pointer' : 'default' }}
+                        onClick={(e) => {
+                          if (!coarsePointer || !hit) return;
+                          e.stopPropagation();
+                          setInspect({ row: hit, zoneLabel: zLab });
+                        }}
+                        onKeyDown={(e) => {
+                          if (!coarsePointer || !hit) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setInspect({ row: hit, zoneLabel: zLab });
+                          }
+                        }}
+                        role={coarsePointer && hit ? 'button' : undefined}
+                        tabIndex={coarsePointer && hit ? 0 : undefined}
+                      >
                         {shape}
                         {showText && (
                           <text

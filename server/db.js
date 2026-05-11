@@ -513,6 +513,21 @@ function completionKeyFromParts(tower, zoneName, activity) {
   return `${pfx}|${act}`;
 }
 
+/** Parse client completion key `tower|activity` or `tower|zone|activity`. */
+function parseCompletionKeyParts(key) {
+  const s = String(key || '').trim();
+  const parts = s.split('|');
+  if (parts.length < 2) return null;
+  if (parts.length === 2) {
+    return { tower: parts[0].trim(), zone: '_default', activity: parts[1].trim() };
+  }
+  return {
+    tower: parts[0].trim(),
+    zone: parts.slice(1, -1).join('|').trim(),
+    activity: parts[parts.length - 1].trim(),
+  };
+}
+
 /** Share of scheduled day-slots for this programme item that have a completion tick. */
 function computeLiveCompletionFromProgrammeItem(piId, compMap) {
   const pi = get(
@@ -950,6 +965,42 @@ module.exports = {
           })
         );
     });
+  },
+  /** Allow completion tick if a programme_item spans dateStr and matches tower/zone/activity (user tabs). */
+  completionKeyAllowedOnPlan: (dateStr, key, allowedTabs) => {
+    const p = parseCompletionKeyParts(key);
+    if (!p || !p.tower || !p.activity) return false;
+    const tabs = (allowedTabs || []).filter(Boolean);
+    if (!tabs.length) return false;
+    const ph = tabs.map(() => '?').join(',');
+    const d1 = String(dateStr || '').trim();
+    if (p.zone === '_default') {
+      const row = get(
+        `SELECT pi.id FROM programme_items pi
+         JOIN zones z ON z.id = pi.zone_id
+         JOIN drawings d ON d.id = z.drawing_id
+         JOIN activities a ON a.id = pi.activity_id
+         WHERE pi.start_date <= ? AND pi.end_date >= ?
+         AND d.tab IN (${ph})
+         AND TRIM(IFNULL(z.tower,'')) = TRIM(?)
+         AND TRIM(IFNULL(a.name,'')) = TRIM(?)`,
+        [d1, d1, ...tabs, p.tower, p.activity]
+      );
+      return !!row;
+    }
+    const row = get(
+      `SELECT pi.id FROM programme_items pi
+       JOIN zones z ON z.id = pi.zone_id
+       JOIN drawings d ON d.id = z.drawing_id
+       JOIN activities a ON a.id = pi.activity_id
+       WHERE pi.start_date <= ? AND pi.end_date >= ?
+       AND d.tab IN (${ph})
+       AND TRIM(IFNULL(z.tower,'')) = TRIM(?)
+       AND TRIM(IFNULL(z.name,'')) = TRIM(?)
+       AND TRIM(IFNULL(a.name,'')) = TRIM(?)`,
+      [d1, d1, ...tabs, p.tower, p.zone, p.activity]
+    );
+    return !!row;
   },
   getCompletions: () => {
     const rows = all('SELECT * FROM completions ORDER BY date');

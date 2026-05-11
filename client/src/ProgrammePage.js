@@ -71,7 +71,11 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const[draftRows,setDraftRows]=useState([]);
   const[reviewMode,setReviewMode]=useState(false);
   const[showManual,setShowManual]=useState(false);
+  const[manualNewExpanded,setManualNewExpanded]=useState(false);
+  const[newActName,setNewActName]=useState('');
+  const[newActType,setNewActType]=useState(typeTab);
   const[manualForm,setManualForm]=useState({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
+  const[drawingPlanItems,setDrawingPlanItems]=useState([]);
   const[shiftDays,setShiftDays]=useState(0);
   const[bulk,setBulk]=useState({});
   const[saving,setSaving]=useState(false);
@@ -80,6 +84,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const wrapRef=useRef(null);
 
   const filteredActs=activities.filter(a=>a.type===typeTab);
+  useEffect(()=>{setNewActType(typeTab)},[typeTab]);
   const selectedZone=zones.find(z=>z.id===selectedId);
   const tabDrawings=(drawings||[]).filter(d=>d.tab===tab);
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
@@ -135,12 +140,41 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   },[selDraw]);
 
   useEffect(()=>{
+    if(!selDraw){setDrawingPlanItems([]);return}
+    let cancelled=false;
+    (async()=>{
+      const rows=await api.getProgrammeItemsByDrawing(selDraw);
+      if(!cancelled)setDrawingPlanItems(Array.isArray(rows)?rows:[]);
+    })();
+    return()=>{cancelled=true};
+  },[selDraw]);
+
+  const primaryProgrammeNameByZone=useMemo(()=>{
+    const byZ=new Map();
+    for(const row of drawingPlanItems){
+      const id=Number(row.zone_id);
+      if(!Number.isFinite(id))continue;
+      if(!byZ.has(id))byZ.set(id,[]);
+      byZ.get(id).push(row);
+    }
+    const m=new Map();
+    for(const[zid,rows]of byZ){
+      rows.sort((a,b)=>String(a.start_date).localeCompare(String(b.start_date)));
+      const n=rows[0]?.activity_name;
+      if(n)m.set(zid,n);
+    }
+    return m;
+  },[drawingPlanItems]);
+
+  useEffect(()=>{
     setSchedTpl('');
     setStartStageIdx(0);
     setAnchorDate(dateKey(new Date()));
     setDraftRows([]);
     setReviewMode(false);
     setShowManual(false);
+    setManualNewExpanded(false);
+    setNewActName('');
     setManualForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
     setTargetModalOpen(false);
     loadItemsForZone(selectedId);
@@ -259,7 +293,30 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     if(onScheduleChanged)await onScheduleChanged();
     setManualForm({activity_id:'',start_date:'',end_date:'',status:'planned',notes:''});
     setShowManual(false);
+    setManualNewExpanded(false);
+    setNewActName('');
     await loadItemsForZone(selectedId);
+    if(selDraw){
+      const rows=await api.getProgrammeItemsByDrawing(selDraw);
+      setDrawingPlanItems(Array.isArray(rows)?rows:[]);
+    }
+  }
+
+  async function createAndSelectActivity(){
+    if(!isAdmin)return;
+    const name=String(newActName||'').trim();
+    if(!name)return;
+    const res=await api.createActivity(name,newActType);
+    if(res&&typeof res==='object'&&res.error){
+      window.alert(String(res.error));
+      return;
+    }
+    const list=await api.getActivities();
+    setActivities(list||[]);
+    const id=res?.id;
+    if(id!=null)setManualForm((f)=>({...f,activity_id:String(id)}));
+    setNewActName('');
+    setManualNewExpanded(false);
   }
 
   async function removeItem(id){
@@ -383,9 +440,12 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                 <svg style={{position:'absolute',left:0,top:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
                 {zonesSorted.map(z=>{
                   const g=parseZoneGeometry(z),sel=z.id===selectedId;
-                  const actNm=primaryZoneActivityName(z,activityName);
-                  const fill=sel?(actNm?actColor(actNm,0.14):'rgba(120,120,130,0.12)'):(actNm?actColor(actNm,0.07):'rgba(120,120,130,0.06)');
-                  const stroke=sel?(actNm?actColor(actNm,0.88):'rgba(90,90,100,0.85)'):(actNm?actColor(actNm,0.4):'rgba(90,90,100,0.35)');
+                  const stackNm=primaryZoneActivityName(z,activityName);
+                  const planNm=primaryProgrammeNameByZone.get(Number(z.id))||'';
+                  const actNm=stackNm||planNm;
+                  const hasProg=Boolean(planNm);
+                  const fill=sel?(actNm?actColor(actNm,0.32):'rgba(120,120,130,0.12)'):(actNm?actColor(actNm,hasProg?0.3:0.28):'rgba(120,120,130,0.06)');
+                  const stroke=sel?(actNm?actColor(actNm,0.88):'rgba(90,90,100,0.85)'):(actNm?actColor(actNm,0.45):'rgba(90,90,100,0.35)');
                   const bb=g.kind==='rect'?g:{x:z.x,y:z.y,w:z.w,h:z.h};
                   const cx=(bb.x||0)+(bb.w||0)/2,cy=(bb.y||0)+(bb.h||0)/2;
                   const frag=g.kind==='rect'?(
@@ -394,7 +454,11 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                     <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={0.35}/>
                   );
                   const nActs=sortZoneActs(z).length;
-                  return<g key={z.id}>{frag}
+                  const tip=`${z.tower||''} ${z.name||''}`.trim();
+                  const sub=actNm?`${actNm}${nActs>1?` (+${nActs-1})`:''}${hasProg&&!stackNm?' · scheduled':''}`:'';
+                  return<g key={z.id}>
+                    <title>{sub?`${tip}: ${sub}`:tip}</title>
+                    {frag}
                     <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fill={T.text} fontSize={2.2} fontWeight="700" style={{pointerEvents:'none',textShadow:'0 0 2px #fff'}}>
                       {z.tower} {z.name}{actNm?` · ${actNm}${nActs>1?` (+${nActs-1})`:''}`:''}
                     </text>
@@ -605,8 +669,28 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                 {showManual&&(
                   <form onSubmit={submitManual} style={{marginTop:12,padding:12,borderRadius:12,border:`1px solid ${T.hairline}`,background:T.bg}}>
                     <div style={{fontSize:11,fontWeight:700,color:T.text,marginBottom:8}}>Manual row</div>
+                    {isAdmin&&(
+                      <div style={{marginBottom:10}}>
+                        <button type="button" onClick={()=>setManualNewExpanded((v)=>!v)} style={{...S.btn,padding:'6px 10px',fontSize:10}}>
+                          {manualNewExpanded?'− Hide':'+ New activity'}
+                        </button>
+                        {manualNewExpanded&&(
+                          <div style={{marginTop:8,padding:10,borderRadius:8,border:`1px dashed ${T.hairline}`,background:T.surface}}>
+                            <input value={newActName} onChange={(e)=>setNewActName(e.target.value)} placeholder="Activity name" style={{...S.input,fontSize:12,marginBottom:8,width:'100%'}}/>
+                            <select value={newActType} onChange={(e)=>setNewActType(e.target.value)} style={{...S.input,fontSize:12,marginBottom:8,width:'100%'}}>
+                              <option value="groundworks">Groundworks</option>
+                              <option value="internals">Internals</option>
+                              <option value={PROJECT_PROGRAMME_TAB}>Project programme</option>
+                            </select>
+                            <button type="button" onClick={()=>void createAndSelectActivity()} style={{...S.btn,...S.btnPrimary,width:'100%',fontSize:11}} disabled={!String(newActName||'').trim()}>
+                              Create &amp; select
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <select required value={manualForm.activity_id} onChange={e=>setManualForm(f=>({...f,activity_id:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}>
-                      <option value="">Activity</option>
+                      <option value="">Activity ({drawingTabLabel(typeTab)})</option>
                       {filteredActs.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
                     </select>
                     <input required type="date" value={toHtmlDateInputValue(manualForm.start_date)} onChange={e=>setManualForm(f=>({...f,start_date:e.target.value}))} style={{...S.input,fontSize:12,marginBottom:8}}/>
@@ -617,7 +701,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                     <input value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))} placeholder="Notes" style={{...S.input,fontSize:12,marginBottom:10}}/>
                     <div style={{display:'flex',gap:8}}>
                       <button type="submit" style={{...S.btn,...S.btnPrimary,flex:1}}>Add row</button>
-                      <button type="button" onClick={()=>{setShowManual(false)}} style={S.btn}>Close</button>
+                      <button type="button" onClick={()=>{setShowManual(false);setManualNewExpanded(false);setNewActName('')}} style={S.btn}>Close</button>
                     </div>
                   </form>
                 )}
