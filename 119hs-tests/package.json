@@ -1,0 +1,22 @@
+{
+  "name": "119hs-tests",
+  "version": "1.0.0",
+  "description": "Playwright test suite for 119HS programme app",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "playwright test tests/01-smoke.spec.js",
+    "test:rbac": "playwright test tests/02-rbac.spec.js",
+    "test:gw": "playwright test tests/03-groundworks.spec.js",
+    "test:int": "playwright test tests/04-internals.spec.js",
+    "test:dash": "playwright test tests/05-dashboard.spec.js",
+    "test:admin": "playwright test tests/06-admin.spec.js",
+    "test:mobile": "playwright test tests/07-mobile.spec.js",
+    "test:report": "playwright show-report test-report",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0"
+  }
+}
