@@ -188,18 +188,29 @@ function buildProgrammeMilestonePicklist(planRows){
   return out;
 }
 
-function overallProjectCompletion(gw,int_s,project_s,comp){
-  let total=0,done=0;
-  function walk(sched){
-    Object.keys(sched||{}).forEach(dk=>{
-      flattenDaySections(sched[dk]).forEach(sec=>{
-        sec.acts.forEach(act=>{total++;if(comp[dk]?.[`${sec.pfx}|${act}`])done++;});
+/** Scheduled activity-day slots vs Update ticks (same basis as Update & Plan). */
+function countScheduledSlots(sched, comp) {
+  let total = 0,
+    done = 0;
+  Object.keys(sched || {}).forEach((dk) => {
+    flattenDaySections(sched[dk]).forEach((sec) => {
+      sec.acts.forEach((act) => {
+        total++;
+        if (comp[dk]?.[`${sec.pfx}|${act}`]) done++;
       });
     });
-  }
-  walk(gw);walk(int_s);walk(project_s||{});
-  const pct=total>0?Math.round((done/total)*100):0;
-  return{total,done,pct};
+  });
+  return { total, done };
+}
+
+function overallProjectCompletion(gw, int_s, project_s, comp) {
+  const g = countScheduledSlots(gw, comp);
+  const i = countScheduledSlots(int_s, comp);
+  const p = countScheduledSlots(project_s || {}, comp);
+  const total = g.total + i.total + p.total;
+  const done = g.done + i.done + p.done;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct, gw: g, int: i, project: p };
 }
 /** Human-readable zone line for Update screen section headers (field context). */
 function zoneSubtitleForSection(sec,seq,tab){
@@ -644,8 +655,8 @@ function TemplatePage({tab,isAdmin,onReload}){
 function DashPage({gw,int_s,project_s,comp,isAdmin}){
   const ov=overallProjectCompletion(gw,int_s,project_s,comp);
   const today=new Date();
-  const gwDayCount=Object.keys(gw||{}).length;
-  const intDayCount=Object.keys(int_s||{}).length;
+  const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
+  const intRem=Math.max(0,ov.int.total-ov.int.done);
   const[milestones,setMilestones]=useState([]);
   const[planRows,setPlanRows]=useState([]);
   const[mLoadErr,setMLoadErr]=useState('');
@@ -749,9 +760,9 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
     }finally{setMBusy(false);}
   }
   const metrics=[
-    {k:'gw',glyph:'◇',label:'Groundworks days',sub:'Scheduled GW slots',value:String(gwDayCount),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
-    {k:'int',glyph:'◆',label:'Internals days',sub:'Scheduled INT slots',value:String(intDayCount),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
-    {k:'act',glyph:'◎',label:'Activities ticked',sub:'Across GW & INT',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
+    {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW day-slots ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
+    {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT day-slots ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
+    {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (scheduled slots)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
   ];
   return<div style={{
     flex:1,
@@ -1766,6 +1777,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
 function MainApp({user,onLogout}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[loading,setLoading]=useState(true);
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
+  const dashboardPrevPageRef=useRef(page);
   const loadData=useCallback(async()=>{
     const tabs=user.tabs||[];
     try{
@@ -1783,6 +1795,11 @@ function MainApp({user,onLogout}){
     setLoading(false);
   },[user.tabs]);
   useEffect(()=>{loadData()},[loadData]);
+  useEffect(()=>{
+    const prev=dashboardPrevPageRef.current;
+    dashboardPrevPageRef.current=page;
+    if(page==='dashboard'&&prev!=='dashboard')void loadData();
+  },[page,loadData]);
   useEffect(()=>{
     const allowed=allowedPageIdsForRole(user.role);
     if(!allowed.has(page))setPage('dashboard');
