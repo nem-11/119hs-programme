@@ -246,6 +246,22 @@ function countPlanRowSlotsForTab(rows, comp, drawingTab) {
   return { total, done };
 }
 
+/** True when every working-day slot for this programme row has an Update tick. */
+function programmeItemAllSlotsTicked(row, comp) {
+  const tw = String(row.tower || '').trim();
+  const zn = String(row.zone_name || '').trim();
+  const act = String(row.activity_name || '').trim();
+  if (!tw || !zn || !act) return true;
+  const pfx = `${tw}|${zn}`;
+  const ck = `${pfx}|${act}`;
+  const days = workingDateKeysBetween(row.start_date, row.end_date);
+  if (!days.length) return true;
+  for (const dk of days) {
+    if (!comp[dk]?.[ck]) return false;
+  }
+  return true;
+}
+
 function mergedSlotCounts(sched, comp, planRows, drawingTab) {
   const fromSched = countScheduledSlots(sched, comp);
   if (fromSched.total > 0) return fromSched;
@@ -861,6 +877,64 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
   );
   const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
   const intRem=Math.max(0,ov.int.total-ov.int.done);
+
+  const riskList=useMemo(()=>{
+    const tk=dateKey(new Date());
+    const todayOrd=milestoneDayOrd(tk);
+    if(todayOrd==null)return[];
+    const out=[];
+    for(const r of metricPlanRows){
+      const statusLower=String(r.status||'').toLowerCase();
+      const statusNorm=statusLower.replace(/-/g,'_');
+      if(statusLower==='done')continue;
+      const endK=String(r.end_date||'').trim();
+      if(!endK)continue;
+      const endOrd=milestoneDayOrd(endK);
+      if(endOrd==null)continue;
+      const complete=programmeItemAllSlotsTicked(r,comp);
+      const daysUntil=endOrd-todayOrd;
+      let severity=null;
+      let kind='';
+      let dayLabel='';
+      if(endOrd<todayOrd&&!complete){
+        severity='critical';
+        kind='Overdue';
+        dayLabel=`${todayOrd-endOrd}d overdue`;
+      }else if(!complete&&daysUntil>=1&&daysUntil<=3){
+        severity='warning';
+        kind='Urgent';
+        dayLabel=daysUntil===1?'1 day left':`${daysUntil} days left`;
+      }else if(statusNorm==='at_risk'){
+        severity='warning';
+        kind='At risk';
+        if(endOrd<todayOrd)dayLabel=`${todayOrd-endOrd}d overdue`;
+        else if(daysUntil===0)dayLabel='Due today';
+        else dayLabel=`${daysUntil}d to due`;
+      }else continue;
+      const tw=String(r.tower||'').trim();
+      const zn=String(r.zone_name||'').trim();
+      out.push({
+        key:String(r.id??`${tw}|${zn}|${endK}|${kind}`),
+        tower:tw,
+        zone:zn,
+        activity:String(r.activity_name||'').trim(),
+        tab:String(r.drawing_tab||''),
+        due:endK,
+        severity,
+        kind,
+        dayLabel,
+        endOrd,
+      });
+    }
+    out.sort((a,b)=>{
+      const rank=(s)=>(s==='critical'?0:1);
+      const c=rank(a.severity)-rank(b.severity);
+      if(c!==0)return c;
+      return a.endOrd-b.endOrd;
+    });
+    return out;
+  },[metricPlanRows,comp]);
+
   const metrics=[
     {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW day-slots ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT day-slots ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
@@ -984,6 +1058,70 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
           <div style={{fontSize:22,fontWeight:800,color:`rgba(${s.accent},0.96)`,letterSpacing:'-0.02em',lineHeight:1.2}}>{s.value}</div>
         </div>)}
       </div>
+
+      <section style={{
+        marginBottom:18,
+        padding:'16px 18px 14px',
+        borderRadius:16,
+        background:grad.cardSurface,
+        border:'1px solid rgba(26,26,46,0.06)',
+        boxShadow:shadowCard,
+      }}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>Risk</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Programme flags</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.45}}>
+            Overdue (past due, not fully ticked), urgent (due in 1–3 working days with gaps), and rows marked at risk.
+          </div>
+        </div>
+        {riskList.length===0?(
+          <p style={{margin:0,fontSize:12,color:T.muted,lineHeight:1.5}}>No programme risks flagged for your scope.</p>
+        ):(
+          <div style={{maxHeight:320,overflowY:'auto',paddingRight:4,display:'flex',flexDirection:'column',gap:10}}>
+            {riskList.map((item)=>{
+              const isCrit=item.severity==='critical';
+              const borderRgb=isCrit?'192,57,43':'230,126,34';
+              const badgeBg=isCrit?'rgba(192,57,43,0.12)':'rgba(230,126,34,0.12)';
+              const badgeFg=isCrit?'#922b21':'#a0520d';
+              return(
+                <div
+                  key={item.key}
+                  style={{
+                    padding:'12px 14px 12px 16px',
+                    borderRadius:12,
+                    border:`1px solid rgba(26,26,46,0.06)`,
+                    background:'rgba(26,26,46,0.02)',
+                    borderLeft:`4px solid rgb(${borderRgb})`,
+                    boxShadow:'0 1px 3px rgba(26,26,46,0.04)',
+                  }}
+                >
+                  <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:6}}>
+                    <span style={{
+                      fontSize:9,
+                      fontWeight:800,
+                      letterSpacing:'0.06em',
+                      textTransform:'uppercase',
+                      padding:'4px 8px',
+                      borderRadius:6,
+                      background:badgeBg,
+                      color:badgeFg,
+                    }}>{item.kind}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:T.muted}}>{item.dayLabel}</span>
+                  </div>
+                  <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>
+                    {[item.tower,item.zone].filter(Boolean).join(' · ')||item.zone}
+                  </div>
+                  <div style={{fontSize:12,color:T.muted,marginTop:2}}>{item.activity}</div>
+                  <div style={{fontSize:10,color:T.faint,marginTop:6}}>
+                    Due {item.due}
+                    {item.tab?` · ${drawingTabLabel(item.tab)}`:''}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section style={{
         padding:'18px 20px',

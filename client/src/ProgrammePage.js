@@ -30,7 +30,7 @@ function clientToPct(e,el){
   return[((e.clientX-r.left)/r.width)*100,((e.clientY-r.top)/r.height)*100];
 }
 
-const STATUSES=['planned','active','done','on-hold'];
+const STATUSES=['planned','active','at_risk','on-hold','done'];
 
 /** Tower then zone name, with numeric chunks sorted naturally (Pour 2 before Pour 10). */
 function compareZones(a,b){
