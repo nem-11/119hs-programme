@@ -1094,15 +1094,26 @@ function buildLookAheadExportRows(gw,int_s,project_s,comp,anchorDate,tab){
   return rows;
 }
 
-function UpdPage({ date, comp, tab, userTabs, isAdmin, canTick, userName, onSubmitted }) {
+const UPDATE_VISIBLE_TABS_KEY = '119hs-update-visible-tabs';
+
+function readStoredUpdateVisibleTabs() {
+  try {
+    const raw = localStorage.getItem(UPDATE_VISIBLE_TABS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return Array.isArray(p) ? p.map(String) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted }) {
   const k = dateKey(date);
   const [planRows, setPlanRows] = useState([]);
   const [loadErr, setLoadErr] = useState('');
   const [selectedTabs, setSelectedTabs] = useState(() => (userTabs?.length ? [...userTabs] : ['groundworks', 'internals']));
-
-  useEffect(() => {
-    setSelectedTabs([tab]);
-  }, [tab]);
+  const updateTabsInitRef = useRef(false);
+  const skipNextVisibleTabsPersistRef = useRef(true);
 
   const reloadPlan = useCallback(async () => {
     setLoadErr('');
@@ -1138,11 +1149,29 @@ function UpdPage({ date, comp, tab, userTabs, isAdmin, canTick, userName, onSubm
   useEffect(() => {
     if (!permittedTabs.length) return;
     setSelectedTabs((prev) => {
+      if (!updateTabsInitRef.current) {
+        updateTabsInitRef.current = true;
+        const stored = readStoredUpdateVisibleTabs();
+        const fromStore = stored?.filter((t) => permittedTabs.includes(t));
+        if (fromStore?.length) return permittedTabs.filter((t) => fromStore.includes(t));
+        return [...permittedTabs];
+      }
       const kept = prev.filter((t) => permittedTabs.includes(t));
-      if (kept.length) return kept;
-      return [permittedTabs[0]];
+      if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
+      return [...permittedTabs];
     });
   }, [permittedTabs]);
+
+  useEffect(() => {
+    if (!selectedTabs.length) return;
+    if (skipNextVisibleTabsPersistRef.current) {
+      skipNextVisibleTabsPersistRef.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(UPDATE_VISIBLE_TABS_KEY, JSON.stringify(selectedTabs));
+    } catch (_) {}
+  }, [selectedTabs]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
@@ -1280,40 +1309,6 @@ function UpdPage({ date, comp, tab, userTabs, isAdmin, canTick, userName, onSubm
 
   return (
     <div style={{ overflowY: 'auto', flex: 1, background: T.bg, paddingBottom: canTick && dirty ? 80 : 12 }}>
-      {permittedTabs.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '12px 12px 0', padding: '10px 12px', background: T.surface, borderRadius: 12, border: `1px solid ${T.hairline}` }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Scope</span>
-          <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
-          {permittedTabs.length > 1 && (
-            <button type="button" onClick={selectAllProgrammeTabs} style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}>
-              All tabs
-            </button>
-          )}
-          {permittedTabs.map((t) => {
-            const on = selectedSet.has(t);
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => toggleProgrammeTab(t)}
-                style={{
-                  ...S.btn,
-                  ...(on ? S.btnAct : {}),
-                  padding: '6px 12px',
-                  fontSize: 11,
-                  opacity: on ? 1 : 0.55,
-                  boxShadow: on ? undefined : 'inset 0 0 0 1px rgba(26,26,46,0.08)',
-                }}
-              >
-                <span style={{ marginRight: 6, opacity: 0.85 }} aria-hidden>
-                  {on ? '✓' : '○'}
-                </span>
-                {drawingTabLabel(t)}
-              </button>
-            );
-          })}
-        </div>
-      )}
       {loadErr && (
         <div style={{ margin: '10px 12px', fontSize: 12, color: '#c0392b' }}>
           {loadErr}{' '}
@@ -1394,6 +1389,56 @@ function UpdPage({ date, comp, tab, userTabs, isAdmin, canTick, userName, onSubm
           ) : (
             <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.45 }}>Viewer access: you can see progress but cannot submit updates.</div>
           )}
+        </div>
+      )}
+      {permittedTabs.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'center',
+            margin: '0 12px 10px',
+            padding: '10px 12px',
+            background: T.surface,
+            borderRadius: 12,
+            border: `1px solid ${T.hairline}`,
+          }}
+        >
+          <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Show tabs</span>
+          {permittedTabs.length > 1 && (
+            <button type="button" onClick={selectAllProgrammeTabs} style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}>
+              All tabs
+            </button>
+          )}
+          {permittedTabs.map((t) => {
+            const on = selectedSet.has(t);
+            const id = `upd-tab-${t}`;
+            return (
+              <label
+                key={t}
+                htmlFor={id}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  color: on ? T.text : T.muted,
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  id={id}
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => toggleProgrammeTab(t)}
+                  style={{ width: 16, height: 16, accentColor: 'rgba(66,133,244,0.95)', cursor: 'pointer' }}
+                />
+                {drawingTabLabel(t)}
+              </label>
+            );
+          })}
         </div>
       )}
       {sections.map((sec) => {
@@ -1720,7 +1765,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
 
 function MainApp({user,onLogout}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[loading,setLoading]=useState(true);
-  const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(new Date(2026,4,1));
+  const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
   const loadData=useCallback(async()=>{
     const tabs=user.tabs||[];
     try{
@@ -1764,7 +1809,7 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
