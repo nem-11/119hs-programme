@@ -21,6 +21,21 @@ import PlanPage from './PlanPage';
 import GanttPage from './GanttPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 
+/** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
+function isApiErrorPayload(x) {
+  return Boolean(x && typeof x === 'object' && !Array.isArray(x) && typeof x.error === 'string');
+}
+function asScheduleMap(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return {};
+  if (isApiErrorPayload(x)) return {};
+  return x;
+}
+function asCompletionsMap(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return {};
+  if (isApiErrorPayload(x)) return {};
+  return x;
+}
+
 class AppErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null};}
   static getDerivedStateFromError(err){return{err};}
@@ -188,6 +203,55 @@ function buildProgrammeMilestonePicklist(planRows){
   return out;
 }
 
+/** Working dates from programme row span (Mon–Sat only; mirrors server `dateKeysBetween`). */
+function workingDateKeysBetween(startStr, endStr) {
+  const out = [];
+  const s = String(startStr || '').trim();
+  const e = String(endStr || '').trim();
+  if (!s || !e) return out;
+  const d = new Date(`${s}T12:00:00`);
+  const end = new Date(`${e}T12:00:00`);
+  if (Number.isNaN(d.getTime()) || Number.isNaN(end.getTime())) return out;
+  const MAX_STEPS = 12000;
+  let steps = 0;
+  while (d <= end && steps < MAX_STEPS) {
+    steps++;
+    if (d.getDay() !== 0) {
+      out.push(
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      );
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+/** Day-slots implied by plan programme rows + Update ticks (when site `schedule` is empty or stale). */
+function countPlanRowSlotsForTab(rows, comp, drawingTab) {
+  let total = 0,
+    done = 0;
+  for (const r of rows || []) {
+    if (!r || String(r.drawing_tab || '') !== drawingTab) continue;
+    const tw = String(r.tower || '').trim();
+    const zn = String(r.zone_name || '').trim();
+    const act = String(r.activity_name || '').trim();
+    if (!tw || !zn || !act) continue;
+    const pfx = `${tw}|${zn}`;
+    const ck = `${pfx}|${act}`;
+    for (const dk of workingDateKeysBetween(r.start_date, r.end_date)) {
+      total++;
+      if (comp[dk]?.[ck]) done++;
+    }
+  }
+  return { total, done };
+}
+
+function mergedSlotCounts(sched, comp, planRows, drawingTab) {
+  const fromSched = countScheduledSlots(sched, comp);
+  if (fromSched.total > 0) return fromSched;
+  return countPlanRowSlotsForTab(planRows, comp, drawingTab);
+}
+
 /** Scheduled activity-day slots vs Update ticks (same basis as Update & Plan). */
 function countScheduledSlots(sched, comp) {
   let total = 0,
@@ -201,6 +265,16 @@ function countScheduledSlots(sched, comp) {
     });
   });
   return { total, done };
+}
+
+function overallProjectCompletionMerged(gw, int_s, project_s, comp, planRows) {
+  const g = mergedSlotCounts(gw, comp, planRows, 'groundworks');
+  const i = mergedSlotCounts(int_s, comp, planRows, 'internals');
+  const p = mergedSlotCounts(project_s || {}, comp, planRows, PROJECT_PROGRAMME_TAB);
+  const total = g.total + i.total + p.total;
+  const done = g.done + i.done + p.done;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct, gw: g, int: i, project: p };
 }
 
 function overallProjectCompletion(gw, int_s, project_s, comp) {
@@ -652,11 +726,9 @@ function TemplatePage({tab,isAdmin,onReload}){
   </div>;
 }
 
-function DashPage({gw,int_s,project_s,comp,isAdmin}){
-  const ov=overallProjectCompletion(gw,int_s,project_s,comp);
+function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
   const today=new Date();
-  const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
-  const intRem=Math.max(0,ov.int.total-ov.int.done);
+  const[metricPlanRows,setMetricPlanRows]=useState([]);
   const[milestones,setMilestones]=useState([]);
   const[planRows,setPlanRows]=useState([]);
   const[mLoadErr,setMLoadErr]=useState('');
@@ -683,6 +755,30 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
 
   const compSig=useMemo(()=>JSON.stringify(comp||{}),[comp]);
   useEffect(()=>{void refreshMilestones()},[refreshMilestones,compSig]);
+
+  useEffect(()=>{
+    void onActivate?.();
+  },[onActivate]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        let raw;
+        if(isAdmin){
+          raw=await api.getPlanProgrammeFullExport();
+          if(!Array.isArray(raw)||isApiErrorPayload(raw))raw=await api.getPlanProgramme();
+        }else{
+          raw=await api.getPlanProgramme();
+        }
+        if(cancelled)return;
+        setMetricPlanRows(Array.isArray(raw)&&!isApiErrorPayload(raw)?raw:[]);
+      }catch(_){
+        if(!cancelled)setMetricPlanRows([]);
+      }
+    })();
+    return()=>{cancelled=true};
+  },[isAdmin,onActivate]);
 
   useEffect(()=>{
     if(!isAdmin)return;
@@ -759,6 +855,12 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
       await refreshMilestones();
     }finally{setMBusy(false);}
   }
+  const ov=useMemo(
+    ()=>overallProjectCompletionMerged(gw,int_s,project_s,comp,metricPlanRows),
+    [gw,int_s,project_s,comp,metricPlanRows]
+  );
+  const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
+  const intRem=Math.max(0,ov.int.total-ov.int.done);
   const metrics=[
     {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW day-slots ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT day-slots ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
@@ -770,6 +872,26 @@ function DashPage({gw,int_s,project_s,comp,isAdmin}){
     background:`linear-gradient(165deg,rgba(235,238,245,0.85) 0%,${T.bg} 22%,${T.bg} 100%)`,
   }}>
     <div style={{maxWidth:760,margin:'0 auto',padding:'22px 18px 40px'}}>
+      {liveDataErr&&(
+        <div style={{
+          marginBottom:14,
+          padding:'12px 14px',
+          borderRadius:12,
+          border:'1px solid rgba(192,57,43,0.35)',
+          background:'rgba(192,57,43,0.08)',
+          fontSize:12,
+          color:'#922b21',
+          lineHeight:1.45,
+        }}>
+          <strong style={{display:'block',marginBottom:4}}>Could not refresh live programme data</strong>
+          {liveDataErr}
+          <div style={{marginTop:8}}>
+            <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'6px 12px',fontSize:11}}>
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
       <header style={{marginBottom:22}}>
         <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',justifyContent:'space-between',gap:14}}>
           <div>
@@ -1776,10 +1898,12 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
 
 function MainApp({user,onLogout}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[loading,setLoading]=useState(true);
+  const[liveDataErr,setLiveDataErr]=useState('');
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
-  const dashboardPrevPageRef=useRef(page);
   const loadData=useCallback(async()=>{
-    const tabs=user.tabs||[];
+    let tabs=Array.isArray(user.tabs)?[...user.tabs].filter(Boolean):[];
+    if(!tabs.length&&(roleIsAdmin(user.role)||roleIsSiteEditor(user.role)||roleIsBoardViewer(user.role)))tabs=[...MAIN_HEADER_TAB_ORDER];
+    setLiveDataErr('');
     try{
       const[g,i,c,p]=await Promise.all([
         tabs.includes('groundworks')?api.getSchedule('groundworks'):Promise.resolve({}),
@@ -1787,19 +1911,25 @@ function MainApp({user,onLogout}){
         api.getCompletions(),
         tabs.includes(PROJECT_PROGRAMME_TAB)?api.getSchedule(PROJECT_PROGRAMME_TAB):Promise.resolve({}),
       ]);
-      setGw(g||{});setInt(i||{});setProjectSched(p||{});setComp(c||{});
+      const errMsgs=[];
+      if(isApiErrorPayload(g))errMsgs.push(`Groundworks schedule: ${g.error}`);
+      if(isApiErrorPayload(i))errMsgs.push(`Internals schedule: ${i.error}`);
+      if(isApiErrorPayload(p))errMsgs.push(`Project programme schedule: ${p.error}`);
+      if(isApiErrorPayload(c))errMsgs.push(`Completions: ${c.error}`);
+      setLiveDataErr(errMsgs.join(' · '));
+      setGw(asScheduleMap(g));
+      setInt(asScheduleMap(i));
+      setProjectSched(asScheduleMap(p));
+      setComp(asCompletionsMap(c));
     }catch(e){
       console.error(e);
+      setLiveDataErr(e?.message||'Failed to load programme data');
       setGw({});setInt({});setProjectSched({});setComp({});
+    }finally{
+      setLoading(false);
     }
-    setLoading(false);
-  },[user.tabs]);
-  useEffect(()=>{loadData()},[loadData]);
-  useEffect(()=>{
-    const prev=dashboardPrevPageRef.current;
-    dashboardPrevPageRef.current=page;
-    if(page==='dashboard'&&prev!=='dashboard')void loadData();
-  },[page,loadData]);
+  },[user.tabs,user.role]);
+  useEffect(()=>{void loadData()},[loadData]);
   useEffect(()=>{
     const allowed=allowedPageIdsForRole(user.role);
     if(!allowed.has(page))setPage('dashboard');
@@ -1807,7 +1937,8 @@ function MainApp({user,onLogout}){
   useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan','gantt'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
-  const canSee=t=>user.tabs.includes(t);
+  const userTabsSafe=Array.isArray(user.tabs)?user.tabs:[];
+  const canSee=t=>userTabsSafe.includes(t);
   const isAdmin=roleIsAdmin(user.role);
   const canTick=roleCanTick(user.role);
   const canEditZp=canEditZonesProgramme(user.role);
@@ -1825,7 +1956,7 @@ function MainApp({user,onLogout}){
       <button onClick={()=>nav(-1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>←</button><div style={{fontSize:15,fontWeight:700,color:T.text}}>{formatDate(date)}</div><button onClick={()=>nav(1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>→</button>
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin}/>}
+      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} onActivate={loadData} liveDataErr={liveDataErr}/>}
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
