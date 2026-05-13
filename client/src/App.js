@@ -20,7 +20,7 @@ import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
 import GanttPage from './GanttPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
-import { scheduleDateKeysBetween } from './planUtils';
+import { scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
 function isApiErrorPayload(x) {
@@ -63,6 +63,10 @@ function flattenDaySections(dayData){
 
 /** Build Update-tab sections from plan programme rows (same completion keys as legacy schedule). */
 function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
+  const dk0 = String(dateK || '').trim();
+  if (isNonWorkingPlanDayKey(dk0)) {
+    return { sections: [], metaByCk: new Map() };
+  }
   const sel = new Set(selectedTabs);
   const bySection = new Map();
   const metaByCk = new Map();
@@ -1285,13 +1289,21 @@ function towerZoneFromPfx(pfx){
   return{tower:s.slice(0,i)||'—',zone:s.slice(i+1)||'—'};
 }
 
-/** Rolling ~3-week window: skip Sundays, same as on-screen Ahead list. */
-function lookaheadWorkingDays(anchorDate){
-  const out=[];
-  for(let i=0;i<21;i++){
-    const d=new Date(anchorDate);
-    d.setDate(d.getDate()+i);
-    if(d.getDay()!==0)out.push(d);
+/** Rolling window of 21 scheduleable days (skips Sundays and England & Wales bank holidays). */
+function lookaheadWorkingDays(anchorDate) {
+  const out = [];
+  const d = new Date(anchorDate);
+  let added = 0;
+  let steps = 0;
+  const MAX_STEPS = 120;
+  while (added < 21 && steps < MAX_STEPS) {
+    steps++;
+    const dk = dateKey(d);
+    if (!isNonWorkingPlanDayKey(dk)) {
+      out.push(new Date(d));
+      added++;
+    }
+    d.setDate(d.getDate() + 1);
   }
   return out;
 }
@@ -1363,6 +1375,7 @@ function readStoredUpdateVisibleTabs() {
 
 function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted }) {
   const k = dateKey(date);
+  const nonWorkingDay = isNonWorkingPlanDayKey(k);
   const [planRows, setPlanRows] = useState([]);
   const [loadErr, setLoadErr] = useState('');
   const [selectedTabs, setSelectedTabs] = useState(() => (userTabs?.length ? [...userTabs] : ['groundworks', 'internals']));
@@ -1569,6 +1582,23 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
           <button type="button" onClick={() => void reloadPlan()} style={{ ...S.btn, padding: '4px 10px', fontSize: 11 }}>
             Retry
           </button>
+        </div>
+      )}
+      {nonWorkingDay && !loadErr && (
+        <div
+          style={{
+            margin: '10px 12px',
+            padding: '12px 14px',
+            borderRadius: 12,
+            border: '1px solid rgba(100,100,120,0.25)',
+            background: 'rgba(26,26,46,0.04)',
+            fontSize: 12,
+            color: T.muted,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ color: T.text }}>Non-working day</strong> — Sundays and England and Wales bank holidays are not used for site programme or
+          updates. Nothing to tick today; choose another date in the header.
         </div>
       )}
       {tot > 0 && (
@@ -1790,10 +1820,21 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
       })}
       {sections.length === 0 && !loadErr && (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: T.faint }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>No activities scheduled</div>
-          <div style={{ fontSize: 12, marginTop: 8, color: T.muted, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
-            For this date, no programme rows match your selected tabs. Widen scope above or add dates on the Programme page.
-          </div>
+          {nonWorkingDay ? (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Non-working day</div>
+              <div style={{ fontSize: 12, marginTop: 8, color: T.muted, maxWidth: 400, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+                No programme ticks on Sundays or England and Wales bank holidays. Use the date control above to pick a scheduleable day.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>No activities scheduled</div>
+              <div style={{ fontSize: 12, marginTop: 8, color: T.muted, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+                For this date, no programme rows match your selected tabs. Widen scope above or add dates on the Programme page.
+              </div>
+            </>
+          )}
         </div>
       )}
       {canTick && dirty && (
@@ -1879,7 +1920,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
     const k=dateKey(d);
     const dayData=scheduleSliceForLookaheadTab(gw,int_s,project_s,tab,k);
     const sections=flattenDaySections(dayData);
-    const isToday=k===todayKey;
+    const isToday = k === todayKey;
     const weekday=d.toLocaleDateString('en-GB',{weekday:'long'});
     const lines=[];
     sections.forEach((sec)=>{

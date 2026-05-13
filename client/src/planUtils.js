@@ -39,6 +39,43 @@ export function scheduleDateKeysBetween(startStr, endStr) {
   return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
 }
 
+/**
+ * Snap programme item bounds to scheduleable days only. Uses the longest contiguous
+ * run of scheduleable calendar days inside [start, end], so a bar cannot "bridge"
+ * across a Sunday or bank holiday (e.g. Mon–Sat then Tue becomes Mon–Sat only).
+ * If the window has no scheduleable day, falls back to a single-day span from the
+ * next scheduleable start.
+ */
+export function clampProgrammeItemToScheduleableRange(startStr, endStr) {
+  const s0 = String(startStr || '').trim();
+  const e0 = String(endStr || '').trim();
+  const cal = calendarDaysBetween(s0, e0);
+  const sched = cal.filter((k) => !isNonWorkingPlanDayKey(k));
+  if (!sched.length) {
+    const s = normalizeScheduleStartKey(startStr);
+    return { start_date: s, end_date: endOfScheduleableSpan(s, 1) };
+  }
+  const runs = [];
+  let run = [sched[0]];
+  for (let i = 1; i < sched.length; i++) {
+    const prev = run[run.length - 1];
+    const next = sched[i];
+    const d = new Date(String(prev) + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    if (dateKey(d) === next) run.push(next);
+    else {
+      runs.push(run);
+      run = [next];
+    }
+  }
+  runs.push(run);
+  let best = runs[0];
+  for (let j = 1; j < runs.length; j++) {
+    if (runs[j].length > best.length) best = runs[j];
+  }
+  return { start_date: best[0], end_date: best[best.length - 1] };
+}
+
 export function countScheduleableDaysInclusive(startKey, endKey) {
   return Math.max(1, scheduleDateKeysBetween(startKey, endKey).length);
 }

@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { dateKeysBetween, bboxFromGeom } = require('./programmeSync');
 const schedule = require('./programmeSchedule');
+const pw = require('./planWorkingDays');
 const { resolveDatabasePath } = require('./databasePath');
 const { DEFAULT_PROGRAMME_TEMPLATES } = require('./defaultTemplates');
 
@@ -85,8 +86,9 @@ function all(sql, p) {
   return r;
 }
 
-function expandScheduleForItem(pi) {
+function expandScheduleForItem(pi, opts) {
   if (!pi) return;
+  const deferSave = opts && opts.deferSave;
   const z = get(
     'SELECT z.*, d.tab FROM zones z JOIN drawings d ON d.id=z.drawing_id WHERE z.id=?',
     [pi.zone_id]
@@ -96,10 +98,11 @@ function expandScheduleForItem(pi) {
   const dates = dateKeysBetween(pi.start_date, pi.end_date);
   dates.forEach((dk) => {
     try {
-      run(
-        'INSERT OR IGNORE INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)',
-        [z.tab, dk, z.tower, z.name, a.name]
-      );
+      const sql =
+        'INSERT OR IGNORE INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)';
+      const params = [z.tab, dk, z.tower, z.name, a.name];
+      if (deferSave) runNoSave(sql, params);
+      else run(sql, params);
     } catch (_) {}
   });
 }
@@ -123,6 +126,11 @@ function shrinkScheduleForItem(pi, opts) {
     if (deferSave) runNoSave(sql, params);
     else run(sql, params);
   });
+}
+
+/** Stored programme_items dates may only cover scheduleable days (no Sun / EW bank holidays). */
+function clampProgrammeItemDates(start, end) {
+  return pw.clampProgrammeItemToScheduleableRange(start, end);
 }
 
 function seedActivities() {
@@ -451,6 +459,7 @@ async function getDb() {
   migrateProgrammeCommandLog();
   migrateMilestonesCompletionPct();
   migrateMilestonesProgrammeItemId();
+  migrateProgrammeItemsClampScheduleable();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -502,6 +511,36 @@ function migrateMilestonesProgrammeItemId() {
     db.run('ALTER TABLE milestones ADD COLUMN programme_item_id INTEGER');
     save();
   } catch (_) {}
+}
+
+/** One-time: reclamp all programme_items to scheduleable-only ranges and refresh schedule slots. */
+function migrateProgrammeItemsClampScheduleable() {
+  try {
+    db.run('CREATE TABLE IF NOT EXISTS _119hs_migrations (name TEXT PRIMARY KEY NOT NULL)');
+    save();
+  } catch (_) {}
+  const ran = get("SELECT name FROM _119hs_migrations WHERE name='clamp_programme_scheduleable_v1' LIMIT 1");
+  if (ran) return;
+  const items = all('SELECT * FROM programme_items ORDER BY id');
+  let changed = 0;
+  for (const it of items) {
+    const { start_date: sd, end_date: ed } = clampProgrammeItemDates(it.start_date, it.end_date);
+    if (sd === String(it.start_date || '').trim() && ed === String(it.end_date || '').trim()) continue;
+    shrinkScheduleForItem(it, { deferSave: true });
+    runNoSave('UPDATE programme_items SET start_date=?, end_date=? WHERE id=?', [sd, ed, it.id]);
+    const neu = get('SELECT * FROM programme_items WHERE id=?', [it.id]);
+    if (neu) expandScheduleForItem(neu, { deferSave: true });
+    changed++;
+  }
+  runNoSave("INSERT INTO _119hs_migrations (name) VALUES ('clamp_programme_scheduleable_v1')");
+  save();
+  if (changed) {
+    console.log(
+      '[119HS] Migration: reclamped',
+      changed,
+      'programme row(s) so dates do not bridge Sundays or England & Wales bank holidays; schedule table updated.'
+    );
+  }
 }
 
 /** Matches Update screen completion keys (pfx|activity). */
@@ -1209,9 +1248,10 @@ module.exports = {
 
       for (const row of toInsert) {
         if (!row.activity_id) continue;
+        const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
         run(
           'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-          [z.id, row.activity_id, row.start_date, row.end_date, row.status || 'planned', '']
+          [z.id, row.activity_id, sd, ed, row.status || 'planned', '']
         );
         const nid = get('SELECT last_insert_rowid() as id').id;
         const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
@@ -1231,7 +1271,7 @@ module.exports = {
       const units = Math.max(1, Math.round((Number(durs[i]) || 1) * 2));
       let halfStep = 0;
       for (let x = 0; x < units; x++) {
-        while (d.getDay() === 0) d.setDate(d.getDate() + 1);
+        while (pw.isNonWorkingPlanDayKey(pw.dateKeyFromDate(d))) d.setDate(d.getDate() + 1);
         const dk =
           d.getFullYear() +
           '-' +
@@ -1254,7 +1294,7 @@ module.exports = {
         }
       }
       if (halfStep === 1) d.setDate(d.getDate() + 1);
-      while (d.getDay() === 0) d.setDate(d.getDate() + 1);
+      while (pw.isNonWorkingPlanDayKey(pw.dateKeyFromDate(d))) d.setDate(d.getDate() + 1);
     });
   },
   /** All programme rows with zone + drawing tab for PLAN view and exports. Pass tabs (drawing_tab values) or null for no filter. */
@@ -1293,9 +1333,10 @@ module.exports = {
     ),
   getProgrammeItemById: (id) => get('SELECT * FROM programme_items WHERE id=?', [id]),
   addProgrammeItem: (zone_id, activity_id, start_date, end_date, status, notes) => {
+    const { start_date: sd, end_date: ed } = clampProgrammeItemDates(start_date, end_date);
     run(
       'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-      [zone_id, activity_id, start_date, end_date, status || 'planned', notes || '']
+      [zone_id, activity_id, sd, ed, status || 'planned', notes || '']
     );
     const id = get('SELECT last_insert_rowid() as id').id;
     const pi = get('SELECT * FROM programme_items WHERE id=?', [id]);
@@ -1312,9 +1353,10 @@ module.exports = {
     const end_date = patch.end_date != null ? patch.end_date : old.end_date;
     const status = patch.status != null ? patch.status : old.status;
     const notes = patch.notes !== undefined ? patch.notes : old.notes;
+    const { start_date: sd, end_date: ed } = clampProgrammeItemDates(start_date, end_date);
     run(
       'UPDATE programme_items SET zone_id=?, activity_id=?, start_date=?, end_date=?, status=?, notes=? WHERE id=?',
-      [zone_id, activity_id, start_date, end_date, status, notes || '', id]
+      [zone_id, activity_id, sd, ed, status, notes || '', id]
     );
     const neu = get('SELECT * FROM programme_items WHERE id=?', [id]);
     expandScheduleForItem(neu);
@@ -1335,13 +1377,14 @@ module.exports = {
       run('DELETE FROM programme_items WHERE id=?', [it.id]);
     });
     for (const r of rows || []) {
+      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(r.start_date, r.end_date);
       run(
         'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
         [
           zid,
           Number(r.activity_id),
-          String(r.start_date),
-          String(r.end_date),
+          sd,
+          ed,
           r.status || 'planned',
           r.notes || '',
         ]
@@ -1395,13 +1438,14 @@ module.exports = {
     }
     const items = Array.isArray(snapshot.programme_items) ? snapshot.programme_items : [];
     for (const it of items) {
+      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(it.start_date, it.end_date);
       run(
         'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
         [
           zid,
           Number(it.activity_id),
-          String(it.start_date),
-          String(it.end_date),
+          sd,
+          ed,
           it.status || 'planned',
           it.notes || '',
         ]
@@ -1480,9 +1524,10 @@ module.exports = {
     }
 
     for (const row of rows) {
+      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
       run(
         'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-        [zid, row.activity_id, row.start_date, row.end_date, row.status || 'planned', row.notes || '']
+        [zid, row.activity_id, sd, ed, row.status || 'planned', row.notes || '']
       );
       const nid = get('SELECT last_insert_rowid() as id').id;
       const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
@@ -1562,9 +1607,10 @@ module.exports = {
     }
 
     for (const row of rows) {
+      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
       run(
         'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-        [zid, row.activity_id, row.start_date, row.end_date, row.status || 'planned', row.notes || '']
+        [zid, row.activity_id, sd, ed, row.status || 'planned', row.notes || '']
       );
       const nid = get('SELECT last_insert_rowid() as id').id;
       const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);

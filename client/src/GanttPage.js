@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as api from './api';
 import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
 import { T, S } from './uiTheme';
-import { calendarDaysBetween, zoneRowLabel, abbrevActivity, isWeekendKey } from './planUtils';
+import { calendarDaysBetween, zoneRowLabel, abbrevActivity, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
 import ActivityInspectModal from './ActivityInspectModal';
 
 function parseKey(k) {
@@ -41,8 +41,9 @@ function barGeometry(winStart, winEnd, itemStart, itemEnd) {
 }
 
 function todayMarkerPct(winStart, winEnd) {
-  const tk = dateKey(new Date());
-  const g = barGeometry(winStart, winEnd, tk, tk);
+  const calToday = dateKey(new Date());
+  const anchor = isNonWorkingPlanDayKey(calToday) ? normalizeScheduleStartKey(calToday) : calToday;
+  const g = barGeometry(winStart, winEnd, anchor, anchor);
   if (!g) return null;
   return g.leftPct + g.widthPct / 2;
 }
@@ -449,8 +450,8 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                   const d = parseKey(dk);
                   const weekIdx = Math.floor(i / 7);
                   const alt = weekIdx % 2 === 1;
-                  const wk = isWeekendKey(dk);
-                  const isToday = dk === todayKeyStr;
+                  const wk = isNonWorkingPlanDayKey(dk);
+                  const isToday = dk === todayKeyStr && !isNonWorkingPlanDayKey(dk);
                   return (
                     <div
                       key={`bg-${dk}`}
@@ -530,8 +531,8 @@ export default function GanttPage({ tab, userTabs, isAdmin }) {
                       if (!g) return null;
                       const weekIdx = Math.floor(i / 7);
                       const alt = weekIdx % 2 === 1;
-                      const wk = isWeekendKey(dk);
-                      const isToday = dk === todayKeyStr;
+                      const wk = isNonWorkingPlanDayKey(dk);
+                      const isToday = dk === todayKeyStr && !isNonWorkingPlanDayKey(dk);
                       return (
                         <div
                           key={`rowbg-${z.zone_id}-${dk}`}

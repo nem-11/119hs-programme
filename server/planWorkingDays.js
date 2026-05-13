@@ -62,6 +62,36 @@ function scheduleDateKeysBetween(startStr, endStr) {
   return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
 }
 
+function clampProgrammeItemToScheduleableRange(startStr, endStr) {
+  const s0 = String(startStr || '').trim();
+  const e0 = String(endStr || '').trim();
+  const cal = calendarDaysBetween(s0, e0);
+  const sched = cal.filter((k) => !isNonWorkingPlanDayKey(k));
+  if (!sched.length) {
+    const s = normalizeScheduleStartKey(s0);
+    return { start_date: s, end_date: endOfScheduleableSpan(s, 1) };
+  }
+  const runs = [];
+  let run = [sched[0]];
+  for (let i = 1; i < sched.length; i++) {
+    const prev = run[run.length - 1];
+    const next = sched[i];
+    const d = new Date(String(prev) + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    if (dateKeyFromDate(d) === next) run.push(next);
+    else {
+      runs.push(run);
+      run = [next];
+    }
+  }
+  runs.push(run);
+  let best = runs[0];
+  for (let j = 1; j < runs.length; j++) {
+    if (runs[j].length > best.length) best = runs[j];
+  }
+  return { start_date: best[0], end_date: best[best.length - 1] };
+}
+
 function normalizeScheduleStartKey(dayKey) {
   const d = new Date(String(dayKey).trim() + 'T12:00:00');
   if (Number.isNaN(d.getTime())) return dateKeyFromDate(new Date());
@@ -129,5 +159,6 @@ module.exports = {
   lastScheduleableDayOnOrBefore,
   prevScheduleableDayBefore,
   startDateOfSpanEndingScheduleable,
+  clampProgrammeItemToScheduleableRange,
   dateKeyFromDate,
 };

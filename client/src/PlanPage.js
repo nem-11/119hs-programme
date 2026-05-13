@@ -9,6 +9,7 @@ import {
   abbrevActivity,
   zoneRowLabel,
   isNonWorkingPlanDayKey,
+  clampProgrammeItemToScheduleableRange,
   countScheduleableDaysInclusive,
   normalizeScheduleStartKey,
   endOfScheduleableSpan,
@@ -352,7 +353,9 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       const cells = {};
       let any = false;
       for (const dk of dayColumns) {
-        const hits = z.items.filter((it) => dayKeyInItemRange(dk, it.start_date, it.end_date));
+        const hits = isNonWorkingPlanDayKey(dk)
+          ? []
+          : z.items.filter((it) => dayKeyInItemRange(dk, it.start_date, it.end_date));
         if (hits.length) any = true;
         cells[dk] = hits;
       }
@@ -413,6 +416,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   }, [drawingId]);
 
   const zoneDayActivity = useMemo(() => {
+    if (isNonWorkingPlanDayKey(vizDate)) return new Map();
     const by = new Map();
     for (const r of filteredRows) {
       if (!dayKeyInItemRange(vizDate, r.start_date, r.end_date)) continue;
@@ -529,13 +533,16 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   }
 
   async function applyZoneRows(zoneId, zoneItems, nextItems) {
-    const payload = (nextItems || []).map((r) => ({
-      activity_id: Number(r.activity_id),
-      start_date: String(r.start_date),
-      end_date: String(r.end_date),
-      status: r.status || 'planned',
-      notes: r.notes || '',
-    }));
+    const payload = (nextItems || []).map((r) => {
+      const c = clampProgrammeItemToScheduleableRange(r.start_date, r.end_date);
+      return {
+        activity_id: Number(r.activity_id),
+        start_date: c.start_date,
+        end_date: c.end_date,
+        status: r.status || 'planned',
+        notes: r.notes || '',
+      };
+    });
     const out = await api.replacePlanZoneItems(zoneId, payload);
     if (out && out.error) throw new Error(out.error);
     setUndoState({
@@ -946,7 +953,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                 {dayColumns.map((dk) => {
                   const d = new Date(dk + 'T12:00:00');
                   const colGrey = isNonWorkingPlanDayKey(dk);
-                  const isToday = dk === todayKey;
+                  const isToday = dk === todayKey && !isNonWorkingPlanDayKey(dk);
                   return (
                     <th
                       key={dk}
@@ -1205,7 +1212,9 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                   }
                                 }}
                               >
-                                {done && <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>}
+                                {done && dk === String(it.start_date || '').trim() && (
+                                  <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
+                                )}
                                 <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
                                 {isAdmin && !done && (
                                   <button
