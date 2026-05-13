@@ -108,6 +108,7 @@ export const replacePlanZoneItems=(zoneId,rows)=>api('PUT',`/api/plan/admin/zone
 export const deletePlanZone=(zoneId)=>api('DELETE',`/api/plan/admin/zone/${zoneId}`);
 export const restorePlanZone=(snapshot)=>api('POST','/api/plan/admin/restore-zone',{snapshot});
 export const resetProgrammeData=()=>api('POST','/api/admin/reset-programme-data');
+export const clearProgrammeKeepZones=()=>api('POST','/api/admin/clear-programme-keep-zones');
 export const getProgrammeItemsByDrawing=(drawingId)=>api('GET',`/api/programme-items/drawing/${drawingId}`);
 export const getProgrammeItemsByZone=(zoneId)=>api('GET',`/api/programme-items/zone/${zoneId}`);
 export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes});

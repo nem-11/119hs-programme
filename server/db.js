@@ -734,6 +734,43 @@ module.exports = {
     save();
     return { cleared, skipped };
   },
+  /** Clears programme rows, site schedule, Update ticks, and zone activity rows; keeps zones, drawings, templates, users. */
+  clearProgrammeKeepZones: () => {
+    const tablesToClear = [
+      'programme_items',
+      'schedule',
+      'completions',
+      'zone_activities',
+      'programme_command_log',
+      'command_log',
+      'look_ahead',
+      'slip_notifications',
+    ];
+    const cleared = [];
+    const skipped = [];
+    for (const t of tablesToClear) {
+      const exists = get("SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", [t]);
+      if (!exists) {
+        skipped.push(t);
+        continue;
+      }
+      run(`DELETE FROM ${t}`);
+      cleared.push(t);
+    }
+    try {
+      const m = get("SELECT name FROM sqlite_master WHERE type='table' AND name='milestones' LIMIT 1");
+      if (m) {
+        run('UPDATE milestones SET programme_item_id=NULL WHERE programme_item_id IS NOT NULL');
+        cleared.push('milestones.programme_item_id (nulled)');
+      }
+    } catch (_) {}
+    try {
+      run('UPDATE zones SET programme_anchor_date=NULL, programme_stage_idx=NULL');
+      cleared.push('zones.programme_anchor_date, programme_stage_idx (nulled)');
+    } catch (_) {}
+    save();
+    return { ok: true, cleared, skipped };
+  },
   addZone: (did, name, tower, geometry, activityId) => {
     let g = geometry;
     if (typeof g === 'string') {

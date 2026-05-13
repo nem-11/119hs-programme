@@ -423,6 +423,10 @@ app.post('/api/admin/reset-programme-data', auth, admin, (req, res) => {
   const out = db.resetProgrammeData();
   res.json({ ok: true, ...out });
 });
+app.post('/api/admin/clear-programme-keep-zones', auth, admin, (req, res) => {
+  const out = db.clearProgrammeKeepZones();
+  res.json({ ok: true, ...out });
+});
 app.put('/api/plan/admin/zone/:zoneId/items', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
