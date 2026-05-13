@@ -70,7 +70,7 @@ export function isWeekendDate(d) {
   return wd === 0 || wd === 6;
 }
 
-/** Last scheduleable day on or before this calendar date (Sundays and EW bank holidays excluded from work). */
+/** Last scheduleable day on or before this calendar date (Saturdays, Sundays, and EW bank holidays excluded from work). */
 export function snapToPrevWeekday(d) {
   return parseYMD(lastScheduleableDayOnOrBefore(formatYMD(d)));
 }
@@ -110,7 +110,7 @@ export function addCalendarDays(dateKey, delta) {
 /**
  * Build programme rows from template sequence + durations.
  * @param startStageIndex — index in sequence for "start from" (current stage)
- * @param startDateKey — first scheduleable day of that stage (Saturdays count; Sundays and England and Wales bank holidays do not)
+ * @param startDateKey — first scheduleable day of that stage (Mondays–Fridays; Saturdays, Sundays, and England and Wales bank holidays do not count)
  * Anchor stage (target-end flow): finishes on anchorEndDateKey (last scheduleable day on or before chosen date).
  */
 export function buildRowsFromTargetEndDate({

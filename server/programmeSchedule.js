@@ -67,7 +67,7 @@ function isWeekendDate(d) {
   return wd === 0 || wd === 6;
 }
 
-/** @deprecated Prefer `normalizeScheduleStartKey` from plan rules; kept for API compat — snaps to next scheduleable day (not Saturday-excluded). */
+/** @deprecated Prefer `normalizeScheduleStartKey` from plan rules; kept for API compat — snaps to next scheduleable day (Saturdays excluded). */
 function snapToNextWeekday(d) {
   const k = pw.normalizeScheduleStartKey(pw.dateKeyFromDate(d));
   return parseYMD(k);

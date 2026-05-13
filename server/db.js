@@ -128,7 +128,7 @@ function shrinkScheduleForItem(pi, opts) {
   });
 }
 
-/** Stored programme_items dates may only cover scheduleable days (no Sun / EW bank holidays). */
+/** Stored programme_items dates may only cover scheduleable days (no Sat / Sun / EW bank holidays). */
 function clampProgrammeItemDates(start, end) {
   return pw.clampProgrammeItemToScheduleableRange(start, end);
 }
@@ -460,6 +460,7 @@ async function getDb() {
   migrateMilestonesCompletionPct();
   migrateMilestonesProgrammeItemId();
   migrateProgrammeItemsClampScheduleable();
+  migrateProgrammeItemsClampScheduleableV2();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -539,6 +540,36 @@ function migrateProgrammeItemsClampScheduleable() {
       '[119HS] Migration: reclamped',
       changed,
       'programme row(s) so dates do not bridge Sundays or England & Wales bank holidays; schedule table updated.'
+    );
+  }
+}
+
+/** Re-clamp after Saturdays became non-working in scheduleable-day rules (runs once per DB). */
+function migrateProgrammeItemsClampScheduleableV2() {
+  try {
+    db.run('CREATE TABLE IF NOT EXISTS _119hs_migrations (name TEXT PRIMARY KEY NOT NULL)');
+    save();
+  } catch (_) {}
+  const ran = get("SELECT name FROM _119hs_migrations WHERE name='clamp_programme_scheduleable_v2' LIMIT 1");
+  if (ran) return;
+  const items = all('SELECT * FROM programme_items ORDER BY id');
+  let changed = 0;
+  for (const it of items) {
+    const { start_date: sd, end_date: ed } = clampProgrammeItemDates(it.start_date, it.end_date);
+    if (sd === String(it.start_date || '').trim() && ed === String(it.end_date || '').trim()) continue;
+    shrinkScheduleForItem(it, { deferSave: true });
+    runNoSave('UPDATE programme_items SET start_date=?, end_date=? WHERE id=?', [sd, ed, it.id]);
+    const neu = get('SELECT * FROM programme_items WHERE id=?', [it.id]);
+    if (neu) expandScheduleForItem(neu, { deferSave: true });
+    changed++;
+  }
+  runNoSave("INSERT INTO _119hs_migrations (name) VALUES ('clamp_programme_scheduleable_v2')");
+  save();
+  if (changed) {
+    console.log(
+      '[119HS] Migration v2: reclamped',
+      changed,
+      'programme row(s) for Mon–Fri scheduleable rules (Saturdays excluded from auto spans); schedule updated.'
     );
   }
 }

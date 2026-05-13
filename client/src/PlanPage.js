@@ -9,6 +9,7 @@ import {
   abbrevActivity,
   zoneRowLabel,
   isNonWorkingPlanDayKey,
+  isSundayOrBankHolidayKey,
   clampProgrammeItemToScheduleableRange,
   countScheduleableDaysInclusive,
   normalizeScheduleStartKey,
@@ -353,7 +354,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       const cells = {};
       let any = false;
       for (const dk of dayColumns) {
-        const hits = isNonWorkingPlanDayKey(dk)
+        const hits = isSundayOrBankHolidayKey(dk)
           ? []
           : z.items.filter((it) => dayKeyInItemRange(dk, it.start_date, it.end_date));
         if (hits.length) any = true;
@@ -416,7 +417,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   }, [drawingId]);
 
   const zoneDayActivity = useMemo(() => {
-    if (isNonWorkingPlanDayKey(vizDate)) return new Map();
+    if (isSundayOrBankHolidayKey(vizDate)) return new Map();
     const by = new Map();
     for (const r of filteredRows) {
       if (!dayKeyInItemRange(vizDate, r.start_date, r.end_date)) continue;
@@ -565,7 +566,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     const by = new Map();
     for (const r of allRows || []) {
       for (const dk of calendarDaysBetween(r.start_date, r.end_date)) {
-        if (isNonWorkingPlanDayKey(dk)) continue;
+        if (isSundayOrBankHolidayKey(dk)) continue;
         const key = `${dk}__${r.activity_name}`;
         if (!by.has(key)) by.set(key, []);
         by.get(key).push(r);
@@ -669,7 +670,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Plan</h2>
             <p style={{ margin: 0, fontSize: 11, color: T.faint }}>
-              Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Saturdays count; Sundays and England and Wales bank holidays are grey and unused). Admins: ＋ add per zone, drag to move, × remove, or click a chip to move/duration/delete.
+              Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Mon–Fri only; Saturdays, Sundays, and England and Wales bank holidays are grey; you can still drag or edit onto a Saturday when needed). Admins: ＋ add per zone, drag to move, × remove, or click a chip to move/duration/delete.
             </p>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -1024,7 +1025,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                 const act = activities.find((a) => String(a.name).toLowerCase() === String(actName).trim().toLowerCase());
                                 if (!act) throw new Error('Activity not found');
                                 const start = normalizeScheduleStartKey(window.prompt('Start date (YYYY-MM-DD):', dayColumns[0] || startDate) || '');
-                                const duration = Math.max(1, Number(window.prompt('Duration (scheduleable days; excludes Sundays and England and Wales bank holidays):', '1')) || 1);
+                                const duration = Math.max(1, Number(window.prompt('Duration (scheduleable days; Mon–Fri only, excludes Sat/Sun and England and Wales bank holidays):', '1')) || 1);
                                 const items = [...z.items].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
                                 const insertAfter = window.prompt('Insert after activity name (blank = at start):', '');
                                 let idx = 0;
@@ -1101,12 +1102,12 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                           background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
                         }}
                         onDragOver={(e) => {
-                          if (isAdmin && dragState && !isNonWorkingPlanDayKey(dk)) e.preventDefault();
+                          if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
                         }}
                         onDrop={async () => {
                           if (!isAdmin || !dragState) return;
-                          if (isNonWorkingPlanDayKey(dk)) {
-                            window.alert('Sundays and bank holidays are non-working — drop on a scheduleable day.');
+                          if (isSundayOrBankHolidayKey(dk)) {
+                            window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
                             setDragState(null);
                             return;
                           }

@@ -28,12 +28,19 @@ function isSundayKey(dayKey) {
   return d.getDay() === 0;
 }
 
+function isSaturdayKey(dayKey) {
+  const [y, m, da] = String(dayKey).split('-').map(Number);
+  const d = new Date(y, m - 1, da, 12, 0, 0);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getDay() === 6;
+}
+
 function isBankHolidayKey(dayKey) {
   return bankHolidaySet.has(String(dayKey).trim());
 }
 
 function isNonWorkingPlanDayKey(dayKey) {
-  return isSundayKey(dayKey) || isBankHolidayKey(dayKey);
+  return isSaturdayKey(dayKey) || isSundayKey(dayKey) || isBankHolidayKey(dayKey);
 }
 
 const MAX_CAL_DAYS = 12000;
@@ -57,7 +64,7 @@ function calendarDaysBetween(startStr, endStr) {
   return out;
 }
 
-/** Scheduleable day keys in [startStr, endStr] — excludes Sundays and England & Wales bank holidays. */
+/** Scheduleable day keys in [startStr, endStr] — excludes Saturdays, Sundays, and England & Wales bank holidays. */
 function scheduleDateKeysBetween(startStr, endStr) {
   return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
 }
@@ -141,7 +148,7 @@ function startDateOfSpanEndingScheduleable(endKey, nDays) {
 }
 
 /**
- * Programme schedule day keys between bounds (excludes Sundays and bank holidays).
+ * Programme schedule day keys between bounds (excludes Saturdays, Sundays, and bank holidays).
  * Used for schedule table rows and must match client `scheduleDateKeysBetween`.
  */
 function dateKeysBetween(startStr, endStr) {

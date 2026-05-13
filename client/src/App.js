@@ -208,7 +208,7 @@ function buildProgrammeMilestonePicklist(planRows){
   return out;
 }
 
-/** Scheduleable dates in programme span (excludes Sundays and England & Wales bank holidays; matches server schedule expansion). */
+/** Scheduleable dates in programme span (excludes Saturdays, Sundays, and England & Wales bank holidays; matches server schedule expansion). */
 function workingDateKeysBetween(startStr, endStr) {
   return scheduleDateKeysBetween(startStr, endStr);
 }
@@ -667,7 +667,7 @@ function TemplatePage({tab,isAdmin,onReload}){
             <input type="date" value={toHtmlDateInputValue(apStart)} onChange={e=>setApStart(e.target.value)} style={{...S.input,width:140,fontSize:12,padding:'6px 10px'}}/>
             <button onClick={handleApply} style={{...S.btn,...S.btnPrimary,fontSize:11}}>Apply</button>
           </div>
-          <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} scheduleable days (Saturdays count; Sundays and England and Wales bank holidays excluded)</div>
+          <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} scheduleable days (Mondays–Fridays; Saturdays, Sundays, and England and Wales bank holidays excluded)</div>
         </div>}
       </div>})}
     {isAdmin&&<><h3 style={S.section}>{editingId?'Edit template':'Create template'}</h3>
@@ -1289,7 +1289,7 @@ function towerZoneFromPfx(pfx){
   return{tower:s.slice(0,i)||'—',zone:s.slice(i+1)||'—'};
 }
 
-/** Rolling window of 21 scheduleable days (skips Sundays and England & Wales bank holidays). */
+/** Rolling window of 21 scheduleable days (skips Saturdays, Sundays, and England & Wales bank holidays). */
 function lookaheadWorkingDays(anchorDate) {
   const out = [];
   const d = new Date(anchorDate);
@@ -1597,7 +1597,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
             lineHeight: 1.5,
           }}
         >
-          <strong style={{ color: T.text }}>Non-working day</strong> — Sundays and England and Wales bank holidays are not used for site programme or
+          <strong style={{ color: T.text }}>Non-working day</strong> — Saturdays, Sundays, and England and Wales bank holidays are not used for site programme or
           updates. Nothing to tick today; choose another date in the header.
         </div>
       )}
@@ -1824,7 +1824,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
             <>
               <div style={{ fontSize: 15, fontWeight: 600 }}>Non-working day</div>
               <div style={{ fontSize: 12, marginTop: 8, color: T.muted, maxWidth: 400, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
-                No programme ticks on Sundays or England and Wales bank holidays. Use the date control above to pick a scheduleable day.
+                No programme ticks on Saturdays, Sundays, or England and Wales bank holidays. Use the date control above to pick a scheduleable day.
               </div>
             </>
           ) : (
@@ -2010,7 +2010,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
         <div style={{minWidth:0}}>
           <h2 style={{margin:0,fontSize:20,fontWeight:800,color:T.text,letterSpacing:'-0.03em'}}>Look ahead</h2>
           <p style={{margin:'8px 0 0',fontSize:12,color:T.muted,lineHeight:1.55,maxWidth:420}}>
-            Three-week window from the date above (Sundays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
+            Three-week window from the date above (Saturdays, Sundays, and bank holidays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
           </p>
         </div>
         <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnPrimary,padding:'10px 16px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>

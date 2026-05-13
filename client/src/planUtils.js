@@ -25,16 +25,28 @@ export function isSundayKey(dayKey) {
   return d.getDay() === 0;
 }
 
+export function isSaturdayKey(dayKey) {
+  const [y, m, da] = String(dayKey).split('-').map(Number);
+  const d = new Date(y, m - 1, da, 12, 0, 0);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getDay() === 6;
+}
+
 export function isBankHolidayKey(dayKey) {
   return bankHolidaySet.has(String(dayKey).trim());
 }
 
-/** Sunday or England & Wales bank holiday — no schedule / no site work in this app. */
+/** Saturday, Sunday, or England & Wales bank holiday — excluded from default programme scheduling and site schedule slots. */
 export function isNonWorkingPlanDayKey(dayKey) {
+  return isSaturdayKey(dayKey) || isSundayKey(dayKey) || isBankHolidayKey(dayKey);
+}
+
+/** Sunday or bank holiday only — Plan grid hides chips here and blocks drops; Saturday stays available for manual moves. */
+export function isSundayOrBankHolidayKey(dayKey) {
   return isSundayKey(dayKey) || isBankHolidayKey(dayKey);
 }
 
-/** Programme / schedule day keys between bounds (excludes Sundays and bank holidays). */
+/** Programme / schedule day keys between bounds (excludes Sat, Sun, and bank holidays). */
 export function scheduleDateKeysBetween(startStr, endStr) {
   return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
 }
@@ -42,7 +54,7 @@ export function scheduleDateKeysBetween(startStr, endStr) {
 /**
  * Snap programme item bounds to scheduleable days only. Uses the longest contiguous
  * run of scheduleable calendar days inside [start, end], so a bar cannot "bridge"
- * across a Sunday or bank holiday (e.g. Mon–Sat then Tue becomes Mon–Sat only).
+ * across a weekend or bank holiday (e.g. Mon–Fri only when Sat–Sun fall inside the window).
  * If the window has no scheduleable day, falls back to a single-day span from the
  * next scheduleable start.
  */
