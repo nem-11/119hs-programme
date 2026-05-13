@@ -1,4 +1,12 @@
 import { dateKey } from './constants';
+import {
+  normalizeScheduleStartKey,
+  endOfScheduleableSpan,
+  nextScheduleableDayKey,
+  prevScheduleableDayBefore,
+  lastScheduleableDayOnOrBefore,
+  startDateOfSpanEndingScheduleable,
+} from './planUtils';
 
 export function normalizeActivityKey(s) {
   return String(s || '')
@@ -62,60 +70,34 @@ export function isWeekendDate(d) {
   return wd === 0 || wd === 6;
 }
 
+/** Last scheduleable day on or before this calendar date (Sundays and EW bank holidays excluded from work). */
 export function snapToPrevWeekday(d) {
-  const x = new Date(d);
-  while (isWeekendDate(x)) x.setDate(x.getDate() - 1);
-  return x;
+  return parseYMD(lastScheduleableDayOnOrBefore(formatYMD(d)));
 }
 
+/** First scheduleable day on or after this calendar date. */
 export function snapToNextWeekday(d) {
-  const x = new Date(d);
-  while (isWeekendDate(x)) x.setDate(x.getDate() + 1);
-  return x;
+  return parseYMD(normalizeScheduleStartKey(formatYMD(d)));
 }
 
-/** Last weekday strictly before dateKey (calendar day before, then skip weekends). */
-export function prevWorkingDayBefore(dateKey) {
-  let d = parseYMD(dateKey);
-  d.setDate(d.getDate() - 1);
-  return formatYMD(snapToPrevWeekday(d));
+/** Last scheduleable day strictly before `dateKey`. */
+export function prevWorkingDayBefore(dayKeyStr) {
+  return prevScheduleableDayBefore(String(dayKeyStr || '').trim());
 }
 
-/** First weekday strictly after dateKey. */
-export function nextWorkingDayAfter(dateKey) {
-  let d = parseYMD(dateKey);
-  d.setDate(d.getDate() + 1);
-  return formatYMD(snapToNextWeekday(d));
+/** First scheduleable day strictly after `dateKey`. */
+export function nextWorkingDayAfter(dayKeyStr) {
+  return nextScheduleableDayKey(String(dayKeyStr || '').trim());
 }
 
-function nextWorkingDayFrom(d) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + 1);
-  return snapToNextWeekday(x);
-}
-
-function prevWorkingDayFrom(d) {
-  const x = new Date(d);
-  x.setDate(x.getDate() - 1);
-  return snapToPrevWeekday(x);
-}
-
-/** Inclusive span of n weekday days starting at startKey (n>=1). */
+/** Inclusive span of `n` scheduleable days starting at `startKey`. */
 export function endDateOfSpanStarting(startKey, nWorking) {
-  const n = Math.max(0.5, Number(nWorking) || 1);
-  let cur = snapToNextWeekday(parseYMD(startKey));
-  let end = new Date(cur);
-  for (let i = 1; i < n; i++) end = nextWorkingDayFrom(end);
-  return formatYMD(end);
+  return endOfScheduleableSpan(startKey, nWorking);
 }
 
-/** Inclusive span of n weekday days ending at endKey (n>=1). */
+/** First day of an inclusive span of `n` scheduleable days ending on or before `endKey`. */
 export function startDateOfSpanEnding(endKey, nWorking) {
-  const n = Math.max(0.5, Number(nWorking) || 1);
-  let cur = snapToPrevWeekday(parseYMD(endKey));
-  let start = new Date(cur);
-  for (let i = 1; i < n; i++) start = prevWorkingDayFrom(start);
-  return formatYMD(start);
+  return startDateOfSpanEndingScheduleable(endKey, nWorking);
 }
 
 export function addCalendarDays(dateKey, delta) {
@@ -128,9 +110,9 @@ export function addCalendarDays(dateKey, delta) {
 /**
  * Build programme rows from template sequence + durations.
  * @param startStageIndex — index in sequence for "start from" (current stage)
- * @param startDateKey — first weekday of that stage
+ * @param startDateKey — first scheduleable day of that stage (Saturdays count; Sundays and England and Wales bank holidays do not)
+ * Anchor stage (target-end flow): finishes on anchorEndDateKey (last scheduleable day on or before chosen date).
  */
-/** Anchor stage finishes on anchorEndDateKey (weekday). Prior / following stages use template durations on working days only. */
 export function buildRowsFromTargetEndDate({
   sequence,
   durations,
@@ -145,7 +127,7 @@ export function buildRowsFromTargetEndDate({
   const raw = String(anchorEndDateKey || '').trim();
   if (!n || !raw) return [];
 
-  const endK = formatYMD(snapToPrevWeekday(parseYMD(raw)));
+  const endK = lastScheduleableDayOnOrBefore(raw);
   if (!endK || Number.isNaN(parseYMD(endK).getTime())) return [];
 
   const startK = startDateOfSpanEnding(endK, dur[k]);
@@ -215,7 +197,7 @@ export function buildRowsFromTemplate({
   const raw = String(startDateKey || '').trim();
   if (!n || !raw) return [];
 
-  const startNorm = formatYMD(snapToNextWeekday(parseYMD(raw)));
+  const startNorm = normalizeScheduleStartKey(raw);
   if (!startNorm || Number.isNaN(parseYMD(startNorm).getTime())) return [];
 
   const rows = new Array(n);

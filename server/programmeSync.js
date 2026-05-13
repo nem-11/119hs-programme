@@ -1,29 +1,4 @@
-/** Working-day date keys between inclusive bounds (skips Sundays). Capped to avoid runaway loops. */
-function dateKeysBetween(startStr, endStr) {
-  const out = [];
-  const s = String(startStr || '').trim();
-  const e = String(endStr || '').trim();
-  if (!s || !e) return out;
-  const d = new Date(s + 'T12:00:00');
-  const end = new Date(e + 'T12:00:00');
-  if (Number.isNaN(d.getTime()) || Number.isNaN(end.getTime())) return out;
-  const MAX_STEPS = 12000;
-  let steps = 0;
-  while (d <= end && steps < MAX_STEPS) {
-    steps++;
-    if (d.getDay() !== 0) {
-      out.push(
-        d.getFullYear() +
-          '-' +
-          String(d.getMonth() + 1).padStart(2, '0') +
-          '-' +
-          String(d.getDate()).padStart(2, '0')
-      );
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  return out;
-}
+const { dateKeysBetween } = require('./planWorkingDays');
 
 function bboxFromGeom(g) {
   if (!g || typeof g !== 'object') return { x: 0, y: 0, w: 0, h: 0 };

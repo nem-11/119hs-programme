@@ -1,4 +1,7 @@
 import { dateKey } from './constants';
+import BANK_HOLIDAYS_EW from './data/bank-holidays-ew.json';
+
+const bankHolidaySet = new Set(Array.isArray(BANK_HOLIDAYS_EW) ? BANK_HOLIDAYS_EW : []);
 
 /** Inclusive calendar days from YYYY-MM-DD to YYYY-MM-DD. */
 export function calendarDaysBetween(startStr, endStr) {
@@ -13,6 +16,82 @@ export function calendarDaysBetween(startStr, endStr) {
     d.setDate(d.getDate() + 1);
   }
   return out;
+}
+
+export function isSundayKey(dayKey) {
+  const [y, m, da] = String(dayKey).split('-').map(Number);
+  const d = new Date(y, m - 1, da, 12, 0, 0);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getDay() === 0;
+}
+
+export function isBankHolidayKey(dayKey) {
+  return bankHolidaySet.has(String(dayKey).trim());
+}
+
+/** Sunday or England & Wales bank holiday — no schedule / no site work in this app. */
+export function isNonWorkingPlanDayKey(dayKey) {
+  return isSundayKey(dayKey) || isBankHolidayKey(dayKey);
+}
+
+/** Programme / schedule day keys between bounds (excludes Sundays and bank holidays). */
+export function scheduleDateKeysBetween(startStr, endStr) {
+  return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
+}
+
+export function countScheduleableDaysInclusive(startKey, endKey) {
+  return Math.max(1, scheduleDateKeysBetween(startKey, endKey).length);
+}
+
+export function normalizeScheduleStartKey(dayKey) {
+  const d = new Date(String(dayKey) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return dateKey(new Date());
+  while (isNonWorkingPlanDayKey(dateKey(d))) d.setDate(d.getDate() + 1);
+  return dateKey(d);
+}
+
+export function endOfScheduleableSpan(startKey, durationDays) {
+  const n = Math.max(0.5, Number(durationDays) || 1);
+  let d = new Date(String(normalizeScheduleStartKey(startKey)) + 'T12:00:00');
+  for (let i = 1; i < n; i++) {
+    d.setDate(d.getDate() + 1);
+    while (isNonWorkingPlanDayKey(dateKey(d))) d.setDate(d.getDate() + 1);
+  }
+  return dateKey(d);
+}
+
+export function nextScheduleableDayKey(dayKey) {
+  let d = new Date(String(dayKey) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return dateKey(new Date());
+  d.setDate(d.getDate() + 1);
+  while (isNonWorkingPlanDayKey(dateKey(d))) d.setDate(d.getDate() + 1);
+  return dateKey(d);
+}
+
+/** Last scheduleable day on or before this calendar day (for anchor end dates). */
+export function lastScheduleableDayOnOrBefore(dayKey) {
+  let d = new Date(String(dayKey).trim() + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return String(dayKey).trim();
+  while (isNonWorkingPlanDayKey(dateKey(d))) d.setDate(d.getDate() - 1);
+  return dateKey(d);
+}
+
+/** First scheduleable day strictly before `dayKey`. */
+export function prevScheduleableDayBefore(dayKey) {
+  let d = new Date(String(dayKey).trim() + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return String(dayKey).trim();
+  d.setDate(d.getDate() - 1);
+  while (isNonWorkingPlanDayKey(dateKey(d))) d.setDate(d.getDate() - 1);
+  return dateKey(d);
+}
+
+/** First day of an inclusive span of `n` scheduleable days that ends on or before `endKey`. */
+export function startDateOfSpanEndingScheduleable(endKey, nDays) {
+  const n = Math.max(0.5, Number(nDays) || 1);
+  let curKey = lastScheduleableDayOnOrBefore(endKey);
+  let hops = Math.max(0, Math.ceil(n) - 1);
+  while (hops--) curKey = prevScheduleableDayBefore(curKey);
+  return curKey;
 }
 
 export function isWeekendKey(dayKey) {

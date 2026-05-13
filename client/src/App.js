@@ -20,6 +20,7 @@ import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
 import GanttPage from './GanttPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
+import { scheduleDateKeysBetween } from './planUtils';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
 function isApiErrorPayload(x) {
@@ -203,27 +204,9 @@ function buildProgrammeMilestonePicklist(planRows){
   return out;
 }
 
-/** Working dates from programme row span (Mon–Sat only; mirrors server `dateKeysBetween`). */
+/** Scheduleable dates in programme span (excludes Sundays and England & Wales bank holidays; matches server schedule expansion). */
 function workingDateKeysBetween(startStr, endStr) {
-  const out = [];
-  const s = String(startStr || '').trim();
-  const e = String(endStr || '').trim();
-  if (!s || !e) return out;
-  const d = new Date(`${s}T12:00:00`);
-  const end = new Date(`${e}T12:00:00`);
-  if (Number.isNaN(d.getTime()) || Number.isNaN(end.getTime())) return out;
-  const MAX_STEPS = 12000;
-  let steps = 0;
-  while (d <= end && steps < MAX_STEPS) {
-    steps++;
-    if (d.getDay() !== 0) {
-      out.push(
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      );
-    }
-    d.setDate(d.getDate() + 1);
-  }
-  return out;
+  return scheduleDateKeysBetween(startStr, endStr);
 }
 
 /** Day-slots implied by plan programme rows + Update ticks (when site `schedule` is empty or stale). */
@@ -680,7 +663,7 @@ function TemplatePage({tab,isAdmin,onReload}){
             <input type="date" value={toHtmlDateInputValue(apStart)} onChange={e=>setApStart(e.target.value)} style={{...S.input,width:140,fontSize:12,padding:'6px 10px'}}/>
             <button onClick={handleApply} style={{...S.btn,...S.btnPrimary,fontSize:11}}>Apply</button>
           </div>
-          <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} days, skipping Sundays</div>
+          <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} scheduleable days (Saturdays count; Sundays and England and Wales bank holidays excluded)</div>
         </div>}
       </div>})}
     {isAdmin&&<><h3 style={S.section}>{editingId?'Edit template':'Create template'}</h3>

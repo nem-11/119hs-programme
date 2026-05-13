@@ -7,7 +7,7 @@ node_modules/
 .env.*.local
 
 # SQLite and persisted data (do not commit databases)
-data/
+/data/
 *.db
 
 # Uploaded site hero (keep directory)

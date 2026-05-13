@@ -8,8 +8,12 @@ import {
   dayKeyInItemRange,
   abbrevActivity,
   zoneRowLabel,
+  isNonWorkingPlanDayKey,
+  countScheduleableDaysInclusive,
+  normalizeScheduleStartKey,
+  endOfScheduleableSpan,
+  nextScheduleableDayKey,
 } from './planUtils';
-import { endDateOfSpanStarting } from './programmeSchedule';
 import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
 import './planPrint.css';
 import ActivityInspectModal from './ActivityInspectModal';
@@ -524,35 +528,6 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     setSelectedTabs([...permittedTabs]);
   }
 
-  function countWorkingDaysInclusive(startKey, endKey) {
-    const days = calendarDaysBetween(startKey, endKey);
-    return Math.max(1, days.filter((k) => !isWeekendKey(k)).length);
-  }
-
-  function normalizeToWeekdayStart(key) {
-    const d = new Date(String(key) + 'T12:00:00');
-    if (Number.isNaN(d.getTime())) return dateKey(new Date());
-    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
-    return dateKey(d);
-  }
-
-  function endOfWorkingSpan(startKey, durationDays) {
-    let d = new Date(normalizeToWeekdayStart(startKey) + 'T12:00:00');
-    let remain = Math.max(1, Number(durationDays) || 1) - 1;
-    while (remain > 0) {
-      d.setDate(d.getDate() + 1);
-      if (d.getDay() !== 0 && d.getDay() !== 6) remain--;
-    }
-    return dateKey(d);
-  }
-
-  function nextWorkingDay(key) {
-    const d = new Date(String(key) + 'T12:00:00');
-    d.setDate(d.getDate() + 1);
-    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
-    return dateKey(d);
-  }
-
   async function applyZoneRows(zoneId, zoneItems, nextItems) {
     const payload = (nextItems || []).map((r) => ({
       activity_id: Number(r.activity_id),
@@ -583,6 +558,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     const by = new Map();
     for (const r of allRows || []) {
       for (const dk of calendarDaysBetween(r.start_date, r.end_date)) {
+        if (isNonWorkingPlanDayKey(dk)) continue;
         const key = `${dk}__${r.activity_name}`;
         if (!by.has(key)) by.set(key, []);
         by.get(key).push(r);
@@ -671,7 +647,6 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
 
   const printHeaderVisible = printLayout && printLayout.header;
   const legendVisible = printLayout == null || printLayout.legend;
-  const weekendTint = printLayout == null || printLayout.showWeekends;
   const clash = useMemo(() => detectClash(rows), [rows]);
 
   return (
@@ -687,8 +662,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
           <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Plan</h2>
             <p style={{ margin: 0, fontSize: 11, color: T.faint }}>
-              Printable programme grid by zone and day
-              {isAdmin ? ' — admins load every drawing tab that has programme items (not only zones).' : ''}
+              Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Saturdays count; Sundays and England and Wales bank holidays are grey and unused). Admins: ＋ add per zone, drag to move, × remove, or click a chip to move/duration/delete.
             </p>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -971,7 +945,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                 </th>
                 {dayColumns.map((dk) => {
                   const d = new Date(dk + 'T12:00:00');
-                  const wk = weekendTint && isWeekendKey(dk);
+                  const colGrey = isNonWorkingPlanDayKey(dk);
                   const isToday = dk === todayKey;
                   return (
                     <th
@@ -995,7 +969,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                         textAlign: 'center',
                         minWidth: 56,
                         maxWidth: 72,
-                        background: wk ? 'rgba(26,26,46,0.06)' : T.surface,
+                        background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
                         boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
                         cursor: 'pointer',
                         userSelect: 'none',
@@ -1042,8 +1016,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                 if (!actName) return;
                                 const act = activities.find((a) => String(a.name).toLowerCase() === String(actName).trim().toLowerCase());
                                 if (!act) throw new Error('Activity not found');
-                                const start = normalizeToWeekdayStart(window.prompt('Start date (YYYY-MM-DD):', dayColumns[0] || startDate) || '');
-                                const duration = Math.max(1, Number(window.prompt('Duration (working days):', '1')) || 1);
+                                const start = normalizeScheduleStartKey(window.prompt('Start date (YYYY-MM-DD):', dayColumns[0] || startDate) || '');
+                                const duration = Math.max(1, Number(window.prompt('Duration (scheduleable days; excludes Sundays and England and Wales bank holidays):', '1')) || 1);
                                 const items = [...z.items].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
                                 const insertAfter = window.prompt('Insert after activity name (blank = at start):', '');
                                 let idx = 0;
@@ -1051,7 +1025,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                   const afterIdx = items.findIndex((it) => String(it.activity_name).toLowerCase() === insertAfter.trim().toLowerCase());
                                   idx = afterIdx >= 0 ? afterIdx + 1 : items.length;
                                 }
-                                const end = endOfWorkingSpan(start, duration);
+                                const end = endOfScheduleableSpan(start, duration);
                                 items.splice(idx, 0, {
                                   id: `tmp_${Date.now()}`,
                                   zone_id: z.zone_id,
@@ -1062,12 +1036,12 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                   status: 'planned',
                                   notes: '',
                                 });
-                                let cursor = idx === 0 ? items[0].start_date : nextWorkingDay(items[idx - 1].end_date);
+                                let cursor = idx === 0 ? items[0].start_date : nextScheduleableDayKey(items[idx - 1].end_date);
                                 for (let i = idx; i < items.length; i++) {
-                                  const dur = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
-                                  items[i].start_date = normalizeToWeekdayStart(cursor);
-                                  items[i].end_date = endOfWorkingSpan(items[i].start_date, dur);
-                                  cursor = nextWorkingDay(items[i].end_date);
+                                  const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                                  items[i].start_date = normalizeScheduleStartKey(cursor);
+                                  items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
+                                  cursor = nextScheduleableDayKey(items[i].end_date);
                                 }
                                 await applyZoneRows(z.zone_id, z.items, items);
                               } catch (e) {
@@ -1106,7 +1080,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                   </td>
                   {dayColumns.map((dk) => {
                     const hits = z.cells[dk] || [];
-                    const wk = weekendTint && isWeekendKey(dk);
+                    const colGrey = isNonWorkingPlanDayKey(dk);
                     return (
                       <td
                         key={dk}
@@ -1117,13 +1091,18 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                           verticalAlign: 'top',
                           minHeight: 36,
                           height: 36,
-                          background: wk ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
+                          background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
                         }}
                         onDragOver={(e) => {
-                          if (isAdmin && dragState) e.preventDefault();
+                          if (isAdmin && dragState && !isNonWorkingPlanDayKey(dk)) e.preventDefault();
                         }}
                         onDrop={async () => {
                           if (!isAdmin || !dragState) return;
+                          if (isNonWorkingPlanDayKey(dk)) {
+                            window.alert('Sundays and bank holidays are non-working — drop on a scheduleable day.');
+                            setDragState(null);
+                            return;
+                          }
                           try {
                             const moved = dragState.item;
                             if (String(moved.status || '').toLowerCase() === 'done') return;
@@ -1134,15 +1113,15 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                             const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
                             const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
                             if (idx < 0) return;
-                            const dur = countWorkingDaysInclusive(items[idx].start_date, items[idx].end_date);
-                            items[idx].start_date = normalizeToWeekdayStart(dk);
-                            items[idx].end_date = endOfWorkingSpan(items[idx].start_date, dur);
-                            let cursor = nextWorkingDay(items[idx].end_date);
+                            const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
+                            items[idx].start_date = normalizeScheduleStartKey(dk);
+                            items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
+                            let cursor = nextScheduleableDayKey(items[idx].end_date);
                             for (let i = idx + 1; i < items.length; i++) {
-                              const d = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
-                              items[i].start_date = normalizeToWeekdayStart(cursor);
-                              items[i].end_date = endOfWorkingSpan(items[i].start_date, d);
-                              cursor = nextWorkingDay(items[i].end_date);
+                              const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                              items[i].start_date = normalizeScheduleStartKey(cursor);
+                              items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
+                              cursor = nextScheduleableDayKey(items[i].end_date);
                             }
                             await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
                           } catch (e) {
@@ -1200,25 +1179,25 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                     if (cmd === 'delete') {
                                       items.splice(idx, 1);
                                     } else if (cmd.startsWith('move ')) {
-                                      const nk = normalizeToWeekdayStart(action.slice(5).trim());
-                                      const dur = countWorkingDaysInclusive(items[idx].start_date, items[idx].end_date);
+                                      const nk = normalizeScheduleStartKey(action.slice(5).trim());
+                                      const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
                                       items[idx].start_date = nk;
-                                      items[idx].end_date = endOfWorkingSpan(nk, dur);
+                                      items[idx].end_date = endOfScheduleableSpan(nk, dur);
                                     } else if (cmd.startsWith('duration ')) {
                                       const d = Math.max(1, Number(action.slice(9).trim()) || 1);
-                                      items[idx].end_date = endOfWorkingSpan(items[idx].start_date, d);
+                                      items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, d);
                                     } else {
                                       window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
                                       return;
                                     }
                                     let from = Math.max(0, idx + (cmd === 'delete' ? 0 : 1));
                                     if (cmd === 'delete' && idx > 0) from = idx;
-                                    let cursor = from === 0 ? items[0]?.start_date : nextWorkingDay(items[from - 1].end_date);
+                                    let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
                                     for (let i = from; i < items.length; i++) {
-                                      const dur = countWorkingDaysInclusive(items[i].start_date, items[i].end_date);
-                                      items[i].start_date = normalizeToWeekdayStart(cursor);
-                                      items[i].end_date = endOfWorkingSpan(items[i].start_date, dur);
-                                      cursor = nextWorkingDay(items[i].end_date);
+                                      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                                      items[i].start_date = normalizeScheduleStartKey(cursor);
+                                      items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
+                                      cursor = nextScheduleableDayKey(items[i].end_date);
                                     }
                                     await applyZoneRows(z.zone_id, z.items, items);
                                   } catch (e) {
@@ -1228,6 +1207,55 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                               >
                                 {done && <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>}
                                 <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
+                                {isAdmin && !done && (
+                                  <button
+                                    type="button"
+                                    title="Remove this activity"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (
+                                        !window.confirm(
+                                          `Remove "${it.activity_name}" from ${zoneRowLabel(z)}? Following activities in this zone will move earlier.`
+                                        )
+                                      )
+                                        return;
+                                      try {
+                                        const items = [...z.items]
+                                          .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+                                          .map((x) => ({ ...x }));
+                                        const idx = items.findIndex((x) => Number(x.id) === Number(it.id));
+                                        if (idx < 0) return;
+                                        items.splice(idx, 1);
+                                        const from = idx;
+                                        const cursor =
+                                          from === 0
+                                            ? items[0]?.start_date
+                                            : nextScheduleableDayKey(items[from - 1].end_date);
+                                        for (let i = from; i < items.length; i++) {
+                                          const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                                          items[i].start_date = normalizeScheduleStartKey(cursor);
+                                          items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
+                                          cursor = nextScheduleableDayKey(items[i].end_date);
+                                        }
+                                        await applyZoneRows(z.zone_id, z.items, items);
+                                      } catch (err) {
+                                        window.alert(err?.message || 'Delete failed');
+                                      }
+                                    }}
+                                    style={{
+                                      ...S.btn,
+                                      ...S.btnDanger,
+                                      padding: '0 5px',
+                                      fontSize: 11,
+                                      lineHeight: 1.15,
+                                      flexShrink: 0,
+                                      minWidth: 22,
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                )}
                               </div>
                             );
                           })}

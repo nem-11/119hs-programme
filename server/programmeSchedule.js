@@ -1,5 +1,7 @@
 'use strict';
 
+const pw = require('./planWorkingDays');
+
 /** Normalize names so template strings match DB despite spacing / dash variants. */
 function normalizeActivityKey(s) {
   return String(s || '')
@@ -39,7 +41,7 @@ function resolveActivityId(lookup, templateName) {
   return null;
 }
 
-/** Ensure one duration per sequence step (missing entries default to 1 working day). */
+/** Ensure one duration per sequence step (missing entries default to 1 scheduleable day). */
 function alignTemplateDurations(sequence, durations) {
   const seq = Array.isArray(sequence) ? sequence : [];
   const dur = Array.isArray(durations) ? durations : [];
@@ -51,13 +53,7 @@ function alignTemplateDurations(sequence, durations) {
 }
 
 function dateKey(d) {
-  return (
-    d.getFullYear() +
-    '-' +
-    String(d.getMonth() + 1).padStart(2, '0') +
-    '-' +
-    String(d.getDate()).padStart(2, '0')
-  );
+  return pw.dateKeyFromDate(d);
 }
 
 function parseYMD(s) {
@@ -71,58 +67,36 @@ function isWeekendDate(d) {
   return wd === 0 || wd === 6;
 }
 
-function snapToPrevWeekday(d) {
-  const x = new Date(d);
-  while (isWeekendDate(x)) x.setDate(x.getDate() - 1);
-  return x;
+/** @deprecated Prefer `normalizeScheduleStartKey` from plan rules; kept for API compat — snaps to next scheduleable day (not Saturday-excluded). */
+function snapToNextWeekday(d) {
+  const k = pw.normalizeScheduleStartKey(pw.dateKeyFromDate(d));
+  return parseYMD(k);
 }
 
-function snapToNextWeekday(d) {
-  const x = new Date(d);
-  while (isWeekendDate(x)) x.setDate(x.getDate() + 1);
-  return x;
+/** @deprecated Kept for API compat — last scheduleable day on or before this calendar date. */
+function snapToPrevWeekday(d) {
+  const k = pw.lastScheduleableDayOnOrBefore(pw.dateKeyFromDate(d));
+  return parseYMD(k);
 }
 
 function prevWorkingDayBefore(dateKeyStr) {
-  let d = parseYMD(dateKeyStr);
-  d.setDate(d.getDate() - 1);
-  return dateKey(snapToPrevWeekday(d));
+  return pw.prevScheduleableDayBefore(String(dateKeyStr || '').trim());
 }
 
 function nextWorkingDayAfter(dateKeyStr) {
-  let d = parseYMD(dateKeyStr);
-  d.setDate(d.getDate() + 1);
-  return dateKey(snapToNextWeekday(d));
-}
-
-function nextWorkingDayFrom(d) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + 1);
-  return snapToNextWeekday(x);
-}
-
-function prevWorkingDayFrom(d) {
-  const x = new Date(d);
-  x.setDate(x.getDate() - 1);
-  return snapToPrevWeekday(x);
+  return pw.nextScheduleableDayKey(String(dateKeyStr || '').trim());
 }
 
 function endDateOfSpanStarting(startKey, nWorking) {
-  const n = Math.max(0.5, Number(nWorking) || 1);
-  let end = new Date(snapToNextWeekday(parseYMD(startKey)));
-  for (let i = 1; i < n; i++) end = nextWorkingDayFrom(end);
-  return dateKey(end);
+  return pw.endOfScheduleableSpan(startKey, nWorking);
 }
 
 function startDateOfSpanEnding(endKey, nWorking) {
-  const n = Math.max(0.5, Number(nWorking) || 1);
-  let start = new Date(snapToPrevWeekday(parseYMD(endKey)));
-  for (let i = 1; i < n; i++) start = prevWorkingDayFrom(start);
-  return dateKey(start);
+  return pw.startDateOfSpanEndingScheduleable(endKey, nWorking);
 }
 
 /**
- * Anchor activity ends on anchorEndDateKey (last weekday of that stage).
+ * Anchor activity ends on anchorEndDateKey (last scheduleable day of that stage on or before the chosen date).
  * Earlier stages are computed backwards; later stages forwards.
  * @param {{ map: Map<string, number>, normMap: Map<string, number> }} activityLookup from buildActivityLookup
  */
@@ -140,7 +114,7 @@ function buildRowsFromTargetEndDate({
   const raw = String(anchorEndDateKey || '').trim();
   if (!n || !raw) return [];
 
-  const endK = dateKey(snapToPrevWeekday(parseYMD(raw)));
+  const endK = pw.lastScheduleableDayOnOrBefore(raw);
   if (!endK || Number.isNaN(parseYMD(endK).getTime())) return [];
 
   const startK = startDateOfSpanEnding(endK, dur[k]);
@@ -210,7 +184,7 @@ function buildRowsFromTemplate({
   const raw = String(startDateKey || '').trim();
   if (!n || !raw) return [];
 
-  const startNorm = dateKey(snapToNextWeekday(parseYMD(raw)));
+  const startNorm = pw.normalizeScheduleStartKey(raw);
   if (!startNorm || Number.isNaN(parseYMD(startNorm).getTime())) return [];
 
   const rows = [];
@@ -255,7 +229,7 @@ function buildRowsFromTemplate({
 }
 
 function todayKey() {
-  return dateKey(snapToNextWeekday(new Date()));
+  return pw.normalizeScheduleStartKey(pw.dateKeyFromDate(new Date()));
 }
 
 /** Calendar-day shift (matches client Programme shift). */
@@ -280,4 +254,6 @@ module.exports = {
   addCalendarDays,
   parseYMD,
   snapToNextWeekday,
+  snapToPrevWeekday,
+  isWeekendDate,
 };
