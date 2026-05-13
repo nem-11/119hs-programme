@@ -1,6 +1,12 @@
 node_modules/
 .DS_Store
 
+# Finder / OS duplicate folder names (local only; never commit)
+119hs-tests 2/
+node_modules 2/
+test-results 2/
+data 2/
+
 # Environment and local secrets
 .env
 .env.local
