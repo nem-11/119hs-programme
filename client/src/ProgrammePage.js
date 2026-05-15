@@ -106,7 +106,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
       <div style={{fontSize:12,color:T.muted,lineHeight:1.5,marginBottom:16}}>
         {tab===PROJECT_PROGRAMME_TAB
           ? (zoneSetupAvailable
-              ? 'On Zones, upload a one-page programme PDF or any placeholder image, add logical rows (towers / packages / milestones) as zones, then schedule here. This scope feeds Plan and Gantt alongside floor drawings.'
+              ? 'On Zones, upload a one-page programme PDF or any placeholder image, add logical rows (towers / packages / milestones) as zones, then schedule here. This scope feeds Plan alongside floor drawings.'
               : 'An administrator should upload a drawing for Project programme and define zones.')
           : (zoneSetupAvailable
               ? 'Upload a plan on Zones, mark zones on the drawing, then return here to link programme dates to each zone.'

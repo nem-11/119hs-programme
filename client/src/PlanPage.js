@@ -174,7 +174,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   const [startDate, setStartDate] = useState(() => dateKey(todayRef.current));
   const [endDate, setEndDate] = useState(() => dateKey(defaultEnd));
 
-  /** Same model as Gantt: explicit selected drawing tabs (multi-select); synced from header `tab` like GanttPage. */
+  /** Explicit selected drawing tabs (multi-select); synced from header `tab`. */
   const [selectedTabs, setSelectedTabs] = useState(() => [tab]);
   /** null = all towers; otherwise whitelist */
   const [towerWhitelist, setTowerWhitelist] = useState(null);
@@ -254,7 +254,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [isAdmin, userTabs, rows]);
 
-  /** When the header programme tab changes, match Plan scope to that tab only (same as Gantt). */
+  /** When the header programme tab changes, match Plan scope to that tab only. */
   useEffect(() => {
     setSelectedTabs([tab]);
   }, [tab]);

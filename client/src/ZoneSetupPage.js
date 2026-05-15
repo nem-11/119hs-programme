@@ -70,7 +70,7 @@ function zoneLayerDisplay(z, layerActId, nameForActivityId){
   return{colorName:null,muted:true,activityLine:''};
 }
 
-/** Prefer non-done over done, then earliest start — matches Plan/Gantt day picking. */
+/** Prefer non-done over done, then earliest start — matches Plan day picking. */
 function pickProgrammeRowForDay(rows,dayKey){
   if(!rows?.length||!dayKey)return null;
   const onDay=rows.filter((r)=>dayKeyInItemRange(dayKey,r.start_date,r.end_date));

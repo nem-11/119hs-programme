@@ -7,7 +7,6 @@ import {
   allowedPageIdsForRole,
   canTick as roleCanTick,
   canEditZonesProgramme,
-  showGantt as roleShowGantt,
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
   isSiteEditor as roleIsSiteEditor,
@@ -18,7 +17,6 @@ import {T,S,shadowCard,grad} from './uiTheme';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
-import GanttPage from './GanttPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
 
@@ -2152,7 +2150,7 @@ function MainApp({user,onLogout}){
     const allowed=allowedPageIdsForRole(user.role);
     if(!allowed.has(page))setPage('dashboard');
   },[page,user.role]);
-  useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan','gantt'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
+  useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
   const userTabsSafe=Array.isArray(user.tabs)?user.tabs:[];
@@ -2178,7 +2176,6 @@ function MainApp({user,onLogout}){
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
-      {page==='gantt'&&roleShowGantt(user.role)&&<GanttPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
       {page==='programme'&&!roleIsBoardViewer(user.role)&&!roleIsSiteEditor(user.role)&&!roleIsGwSubbie(user.role)&&!roleIsIntSubbie(user.role)&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}

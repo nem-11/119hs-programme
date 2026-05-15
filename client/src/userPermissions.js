@@ -20,7 +20,7 @@ export function isIntSubbie(role) {
   return role === 'int_subbie';
 }
 
-/** Editing zones / programme lines — admin only (site uses Plan/Gantt). */
+/** Editing zones / programme lines — admin only (site uses Plan). */
 export function canEditZonesProgramme(role) {
   return isAdmin(role);
 }
@@ -30,45 +30,32 @@ export function canTick(role) {
   return isAdmin(role) || isSiteEditor(role);
 }
 
-/** Gantt: admin, site, board, GW/INT subbies (scoped tabs). */
-export function showGantt(role) {
-  return (
-    isAdmin(role) ||
-    isSiteEditor(role) ||
-    isBoardViewer(role) ||
-    isGwSubbie(role) ||
-    isIntSubbie(role)
-  );
-}
-
 export function bottomNavItemsForRole(role) {
   const dash = { id: 'dashboard', label: 'Dash', icon: '▣' };
   const upd = { id: 'update', label: 'Update', icon: '✓' };
   const ahead = { id: 'lookahead', label: 'Ahead', icon: '▶' };
   const plan = { id: 'plan', label: 'Plan', icon: '▦' };
-  const gantt = { id: 'gantt', label: 'Gantt', icon: '▤' };
   const zones = { id: 'zones', label: 'Zones', icon: '◇' };
   const prog = { id: 'programme', label: 'Programme', icon: '◎' };
   const tpl = { id: 'templates', label: 'Templates', icon: '⧉' };
   const sett = { id: 'settings', label: 'Settings', icon: '⚙' };
 
   if (isBoardViewer(role)) {
-    return [dash, plan, gantt, zones];
+    return [dash, plan, zones];
   }
 
   if (isSiteEditor(role)) {
-    return [dash, upd, ahead, plan, gantt, zones];
+    return [dash, upd, ahead, plan, zones];
   }
 
   if (isGwSubbie(role) || isIntSubbie(role)) {
-    return [dash, ahead, plan, gantt, zones];
+    return [dash, ahead, plan, zones];
   }
 
   const core = [dash, upd, ahead, plan];
-  const gz = showGantt(role) ? [gantt] : [];
   const zp = [zones, prog];
   const adm = isAdmin(role) ? [tpl, sett] : [];
-  return [...core, ...gz, ...zp, ...adm];
+  return [...core, ...zp, ...adm];
 }
 
 export function allowedPageIdsForRole(role) {
