@@ -347,6 +347,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   const upHandlerRef=useRef(()=>{});
   const toolRef=useRef('select');
   const[plateFit,setPlateFit]=useState({w:400,h:300});
+  const[isPrinting,setIsPrinting]=useState(false);
   const[view,setView]=useState({scale:1,tx:0,ty:0});
   const[panning,setPanning]=useState(false);
   const[focusZoneEditorNonce,setFocusZoneEditorNonce]=useState(0);
@@ -993,6 +994,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     const afterPrint=()=>{
       document.body.classList.remove('zone-setup-print-mode');
       document.body.classList.remove('zone-setup-day-list-print-mode');
+      setIsPrinting(false);
       if(titleRestoreRef.current)document.title=titleRestoreRef.current;
     };
     window.addEventListener('afterprint',afterPrint);
@@ -1000,6 +1002,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
       window.removeEventListener('afterprint',afterPrint);
       document.body.classList.remove('zone-setup-print-mode');
       document.body.classList.remove('zone-setup-day-list-print-mode');
+      setIsPrinting(false);
     };
   },[]);
 
@@ -1009,6 +1012,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
     titleRestoreRef.current=document.title;
     document.title=`119HS_Zones_${slug}_${dateKey(new Date())}`;
     flushSync(()=>{
+      setIsPrinting(true);
       setView({scale:1,tx:0,ty:0});
     });
     document.body.classList.add('zone-setup-print-mode');
@@ -1256,8 +1260,8 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                   position:'absolute',
                   left:0,
                   top:0,
-                  width:plateW,
-                  height:plateH,
+                  width:isPrinting?'100%':plateW,
+                  height:isPrinting?'100%':plateH,
                   transform:`translate(${tx}px,${ty}px) scale(${scale})`,
                   transformOrigin:'0 0',
                   willChange:'transform',
