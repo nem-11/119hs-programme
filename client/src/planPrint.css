@@ -64,6 +64,11 @@ body.zone-setup-print-mode {
 }
 
 @media print {
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+
   body.zone-setup-print-mode {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -117,6 +122,11 @@ body.zone-setup-day-list-print-mode {
 }
 
 @media print {
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+
   body.zone-setup-day-list-print-mode {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
