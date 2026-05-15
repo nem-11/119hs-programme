@@ -212,6 +212,19 @@ function fitPlate(vw,vh,iw,ih){
   return{w:iw*r,h:ih*r};
 }
 
+/** During browser print / PDF, layout width can still match the on-screen flex box — use the larger of rect vs window. */
+function plateViewportCssPx(el){
+  if(!el||typeof window==='undefined')return{vw:0,vh:0};
+  const r=el.getBoundingClientRect();
+  let vw=r.width,vh=r.height;
+  const inPrintUi=window.matchMedia&&window.matchMedia('print').matches;
+  if(inPrintUi){
+    vw=Math.max(vw,window.innerWidth||0);
+    vh=Math.max(vh,window.innerHeight||0);
+  }
+  return{vw,vh};
+}
+
 /** Normalized 0–100 coords using transformed plate bounding rect (image space). */
 function clientToPct(clientX,clientY,plateEl){
   if(!plateEl)return[0,0];
@@ -481,15 +494,25 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
   useEffect(()=>{
     const el=viewportRef.current;
     if(!el)return;
-    const ro=new ResizeObserver(()=>{
-      const r=el.getBoundingClientRect();
-      setPlateFit(fitPlate(r.width,r.height,imgW,imgH));
-    });
+    const apply=()=>{
+      const{vw,vh}=plateViewportCssPx(el);
+      setPlateFit(fitPlate(vw,vh,imgW,imgH));
+    };
+    const ro=new ResizeObserver(apply);
     ro.observe(el);
-    const r=el.getBoundingClientRect();
-    setPlateFit(fitPlate(r.width,r.height,imgW,imgH));
+    apply();
     return()=>ro.disconnect();
   },[imgW,imgH,drawData?.image_data]);
+
+  useEffect(()=>{
+    const onBeforePrint=()=>{
+      if(!document.body.classList.contains('zone-setup-print-mode'))return;
+      // Print geometry override — A3 landscape usable area (docs/SOURCE_OF_TRUTH.md §2)
+      flushSync(()=>{setPlateFit(fitPlate(1511,1047,imgW,imgH));});
+    };
+    window.addEventListener('beforeprint',onBeforePrint);
+    return()=>window.removeEventListener('beforeprint',onBeforePrint);
+  },[imgW,imgH]);
 
   useEffect(()=>{
     if(focusZoneEditorNonce===0)return;
@@ -989,7 +1012,17 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
       setView({scale:1,tx:0,ty:0});
     });
     document.body.classList.add('zone-setup-print-mode');
-    requestAnimationFrame(()=>window.print());
+    const iw=drawData?.width||1,ih=drawData?.height||1;
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        // Print geometry override — A3 landscape usable area (docs/SOURCE_OF_TRUTH.md §2)
+        // A3 landscape at 96 dpi = 1587×1123px; minus 10mm margins (38px each side) = 1511×1047px
+        const A3_PRINT_W = 1511;
+        const A3_PRINT_H = 1047;
+        flushSync(()=>{setPlateFit(fitPlate(A3_PRINT_W,A3_PRINT_H,iw,ih));});
+        window.print();
+      });
+    });
   }
 
   function runDayListPrint(){
@@ -1080,7 +1113,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         </div>
       )}
 
-      <div style={{flex:1,display:'flex',flexDirection:'row',minHeight:0,overflow:'hidden'}}>
+      <div className="zone-setup-print-map-row" style={{flex:1,display:'flex',flexDirection:'row',minHeight:0,overflow:'hidden'}}>
         <div
           ref={viewportRef}
           tabIndex={-1}

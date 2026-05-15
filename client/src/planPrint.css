@@ -89,7 +89,7 @@ body.zone-setup-print-mode {
     overflow: visible !important;
     height: auto !important;
     max-height: none !important;
-    min-height: 0 !important;
+    min-height: 250mm !important;
     page-break-inside: avoid;
   }
 
