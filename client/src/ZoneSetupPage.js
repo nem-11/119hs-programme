@@ -1376,22 +1376,22 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                     top:'1.2%',
                     right:'1.2%',
                     zIndex:12,
-                    maxWidth:'38%',
+                    maxWidth:'22%',
                     minWidth:120,
                     pointerEvents:'none',
                     background:'rgba(255,255,255,0.96)',
-                    borderRadius:10,
+                    borderRadius:6,
                     border:`1px solid ${T.hairline}`,
-                    boxShadow:'0 4px 18px rgba(26,26,46,0.12)',
-                    padding:'8px 10px 8px',
+                    boxShadow:'0 2px 8px rgba(26,26,46,0.10)',
+                    padding:'5px 7px 5px',
                     WebkitPrintColorAdjust:'exact',
                     printColorAdjust:'exact',
                   }}
                 >
-                  <div style={{fontSize:8,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>
+                  <div style={{fontSize:7,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:2}}>
                     Activities on this day
                   </div>
-                  <div style={{fontSize:11,fontWeight:800,color:T.text,lineHeight:1.2,marginBottom:8}}>
+                  <div style={{fontSize:9,fontWeight:800,color:T.text,lineHeight:1.2,marginBottom:4}}>
                     {formatShort(new Date(`${zoneVizDate}T12:00:00`))}
                   </div>
                   {vizDayActivityLegend.length===0?(
@@ -1401,11 +1401,11 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       {vizDayActivityLegend.map((name)=>{
                         const n=itemsForZoneDay.filter((r)=>String(r.activity_name).trim()===name).length;
                         return (
-                          <div key={name} style={{display:'flex',alignItems:'flex-start',gap:6}}>
+                          <div key={name} style={{display:'flex',alignItems:'flex-start',gap:3}}>
                             <span
                               style={{
-                                width:12,
-                                height:16,
+                                width:9,
+                                height:10,
                                 borderRadius:3,
                                 flexShrink:0,
                                 marginTop:1,
@@ -1416,7 +1416,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                                 printColorAdjust:'exact',
                               }}
                             />
-                            <span style={{fontSize:9,color:T.text,fontWeight:700,lineHeight:1.3,flex:1,minWidth:0}}>
+                            <span style={{fontSize:8,color:T.text,fontWeight:700,lineHeight:1.3,flex:1,minWidth:0}}>
                               {name}
                               {n>1?<span style={{fontWeight:600,color:T.faint,marginLeft:4}}>(×{n})</span>:null}
                             </span>
@@ -1425,7 +1425,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       })}
                     </div>
                   )}
-                  <div style={{fontSize:7,color:T.faint,marginTop:6,lineHeight:1.3}}>
+                  <div style={{fontSize:6,color:T.faint,marginTop:3,lineHeight:1.3}}>
                     Zone labels show abbreviations — full names here.
                   </div>
                 </div>
