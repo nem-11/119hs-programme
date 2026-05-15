@@ -11,10 +11,7 @@ body.plan-print-mode {
 }
 
 @media print {
-  @page {
-    size: A3 landscape;
-    margin: 10mm;
-  }
+  @page { size: A3 landscape; margin: 10mm; }
 
   body.plan-print-mode {
     -webkit-print-color-adjust: exact !important;
@@ -64,10 +61,7 @@ body.zone-setup-print-mode {
 }
 
 @media print {
-  @page {
-    size: A3 landscape;
-    margin: 10mm;
-  }
+  @page { size: A3 landscape; margin: 10mm; }
 
   body.zone-setup-print-mode {
     -webkit-print-color-adjust: exact !important;
@@ -122,10 +116,7 @@ body.zone-setup-day-list-print-mode {
 }
 
 @media print {
-  @page {
-    size: A3 landscape;
-    margin: 10mm;
-  }
+  @page { size: A3 landscape; margin: 10mm; }
 
   body.zone-setup-day-list-print-mode {
     -webkit-print-color-adjust: exact !important;
