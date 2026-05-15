@@ -427,6 +427,21 @@ app.post('/api/admin/clear-programme-keep-zones', auth, admin, (req, res) => {
   const out = db.clearProgrammeKeepZones();
   res.json({ ok: true, ...out });
 });
+app.post('/api/admin/reset-programme', auth, admin, (req, res) => {
+  const confirmation = String(req.body?.confirmation ?? '').trim();
+  if (confirmation !== 'RESET PROGRAMME') {
+    return res.status(400).json({
+      error: 'confirmation must be exactly RESET PROGRAMME',
+    });
+  }
+  try {
+    const deleted = db.resetProgrammeSlotData();
+    res.json({ ok: true, deleted });
+  } catch (e) {
+    console.error('[119HS] POST /api/admin/reset-programme', e);
+    res.status(500).json({ error: e.message || 'Reset failed' });
+  }
+});
 app.put('/api/plan/admin/zone/:zoneId/items', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];

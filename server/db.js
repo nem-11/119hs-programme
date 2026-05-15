@@ -467,6 +467,14 @@ async function getDb() {
   migrateDefaultUserRoles();
   migrateUserTabsProjectProgramme();
   save();
+  const danglingCompletions = countCompletionsDanglingZoneRef();
+  if (danglingCompletions > 0) {
+    console.warn(
+      '[119HS] completions integrity:',
+      danglingCompletions,
+      'completion row(s) reference a tower/zone that does not exist (no auto-delete).'
+    );
+  }
   return db;
 }
 
@@ -598,6 +606,32 @@ function parseCompletionKeyParts(key) {
   };
 }
 
+/** For SQL LIKE: escape `\`, `%`, `_` in user-controlled tower/zone segments. */
+function sqlLikeEscape(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/**
+ * Completions whose key names a concrete zone (not _default) that no longer exists in `zones`.
+ * Does not auto-delete — see startup log in getDb.
+ */
+function countCompletionsDanglingZoneRef() {
+  const zones = all('SELECT tower, name FROM zones');
+  const zoneSet = new Set(
+    zones.map((z) => `${String(z.tower || '').trim()}\u0000${String(z.name || '').trim()}`)
+  );
+  const rows = all('SELECT key FROM completions');
+  let n = 0;
+  for (const { key } of rows) {
+    const p = parseCompletionKeyParts(key);
+    if (!p || !p.tower || !p.activity) continue;
+    if (p.zone === '_default') continue;
+    const ref = `${String(p.tower).trim()}\u0000${String(p.zone).trim()}`;
+    if (!zoneSet.has(ref)) n++;
+  }
+  return n;
+}
+
 /** Share of scheduled day-slots for this programme item that have a completion tick. */
 function computeLiveCompletionFromProgrammeItem(piId, compMap) {
   const pi = get(
@@ -695,8 +729,12 @@ module.exports = {
     run('UPDATE drawings SET file_url=? WHERE id=?', [fileUrl || null, id]);
   },
   deleteDrawing: (id) => {
-    const zs = all('SELECT id FROM zones WHERE drawing_id=?', [id]);
+    const zs = all('SELECT id, tower, name FROM zones WHERE drawing_id=?', [id]);
     zs.forEach((z) => {
+      const tower = String(z.tower || '').trim();
+      const zoneName = String(z.name || '').trim();
+      const likePat = `${sqlLikeEscape(tower)}|${sqlLikeEscape(zoneName)}|%`;
+      runNoSave("DELETE FROM completions WHERE key LIKE ? ESCAPE '\\'", [likePat]);
       const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [z.id]);
       pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
       runNoSave('DELETE FROM programme_items WHERE zone_id=?', [z.id]);
@@ -764,6 +802,35 @@ module.exports = {
     }
     save();
     return { cleared, skipped };
+  },
+  /**
+   * Admin wipe: programme_items, zone_activities, completions, schedule only.
+   * Keeps activities, zones, templates, drawings, milestones (per admin reset contract).
+   */
+  resetProgrammeSlotData: () => {
+    const tables = ['programme_items', 'zone_activities', 'completions', 'schedule'];
+    const deleted = {};
+    let inTx = false;
+    try {
+      runNoSave('BEGIN IMMEDIATE');
+      inTx = true;
+      for (const t of tables) {
+        const c = get(`SELECT COUNT(*) AS c FROM ${t}`);
+        deleted[t] = Number(c && c.c != null ? c.c : 0);
+        runNoSave(`DELETE FROM ${t}`);
+      }
+      runNoSave('COMMIT');
+      inTx = false;
+      save();
+    } catch (e) {
+      if (inTx) {
+        try {
+          runNoSave('ROLLBACK');
+        } catch (_) {}
+      }
+      throw e;
+    }
+    return deleted;
   },
   /** Clears programme rows, site schedule, Update ticks, and zone activity rows; keeps zones, drawings, templates, users. */
   clearProgrammeKeepZones: () => {
@@ -897,12 +964,39 @@ module.exports = {
   deleteZone: (id) => {
     const nid = Number(id);
     if (!Number.isFinite(nid)) return;
-    const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [nid]);
-    pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
-    runNoSave('DELETE FROM programme_items WHERE zone_id=?', [nid]);
-    runNoSave('DELETE FROM zone_activities WHERE zone_id=?', [nid]);
-    runNoSave('DELETE FROM zones WHERE id=?', [nid]);
-    save();
+    let inTx = false;
+    try {
+      runNoSave('BEGIN IMMEDIATE');
+      inTx = true;
+      const z = get('SELECT z.tower, z.name FROM zones z WHERE z.id=?', [nid]);
+      if (!z) {
+        runNoSave('ROLLBACK');
+        inTx = false;
+        return;
+      }
+      const tower = String(z.tower || '').trim();
+      const zoneName = String(z.name || '').trim();
+      // docs/SOURCE_OF_TRUTH.md §4.1 — zone delete must remove string-keyed completions for this tower|zone
+      // so ticks cannot reattach to a recreated zone with the same name.
+      const likePat = `${sqlLikeEscape(tower)}|${sqlLikeEscape(zoneName)}|%`;
+      runNoSave("DELETE FROM completions WHERE key LIKE ? ESCAPE '\\'", [likePat]);
+
+      const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [nid]);
+      pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
+      runNoSave('DELETE FROM programme_items WHERE zone_id=?', [nid]);
+      runNoSave('DELETE FROM zone_activities WHERE zone_id=?', [nid]);
+      runNoSave('DELETE FROM zones WHERE id=?', [nid]);
+      runNoSave('COMMIT');
+      inTx = false;
+      save();
+    } catch (e) {
+      if (inTx) {
+        try {
+          runNoSave('ROLLBACK');
+        } catch (_) {}
+      }
+      throw e;
+    }
   },
   setZoneActivities: (zoneId, items) => {
     const z = get('SELECT id FROM zones WHERE id=?', [zoneId]);
@@ -1334,6 +1428,11 @@ module.exports = {
   applyTemplate: (tab, tw, zn, seq, dur, start) => {
     const acts = JSON.parse(seq),
       durs = JSON.parse(dur);
+    const tabS = String(tab ?? '');
+    const twS = String(tw ?? '');
+    const znS = String(zn ?? '');
+    // docs/SOURCE_OF_TRUTH.md §4.2 — template apply must be deterministic: no stale schedule rows for this tab/tower/zone.
+    runNoSave('DELETE FROM schedule WHERE tab=? AND tower=? AND zone_name=?', [tabS, twS, znS]);
     let d = new Date(start + 'T00:00:00');
     acts.forEach((act, i) => {
       const units = Math.max(1, Math.round((Number(durs[i]) || 1) * 2));
@@ -1346,15 +1445,13 @@ module.exports = {
           String(d.getMonth() + 1).padStart(2, '0') +
           '-' +
           String(d.getDate()).padStart(2, '0');
-        try {
-          run('INSERT OR IGNORE INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)', [
-            tab,
-            dk,
-            tw,
-            zn,
-            act,
-          ]);
-        } catch (e) {}
+        runNoSave('INSERT INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)', [
+          tabS,
+          dk,
+          twS,
+          znS,
+          act,
+        ]);
         halfStep++;
         if (halfStep === 2) {
           halfStep = 0;
@@ -1364,6 +1461,7 @@ module.exports = {
       if (halfStep === 1) d.setDate(d.getDate() + 1);
       while (pw.isNonWorkingPlanDayKey(pw.dateKeyFromDate(d))) d.setDate(d.getDate() + 1);
     });
+    save();
   },
   /** All programme rows with zone + drawing tab for PLAN view and exports. Pass tabs (drawing_tab values) or null for no filter. */
   getPlanProgrammeRows: (tabs) => {

@@ -412,8 +412,13 @@ function formatSitePhotoUpdated(iso){
   try{return new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});}catch(_){return null;}
 }
 
+const RESET_PROGRAMME_PHRASE='RESET PROGRAMME';
 function SettingsPage(){
   const[info,setInfo]=useState({url:null,updated_at:null});const[uploading,setUploading]=useState(false);const[err,setErr]=useState('');const fileRef=useRef(null);
+  const[progResetInput,setProgResetInput]=useState('');
+  const[progResetBusy,setProgResetBusy]=useState(false);
+  const[progResetErr,setProgResetErr]=useState('');
+  const[progResetDeleted,setProgResetDeleted]=useState(null);
   const load=useCallback(async()=>{
     try{
       const d=await api.getSitePhoto();
@@ -434,6 +439,19 @@ function SettingsPage(){
       else await load();
     }catch(er){setErr(er?.message||'Upload failed');}
     finally{setUploading(false);}
+  }
+  async function onProgrammeReset(){
+    setProgResetErr('');
+    setProgResetDeleted(null);
+    setProgResetBusy(true);
+    try{
+      const out=await api.resetProgramme({confirmation:RESET_PROGRAMME_PHRASE});
+      if(isApiErrorPayload(out)){setProgResetErr(String(out.error));return;}
+      if(out&&out.deleted&&typeof out.deleted==='object')setProgResetDeleted(out.deleted);
+      else setProgResetDeleted({});
+      setProgResetInput('');
+    }catch(er){setProgResetErr(er?.message||'Reset failed');}
+    finally{setProgResetBusy(false);}
   }
   const thumbSrc=info.url?`${api.absoluteUrl(info.url)}${info.updated_at?`?v=${encodeURIComponent(info.updated_at)}`:''}`:'';
   const updatedLabel=formatSitePhotoUpdated(info.updated_at);
@@ -466,10 +484,46 @@ function SettingsPage(){
         </div>
       </div>
     </div>
+    <div style={{maxWidth:520,marginTop:28}}>
+      <h3 style={{margin:'0 0 6px',fontSize:15,fontWeight:700,color:T.text}}>Programme data</h3>
+      <p style={{fontSize:12,color:T.muted,margin:'0 0 12px',lineHeight:1.5}}>
+        Removes all rows from <code style={{fontSize:11}}>programme_items</code>, <code style={{fontSize:11}}>zone_activities</code>, <code style={{fontSize:11}}>completions</code>, and <code style={{fontSize:11}}>schedule</code>.
+        Zones, drawings, templates, the activity catalogue, and milestones are kept.
+      </p>
+      <label style={{display:'block',fontSize:11,fontWeight:600,color:T.text,marginBottom:6}} htmlFor="prog-reset-confirm">Type {RESET_PROGRAMME_PHRASE} to enable reset</label>
+      <input
+        id="prog-reset-confirm"
+        className="login-landing__field"
+        value={progResetInput}
+        onChange={e=>{setProgResetInput(e.target.value);setProgResetErr('');setProgResetDeleted(null);}}
+        placeholder={RESET_PROGRAMME_PHRASE}
+        autoComplete="off"
+        style={{maxWidth:360,marginBottom:10}}
+      />
+      <div>
+        <button
+          type="button"
+          disabled={progResetBusy||progResetInput.trim()!==RESET_PROGRAMME_PHRASE}
+          onClick={()=>void onProgrammeReset()}
+          style={{...S.btn,padding:'10px 16px',fontSize:12,fontWeight:600,background:'#b91c1c',color:'#fff',border:'none',opacity:progResetBusy||progResetInput.trim()!==RESET_PROGRAMME_PHRASE?0.45:1,cursor:progResetBusy||progResetInput.trim()!==RESET_PROGRAMME_PHRASE?'default':'pointer'}}
+        >
+          {progResetBusy?'Resetting…':'Reset programme data'}
+        </button>
+      </div>
+      {progResetErr&&<div style={{fontSize:12,color:'#b91c1c',marginTop:10}}>{progResetErr}</div>}
+      {progResetDeleted&&(
+        <div style={{fontSize:12,color:T.muted,marginTop:12,lineHeight:1.55}}>
+          <strong style={{color:T.text}}>Cleared row counts</strong>
+          <ul style={{margin:'6px 0 0',paddingLeft:18}}>
+            {Object.entries(progResetDeleted).map(([table,n])=>(
+              <li key={table}><code style={{fontSize:11}}>{table}</code>: {String(n)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   </div>;
 }
-
-function TemplatePage({tab,isAdmin,onReload}){
   const[templateTab,setTemplateTab]=useState(tab);
   const[activities,setActivities]=useState([]);
   const[newAct,setNewAct]=useState('');

@@ -109,6 +109,8 @@ export const deletePlanZone=(zoneId)=>api('DELETE',`/api/plan/admin/zone/${zoneI
 export const restorePlanZone=(snapshot)=>api('POST','/api/plan/admin/restore-zone',{snapshot});
 export const resetProgrammeData=()=>api('POST','/api/admin/reset-programme-data');
 export const clearProgrammeKeepZones=()=>api('POST','/api/admin/clear-programme-keep-zones');
+/** Wipes programme_items, zone_activities, completions, schedule; keeps zones, drawings, templates, activities, milestones. Body: `{ confirmation: 'RESET PROGRAMME' }`. */
+export const resetProgramme=(body)=>api('POST','/api/admin/reset-programme',body);
 export const getProgrammeItemsByDrawing=(drawingId)=>api('GET',`/api/programme-items/drawing/${drawingId}`);
 export const getProgrammeItemsByZone=(zoneId)=>api('GET',`/api/programme-items/zone/${zoneId}`);
 export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes});
