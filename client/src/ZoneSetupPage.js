@@ -1024,6 +1024,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
         const A3_PRINT_W = 1511;
         const A3_PRINT_H = 1047;
         flushSync(()=>{setPlateFit(fitPlate(A3_PRINT_W,A3_PRINT_H,iw,ih));});
+        flushSync(()=>{setView({scale:1,tx:0,ty:0});});
         window.print();
       });
     });
