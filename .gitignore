@@ -16,6 +16,9 @@ data 2/
 /data/
 *.db
 
+# React production build (generated; never track)
+client/build/
+
 # Uploaded site hero (keep directory)
 server/public/uploads/*
 !server/public/uploads/.gitkeep

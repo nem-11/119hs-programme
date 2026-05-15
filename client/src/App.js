@@ -524,6 +524,8 @@ function SettingsPage(){
     </div>
   </div>;
 }
+
+function TemplatePage({tab,isAdmin,onReload}){
   const[templateTab,setTemplateTab]=useState(tab);
   const[activities,setActivities]=useState([]);
   const[newAct,setNewAct]=useState('');
