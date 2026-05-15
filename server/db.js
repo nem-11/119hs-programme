@@ -1431,12 +1431,16 @@ module.exports = {
     const tabS = String(tab ?? '');
     const twS = String(tw ?? '');
     const znS = String(zn ?? '');
-    // docs/SOURCE_OF_TRUTH.md §4.2 — template apply must be deterministic: no stale schedule rows for this tab/tower/zone.
+    // docs/SOURCE_OF_TRUTH.md §4.2 — deterministic apply: clear prior schedule for this tab/tower/zone, then insert
+    // without duplicate (tab,date,tower,zone_name,activity) rows (schedule UNIQUE).
     runNoSave('DELETE FROM schedule WHERE tab=? AND tower=? AND zone_name=?', [tabS, twS, znS]);
     let d = new Date(start + 'T00:00:00');
     acts.forEach((act, i) => {
       const units = Math.max(1, Math.round((Number(durs[i]) || 1) * 2));
       let halfStep = 0;
+      // schedule UNIQUE is one row per (tab,date,tower,zone_name,activity). Two half-day units can
+      // land on the same calendar day before the cursor advances — insert once per day for this act.
+      const daysInserted = new Set();
       for (let x = 0; x < units; x++) {
         while (pw.isNonWorkingPlanDayKey(pw.dateKeyFromDate(d))) d.setDate(d.getDate() + 1);
         const dk =
@@ -1445,13 +1449,16 @@ module.exports = {
           String(d.getMonth() + 1).padStart(2, '0') +
           '-' +
           String(d.getDate()).padStart(2, '0');
-        runNoSave('INSERT INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)', [
-          tabS,
-          dk,
-          twS,
-          znS,
-          act,
-        ]);
+        if (!daysInserted.has(dk)) {
+          runNoSave('INSERT INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)', [
+            tabS,
+            dk,
+            twS,
+            znS,
+            act,
+          ]);
+          daysInserted.add(dk);
+        }
         halfStep++;
         if (halfStep === 2) {
           halfStep = 0;
