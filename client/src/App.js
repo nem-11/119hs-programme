@@ -2164,7 +2164,7 @@ function MainApp({user,onLogout}){
   const sched=tab==='groundworks'?gw:tab==='internals'?int_s:tab===PROJECT_PROGRAMME_TAB?project_s:{};
   const navItems=bottomNavItemsForRole(user.role);
 
-  return<div style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
+  return<div className="app-root-shell" style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <div className="app-header-bar">
       <div style={{display:'flex',alignItems:'center',gap:10}}><Wordmark119HS variant="nav"/>
         {page!=='plan'&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}</div>
