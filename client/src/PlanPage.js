@@ -577,8 +577,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
     for (let i = from; i < items.length; i++) {
       const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-      items[i].start_date = normalizeScheduleStartKey(cursor);
-      items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
+      items[i] = { ...items[i], start_date: normalizeScheduleStartKey(cursor), end_date: endOfScheduleableSpan(normalizeScheduleStartKey(cursor), dur) };
       cursor = nextScheduleableDayKey(items[i].end_date);
     }
     await applyZoneRows(zoneId, zoneItems, items);
