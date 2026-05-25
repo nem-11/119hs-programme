@@ -551,18 +551,31 @@ function SettingsPage(){
         {reseqBusy?'Resequencing…':'Resequence all zones'}
       </button>
       {reseqErr&&<div style={{fontSize:12,color:'#b91c1c',marginTop:10}}>{reseqErr}</div>}
-      {reseqResult&&typeof reseqResult.count==='number'&&(
+      {reseqResult&&(
         <div style={{fontSize:12,color:T.muted,marginTop:12,lineHeight:1.55}}>
-          <strong style={{color:T.text}}>{reseqResult.count} zone{reseqResult.count===1?'':'s'} resequenced</strong>
-          {reseqResult.total!=null&&reseqResult.total!==reseqResult.count&&(
-            <span> ({reseqResult.total} eligible)</span>
+          {typeof reseqResult.count==='number'&&(
+            <div>
+              <strong style={{color:T.text}}>{reseqResult.count} zone{reseqResult.count===1?'':'s'} resequenced successfully</strong>
+            </div>
           )}
           {Array.isArray(reseqResult.errors)&&reseqResult.errors.length>0&&(
             <ul style={{margin:'8px 0 0',paddingLeft:18}}>
               {reseqResult.errors.map((e)=>(
-                <li key={e.zone_id}>{e.label||`Zone ${e.zone_id}`}: {e.error}</li>
+                <li key={`err-${e.zone_id}`}>{e.label||`Zone ${e.zone_id}`}: {e.error}</li>
               ))}
             </ul>
+          )}
+          {Array.isArray(reseqResult.skipped)&&reseqResult.skipped.length>0&&(
+            <div style={{marginTop:12}}>
+              <strong style={{color:T.text}}>
+                {reseqResult.skipped.length} zone{reseqResult.skipped.length===1?'':'s'} skipped — open these in Zone Setup and use Schedule from target date to set an anchor
+              </strong>
+              <ul style={{margin:'8px 0 0',paddingLeft:18}}>
+                {reseqResult.skipped.map((s)=>(
+                  <li key={`skip-${s.zone_id}`}>{s.label||`Zone ${s.zone_id}`}{s.reason?`: ${s.reason}`:''}</li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

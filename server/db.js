@@ -1958,6 +1958,19 @@ module.exports = {
          AND programme_anchor_date IS NOT NULL
          AND TRIM(programme_anchor_date) <> ''`
     );
+    const skipped = all(
+      `SELECT DISTINCT z.id, z.tower, z.name
+       FROM zones z
+       INNER JOIN programme_items pi ON pi.zone_id = z.id
+       WHERE z.source_template_id IS NULL
+          OR z.programme_anchor_date IS NULL
+          OR TRIM(z.programme_anchor_date) = ''
+       ORDER BY z.tower, z.name, z.id`
+    ).map((z) => ({
+      zone_id: Number(z.id),
+      label: `${z.tower || ''} ${z.name || ''}`.trim() || `Zone ${z.id}`,
+      reason: 'skipped — no anchor set',
+    }));
     const actRows = all('SELECT id, name FROM activities');
     const activityLookup = schedule.buildActivityLookup(actRows);
     let count = 0;
@@ -2018,7 +2031,7 @@ module.exports = {
       count += 1;
     }
 
-    return { ok: true, count, total: zones.length, errors };
+    return { ok: true, count, total: zones.length, errors, skipped, skipped_count: skipped.length };
   },
   /** Full regenerate from template stage 0. Fails if zone has any programme row with status done. */
   resetZoneProgrammeToTemplateStart: (zoneId, startDateKey) => {
