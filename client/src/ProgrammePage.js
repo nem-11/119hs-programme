@@ -70,15 +70,30 @@ const ppTableHead={
   marginBottom:6,
 };
 
+/** MS Project summary/milestone flags normalised to 0 or 1 (handles 0, 1, booleans, and common string values). */
+function projectItemFlag(row,key){
+  const v=row[key];
+  if(v===true||v===1||v==='1'||v==='true'||v==='yes'||v==='Yes')return 1;
+  return 0;
+}
+
 function projectTaskType(row){
-  if(Number(row.is_summary)===1)return 'Summary';
-  if(Number(row.is_milestone)===1)return 'Milestone';
+  if(projectItemFlag(row,'is_summary')===1)return 'Summary';
+  if(projectItemFlag(row,'is_milestone')===1)return 'Milestone';
   return 'Task';
 }
 
-function filterProjectTasks(tasks,mode){
-  if(mode==='milestones')return tasks.filter((t)=>Number(t.is_milestone)===1);
-  if(mode==='tasks')return tasks.filter((t)=>Number(t.is_summary)!==1);
+/** Preview import table only — does not mutate parsedXmlTasks or xmlChecked. */
+function filterPreviewTableRows(tasks,filterType){
+  const mode=String(filterType||'all');
+  if(mode==='milestones'){
+    return tasks.filter((t)=>projectItemFlag(t,'is_milestone')===1);
+  }
+  if(mode==='tasks'){
+    return tasks.filter(
+      (t)=>projectItemFlag(t,'is_summary')===0&&projectItemFlag(t,'is_milestone')===0
+    );
+  }
   return tasks;
 }
 
@@ -115,7 +130,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const[xmlParseErr,setXmlParseErr]=useState('');
   const[parsedXmlTasks,setParsedXmlTasks]=useState([]);
   const[xmlChecked,setXmlChecked]=useState({});
-  const[xmlFilter,setXmlFilter]=useState('tasks');
+  const[filterType,setFilterType]=useState('tasks');
   const[xmlConfirmMsg,setXmlConfirmMsg]=useState('');
   const[xmlConfirming,setXmlConfirming]=useState(false);
   const[projectItems,setProjectItems]=useState([]);
@@ -187,17 +202,23 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     if(tab===PROJECT_PROGRAMME_TAB)reloadProjectItems();
   },[tab,reloadProjectItems]);
 
-  const filteredXmlTasks=useMemo(
-    ()=>filterProjectTasks(parsedXmlTasks,xmlFilter),
-    [parsedXmlTasks,xmlFilter]
+  const previewTableRows=useMemo(
+    ()=>filterPreviewTableRows(parsedXmlTasks,filterType),
+    [parsedXmlTasks,filterType]
   );
 
   const xmlStats=useMemo(()=>{
-    const milestones=parsedXmlTasks.filter((t)=>Number(t.is_milestone)===1).length;
-    const summary=parsedXmlTasks.filter((t)=>Number(t.is_summary)===1).length;
+    const milestones=parsedXmlTasks.filter((t)=>projectItemFlag(t,'is_milestone')===1).length;
+    const summary=parsedXmlTasks.filter((t)=>projectItemFlag(t,'is_summary')===1).length;
     const selected=parsedXmlTasks.filter((t)=>xmlChecked[t.uid]).length;
-    return {milestones,summary,selected,total:parsedXmlTasks.length};
-  },[parsedXmlTasks,xmlChecked]);
+    return {
+      milestones,
+      summary,
+      selected,
+      total:parsedXmlTasks.length,
+      visible:previewTableRows.length,
+    };
+  },[parsedXmlTasks,xmlChecked,previewTableRows]);
 
   useEffect(()=>{
     if(!selDraw){setDrawData(null);setZones([]);return}
@@ -501,7 +522,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     const chk={};
     tasks.forEach((t)=>{chk[t.uid]=true});
     setXmlChecked(chk);
-    setXmlFilter('tasks');
+    setFilterType('tasks');
   }
 
   function setXmlCheckAll(visible,on){
@@ -532,8 +553,8 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   }
 
   function renderProjectRow(row,{showCheckbox,checked,onToggle}){
-    const summary=Number(row.is_summary)===1;
-    const milestone=Number(row.is_milestone)===1;
+    const summary=projectItemFlag(row,'is_summary')===1;
+    const milestone=projectItemFlag(row,'is_milestone')===1;
     const indent=(Number(row.outline_level)||1)*12;
     const nameStyle={
       fontSize:10,
@@ -598,21 +619,21 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   <button
                     key={f.id}
                     type="button"
-                    onClick={()=>setXmlFilter(f.id)}
-                    style={{...S.btn,...(xmlFilter===f.id?S.btnAct:{}),padding:'4px 10px',fontSize:10}}
+                    onClick={()=>setFilterType(f.id)}
+                    style={{...S.btn,...(filterType===f.id?S.btnAct:{}),padding:'4px 10px',fontSize:10}}
                   >
                     {f.label}
                   </button>
                 ))}
               </div>
               <div style={{fontSize:10,color:T.muted,marginBottom:8}}>
-                {xmlStats.selected} of {xmlStats.total} tasks selected ({xmlStats.milestones} milestones, {xmlStats.summary} summary rows)
+                Showing {xmlStats.visible} of {xmlStats.total} rows · {xmlStats.selected} selected ({xmlStats.milestones} milestones, {xmlStats.summary} summary rows in file)
               </div>
               <div style={{display:'flex',gap:8,marginBottom:8}}>
-                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(filteredXmlTasks,true)}>Select all</button>
-                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(filteredXmlTasks,false)}>Deselect all</button>
+                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(previewTableRows,true)}>Select all</button>
+                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(previewTableRows,false)}>Deselect all</button>
               </div>
-              <div style={{maxHeight:280,overflowY:'auto',marginBottom:10}}>
+              <div key={`xml-preview-${filterType}`} style={{maxHeight:280,overflowY:'auto',marginBottom:10}}>
                 <div style={ppTableHead}>
                   <span/>
                   <span>WBS</span>
@@ -622,7 +643,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   <span>Duration</span>
                   <span>Type</span>
                 </div>
-                {filteredXmlTasks.map((row)=>renderProjectRow(row,{
+                {previewTableRows.map((row)=>renderProjectRow(row,{
                   showCheckbox:true,
                   checked:xmlChecked[row.uid],
                   onToggle:(uid)=>setXmlChecked((c)=>({...c,[uid]:!c[uid]})),

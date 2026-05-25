@@ -4,6 +4,7 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   parseTagValue: true,
   trimValues: true,
+  removeNSPrefix: true,
 });
 
 function stripDateTime(val) {
@@ -19,8 +20,19 @@ function asInt(val, fallback = 0) {
 }
 
 function asFlag(val) {
-  if (val === true || val === 1 || val === '1' || val === 'true') return 1;
+  if (val === true || val === 1 || val === '1' || val === 'true' || val === 'yes' || val === 'Yes') {
+    return 1;
+  }
   return 0;
+}
+
+function taskField(t, ...keys) {
+  for (const k of keys) {
+    if (t == null) continue;
+    if (t[k] !== undefined && t[k] !== null && t[k] !== '') return t[k];
+    if (t[`@_${k}`] !== undefined && t[`@_${k}`] !== null && t[`@_${k}`] !== '') return t[`@_${k}`];
+  }
+  return undefined;
 }
 
 /** PT200H0M0S → working days (hours ÷ 8), 1 decimal; milestones = 0; else min 0.5. */
@@ -65,8 +77,12 @@ function parseMsProjectXml(xmlBuffer) {
     if (uid === 0) continue;
     const name = String(t.Name ?? t.name ?? '').trim();
     if (!name) continue;
-    const isSummary = asFlag(t.Summary ?? t.summary);
-    const isMilestone = asFlag(t.Milestone ?? t.milestone);
+    let isSummary = asFlag(taskField(t, 'Summary', 'summary'));
+    let isMilestone = asFlag(taskField(t, 'Milestone', 'milestone'));
+    const durationRaw = String(t.Duration ?? t.duration ?? '').trim().toUpperCase();
+    if (!isMilestone && /^PT0H0M0S$|^PT0H$|^PT0M$|^P0D$|^PT0D0H0M0S$/.test(durationRaw)) {
+      isMilestone = 1;
+    }
     const start_date = stripDateTime(t.Start ?? t.start);
     const finish_date = stripDateTime(t.Finish ?? t.finish);
     const duration_days = durationDaysFromIso(t.Duration ?? t.duration, isMilestone === 1);

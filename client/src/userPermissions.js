@@ -44,8 +44,9 @@ export function bottomNavItemsForRole(role) {
     return [dash, plan, zones];
   }
 
+  /** Site: view Programme (incl. Project programme XML list); structural edit remains admin-only in ProgrammePage. */
   if (isSiteEditor(role)) {
-    return [dash, upd, ahead, plan, zones];
+    return [dash, upd, ahead, plan, zones, prog];
   }
 
   if (isGwSubbie(role) || isIntSubbie(role)) {
