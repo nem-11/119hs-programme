@@ -5,9 +5,10 @@ import {parseZoneGeometry,svgPolygonPoints,pointInGeom} from './zoneGeom';
 import {toHtmlDateInputValue,actColor,dateKey,PROJECT_PROGRAMME_TAB,drawingTabLabel} from './constants';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {
-  buildRowsFromTemplate,
+  buildRowsFromTargetEndDate,
   addCalendarDays,
   buildActivityLookup,
+  targetEndParamsFromStartStage,
 } from './programmeSchedule';
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
@@ -300,11 +301,22 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   function runGenerate(){
     if(!schedTpl||!selectedTpl)return;
     if(items.length>0&&!window.confirm('Replace all existing programme rows for this zone with the generated schedule?'))return;
-    const rows=buildRowsFromTemplate({
+    const {anchorIndex,anchorActivityId,anchorEndDateKey}=targetEndParamsFromStartStage({
       sequence:tplSeq,
       durations:tplDur,
       startStageIndex:startStageIdx,
       startDateKey:anchorDate,
+      activityLookup,
+    });
+    if(!anchorActivityId){
+      window.alert(`Unknown activity at stage ${startStageIdx+1} — fix template or activity list.`);
+      return;
+    }
+    const rows=buildRowsFromTargetEndDate({
+      sequence:tplSeq,
+      durations:tplDur,
+      anchorIndex,
+      anchorEndDateKey,
       activityLookup,
     });
     const missing=rows.filter(r=>!r.activity_id).map(r=>r.activity_name);
@@ -316,31 +328,32 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   }
 
   async function saveDraftRows(){
-    if(!canEdit||!selectedId||draftRows.length===0)return;
+    if(!canEdit||!selectedId||draftRows.length===0||!schedTpl)return;
     if(draftRows.some(r=>!r.activity_id)){
       window.alert('Every row needs a matching activity. Fix or remove rows with missing activities.');
       return;
     }
+    const {anchorActivityId,anchorEndDateKey}=targetEndParamsFromStartStage({
+      sequence:tplSeq,
+      durations:tplDur,
+      startStageIndex:startStageIdx,
+      startDateKey:anchorDate,
+      activityLookup,
+    });
+    if(!anchorActivityId||!anchorEndDateKey){
+      window.alert('Could not resolve anchor activity for this template stage.');
+      return;
+    }
     setSaving(true);
     try{
-      const existing=await api.getProgrammeItemsByZone(selectedId);
-      for(const it of existing)await api.deleteProgrammeItem(it.id);
-      for(const row of draftRows){
-        await api.createProgrammeItem(
-          selectedId,
-          row.activity_id,
-          row.start_date,
-          row.end_date,
-          row.status||'planned',
-          row.notes||''
-        );
-      }
-      if(schedTpl){
-        await api.updateZone(selectedId,{
-          source_template_id:Number(schedTpl),
-          programme_stage_idx:startStageIdx,
-          programme_anchor_date:anchorDate,
-        });
+      const res=await api.scheduleZoneFromTarget(selectedId,{
+        anchor_activity_id:Number(anchorActivityId),
+        anchor_date:anchorEndDateKey,
+        template_id:Number(schedTpl),
+      });
+      if(res&&typeof res==='object'&&res.error){
+        window.alert(String(res.error));
+        return;
       }
       if(onScheduleChanged)await onScheduleChanged();
       setReviewMode(false);
@@ -443,25 +456,23 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
         let seq=[],dur=[];
         try{seq=JSON.parse(t.sequence||'[]')}catch(_){}
         try{dur=JSON.parse(t.durations||'[]')}catch(_){}
-        const rows=buildRowsFromTemplate({
+        const {anchorActivityId,anchorEndDateKey}=targetEndParamsFromStartStage({
           sequence:seq,
           durations:dur,
           startStageIndex:b.stageIdx,
           startDateKey:b.startDate||dateKey(new Date()),
           activityLookup,
         });
-        const existing=await api.getProgrammeItemsByZone(z.id);
-        for(const it of existing)await api.deleteProgrammeItem(it.id);
-        for(const row of rows){
-          if(row.activity_id){
-            await api.createProgrammeItem(z.id,row.activity_id,row.start_date,row.end_date,row.status,row.notes||'');
-          }
-        }
-        await api.updateZone(z.id,{
-          source_template_id:Number(b.templateId),
-          programme_stage_idx:b.stageIdx,
-          programme_anchor_date:b.startDate||dateKey(new Date()),
+        if(!anchorActivityId||!anchorEndDateKey)continue;
+        const res=await api.scheduleZoneFromTarget(z.id,{
+          anchor_activity_id:Number(anchorActivityId),
+          anchor_date:anchorEndDateKey,
+          template_id:Number(b.templateId),
         });
+        if(res&&typeof res==='object'&&res.error){
+          window.alert(`${z.tower} ${z.name}: ${res.error}`);
+          return;
+        }
       }
       if(onScheduleChanged)await onScheduleChanged();
       if(selectedId)await loadItemsForZone(selectedId);
