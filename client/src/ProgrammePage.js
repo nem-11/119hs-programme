@@ -11,6 +11,7 @@ import {
 } from './programmeSchedule';
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
+import PageHeader from './PageHeader';
 
 function sortZoneActs(z){
   return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
@@ -689,14 +690,17 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg}}>
       {isAdmin&&<ProgrammeNlCommand onApplied={onScheduleChanged}/>}
       {projectProgrammePanel}
-      <div className="app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        {tabDrawings.length>0&&(
-          <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
-            {tabDrawings.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        )}
-        <span style={{fontSize:11,color:T.muted}}>{hasFloorPlan?'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.':zoneSetupAvailable?'Add a plan on Zones to use this screen.':'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}</span>
-      </div>
+      <PageHeader
+        title={tab === PROJECT_PROGRAMME_TAB ? 'Project programme' : 'Programme'}
+        description={hasFloorPlan ? 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.' : zoneSetupAvailable ? 'Add a plan on Zones to use this screen.' : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}
+        filters={
+          tabDrawings.length > 0 ? (
+            <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
+              {tabDrawings.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          ) : null
+        }
+      />
       <div style={{flex:1,display:'flex',flexDirection:'row',minHeight:0}}>
         <div style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',minHeight:0}}
           ref={wrapRef}

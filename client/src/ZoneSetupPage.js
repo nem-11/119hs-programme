@@ -14,6 +14,7 @@ import {
 import { dayKeyInItemRange, abbrevActivity } from './planUtils';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {buildActivityLookup,resolveActivityId,alignTemplateDurations} from './programmeSchedule';
+import PageHeader from './PageHeader';
 import './planPrint.css';
 
 function sortZoneActs(z){
@@ -1059,41 +1060,59 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
 
   return(
     <div className="zone-setup-print-root" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg,minHeight:0}}>
-      <div className="zone-setup-no-print app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        {drawings.filter(d=>d.tab===tab).length>0&&(
-          <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>
-            {drawings.filter(d=>d.tab===tab).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        )}
-        {canEdit&&<label style={{...S.btn,padding:'6px 12px',fontSize:11,cursor:'pointer'}}>Upload plan<input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/*,application/pdf,.pdf" onChange={handleUpload} style={{display:'none'}}/></label>}
-        {drawData?.image_data&&<>
-          <button type="button" title="Select zones" onClick={()=>{setTool('select')}} style={{...S.btn,...(tool==='select'?S.btnAct:{}),padding:'6px 10px',fontSize:11}}>Select</button>
-          <button type="button" title="Drag to pan the plan" onClick={()=>{setTool('pan')}} style={{...S.btn,...(tool==='pan'?S.btnAct:{}),padding:'6px 10px',fontSize:11}}>Pan</button>
-        </>}
-        {canEdit&&<>
-          {(['rect','poly']).map(t=><button key={t} type="button" onClick={()=>{setTool(t);cancelDraft()}} style={{...S.btn,...(tool===t?S.btnAct:{}),padding:'6px 10px',fontSize:11,textTransform:'capitalize'}}>{t==='poly'?'Polygon':t}</button>)}
-          {tool==='poly'&&polyPts.length>0&&<>
-            <button type="button" onClick={finishPolygon} disabled={polyPts.length<3} style={{...S.btn,...S.btnPrimary,padding:'6px 10px',fontSize:11}}>Finish polygon</button>
-            <button type="button" onClick={()=>setPolyPts([])} style={{...S.btn,padding:'6px 10px',fontSize:11}}>Clear</button>
-          </>}
-        </>}
-        {isAdmin&&selDraw&&<button type="button" onClick={removeDrawing} style={{...S.btn,...S.btnDanger,padding:'6px 10px',fontSize:11}}>Delete drawing</button>}
-        {drawData?.image_data&&(
-          <button type="button" onClick={()=>runZonePrint()} style={{...S.btn,...S.btnPrimary,padding:'6px 12px',fontSize:11}} title="Browser print / Save as PDF">
-            Print plan
-          </button>
-        )}
-      </div>
+      <PageHeader
+        className="zone-setup-no-print"
+        title="Zone drawing"
+        description="Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan · double-click a zone to edit in the panel · Esc cancels drawing"
+        toggles={
+          drawData?.image_data ? (
+            <>
+              <button type="button" title="Select zones" onClick={() => { setTool('select'); }} style={{ ...S.btn, ...(tool === 'select' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Select</button>
+              <button type="button" title="Drag to pan the plan" onClick={() => { setTool('pan'); }} style={{ ...S.btn, ...(tool === 'pan' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Pan</button>
+              {canEdit && (['rect', 'poly']).map(t => (
+                <button key={t} type="button" onClick={() => { setTool(t); cancelDraft(); }} style={{ ...S.btn, ...(tool === t ? S.btnAct : {}), padding: '6px 10px', fontSize: 11, textTransform: 'capitalize' }}>{t === 'poly' ? 'Polygon' : t}</button>
+              ))}
+              {canEdit && tool === 'poly' && polyPts.length > 0 && (
+                <>
+                  <button type="button" onClick={finishPolygon} disabled={polyPts.length < 3} style={{ ...S.btn, ...S.btnPrimary, padding: '6px 10px', fontSize: 11 }}>Finish polygon</button>
+                  <button type="button" onClick={() => setPolyPts([])} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }}>Clear</button>
+                </>
+              )}
+            </>
+          ) : null
+        }
+        filters={
+          drawings.filter(d => d.tab === tab).length > 0 ? (
+            <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
+              {drawings.filter(d => d.tab === tab).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          ) : null
+        }
+        actions={
+          <>
+            {canEdit && (
+              <label style={{ ...S.btn, padding: '6px 12px', fontSize: 11, cursor: 'pointer' }}>
+                Upload plan
+                <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/*,application/pdf,.pdf" onChange={handleUpload} style={{ display: 'none' }} />
+              </label>
+            )}
+            {isAdmin && selDraw && (
+              <button type="button" onClick={removeDrawing} style={{ ...S.btn, ...S.btnDanger, padding: '6px 10px', fontSize: 11 }}>Delete drawing</button>
+            )}
+            {drawData?.image_data && (
+              <button type="button" onClick={() => runZonePrint()} style={{ ...S.btn, ...S.btnPrimary, padding: '6px 12px', fontSize: 11 }} title="Browser print / Save as PDF">
+                Print plan
+              </button>
+            )}
+          </>
+        }
+      />
       {uploadErr&&(
         <div className="zone-setup-no-print" style={{padding:'8px 12px',fontSize:12,color:'#c0392b',background:'rgba(231,76,60,0.08)',borderBottom:`1px solid ${T.hairline}`,display:'flex',justifyContent:'space-between',alignItems:'center',gap:10}}>
           <span>{uploadErr}</span>
           <button type="button" onClick={()=>setUploadErr('')} style={{...S.btn,padding:'4px 10px',fontSize:11,flexShrink:0}}>Dismiss</button>
         </div>
       )}
-      <div className="zone-setup-no-print" style={{padding:'8px 12px',fontSize:11,color:T.muted,lineHeight:1.45,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.05)'}}>
-        <strong style={{color:T.text}}>Zone Setup</strong> — scroll to zoom · <strong>Pan</strong> tool or middle-click drag or Space+drag to pan · <strong>double-click a zone</strong> to edit in the panel · Esc cancels drawing
-      </div>
-
       {drawData?.image_data&&(
         <div className="zone-setup-no-print" style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:8,padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.06)'}}>
           <span style={{fontSize:10,color:T.muted,fontWeight:700}}>Day on plan</span>

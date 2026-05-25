@@ -641,7 +641,7 @@ function TemplatePage({tab,isAdmin,onReload}){
   }
   const scopedTemplates=templates.filter(t=>t.tab===templateTab);
 
-  return<div style={{flex:1,overflowY:'auto',padding:16,background:T.bg}}>
+  return<div style={{flex:1,overflowY:'auto',background:T.bg,display:'flex',flexDirection:'column'}}>
     <PageHeader
       title="Programme Templates"
       description="Build once, apply to any zone"
@@ -661,6 +661,7 @@ function TemplatePage({tab,isAdmin,onReload}){
         </>
       }
     />
+    <div style={{padding:16,flex:1}}>
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:12,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text}}>New activity</span>
       <input value={newAct} onChange={e=>setNewAct(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewActivity()} placeholder={`Add ${templateTab} activity`} style={{...S.input,width:220,fontSize:12,padding:'7px 10px'}}/>
@@ -783,6 +784,7 @@ function TemplatePage({tab,isAdmin,onReload}){
         {editingId&&<button type="button" onClick={cancelEdit} style={S.btn}>Cancel edit</button>}
       </div>
     </div></>}
+    </div>
   </div>;
 }
 
@@ -989,6 +991,27 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
     overflowY:'auto',
     background:`linear-gradient(165deg,rgba(235,238,245,0.85) 0%,${T.bg} 22%,${T.bg} 100%)`,
   }}>
+    <PageHeader
+      title="Dashboard"
+      description="Programme snapshot — completion across scheduled groundworks and internals."
+      actions={
+        <>
+          <div style={{
+            padding:'10px 14px',
+            borderRadius:12,
+            background:grad.cardSurface,
+            border:'1px solid rgba(26,26,46,0.06)',
+            boxShadow:shadowCard,
+          }}>
+            <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
+            <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
+          </div>
+          <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'8px 14px',fontSize:12}}>
+            Refresh
+          </button>
+        </>
+      }
+    />
     <div style={{maxWidth:760,margin:'0 auto',padding:'22px 18px 40px'}}>
       {liveDataErr&&(
         <div style={{
@@ -1010,28 +1033,6 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
           </div>
         </div>
       )}
-      <PageHeader
-        title="Dashboard"
-        description="Programme snapshot — completion across scheduled groundworks and internals."
-        actions={
-          <>
-            <div style={{
-              padding:'10px 14px',
-              borderRadius:12,
-              background:grad.cardSurface,
-              border:'1px solid rgba(26,26,46,0.06)',
-              boxShadow:shadowCard,
-            }}>
-              <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
-              <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
-            </div>
-            <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'8px 14px',fontSize:12}}>
-              Refresh
-            </button>
-          </>
-        }
-      />
-
       <section style={{
         padding:'22px 22px 24px',
         background:grad.cardSurface,
@@ -1632,6 +1633,55 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
 
   return (
     <div style={{ overflowY: 'auto', flex: 1, background: T.bg, paddingBottom: canTick && dirty ? 80 : 12 }}>
+      <PageHeader
+        title="Update"
+        description="Tick scheduled activities for the selected day, then submit to lock in progress for the whole team."
+        actions={
+          <button type="button" onClick={() => void reloadPlan()} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
+            Refresh
+          </button>
+        }
+        filters={
+          permittedTabs.length > 0 ? (
+            <>
+              <span className="page-header__filter-label">Show tabs</span>
+              {permittedTabs.length > 1 && (
+                <button type="button" onClick={selectAllProgrammeTabs} style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}>
+                  All tabs
+                </button>
+              )}
+              {permittedTabs.map((t) => {
+                const on = selectedSet.has(t);
+                const id = `upd-tab-${t}`;
+                return (
+                  <label
+                    key={t}
+                    htmlFor={id}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      fontSize: 12,
+                      color: on ? T.text : T.muted,
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <input
+                      id={id}
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggleProgrammeTab(t)}
+                      style={{ width: 16, height: 16, accentColor: 'rgba(66,133,244,0.95)', cursor: 'pointer' }}
+                    />
+                    {drawingTabLabel(t)}
+                  </label>
+                );
+              })}
+            </>
+          ) : null
+        }
+      />
       {loadErr && (
         <div style={{ margin: '10px 12px', fontSize: 12, color: '#c0392b' }}>
           {loadErr}{' '}
@@ -1729,56 +1779,6 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
           ) : (
             <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.45 }}>Viewer access: you can see progress but cannot submit updates.</div>
           )}
-        </div>
-      )}
-      {permittedTabs.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 12,
-            alignItems: 'center',
-            margin: '0 12px 10px',
-            padding: '10px 12px',
-            background: T.surface,
-            borderRadius: 12,
-            border: `1px solid ${T.hairline}`,
-          }}
-        >
-          <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Show tabs</span>
-          {permittedTabs.length > 1 && (
-            <button type="button" onClick={selectAllProgrammeTabs} style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}>
-              All tabs
-            </button>
-          )}
-          {permittedTabs.map((t) => {
-            const on = selectedSet.has(t);
-            const id = `upd-tab-${t}`;
-            return (
-              <label
-                key={t}
-                htmlFor={id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: 12,
-                  color: on ? T.text : T.muted,
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                }}
-              >
-                <input
-                  id={id}
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => toggleProgrammeTab(t)}
-                  style={{ width: 16, height: 16, accentColor: 'rgba(66,133,244,0.95)', cursor: 'pointer' }}
-                />
-                {drawingTabLabel(t)}
-              </label>
-            );
-          })}
         </div>
       )}
       {sections.map((sec) => {
@@ -2061,17 +2061,18 @@ function LAPage({gw,int_s,project_s,comp,date,tab}){
   }
 
   return<div style={{overflowY:'auto',flex:1,background:T.bg}}>
-    <div style={{maxWidth:640,margin:'0 auto',padding:'16px 14px 28px'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:14,flexWrap:'wrap',marginBottom:14}}>
-        <div style={{minWidth:0}}>
-          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:T.text,letterSpacing:'-0.03em'}}>Look ahead</h2>
-          <p style={{margin:'8px 0 0',fontSize:12,color:T.muted,lineHeight:1.55,maxWidth:420}}>
-            Three-week window from the date above (Saturdays, Sundays, and bank holidays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
-          </p>
-        </div>
-        <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnPrimary,padding:'10px 16px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>
-      </div>
-
+    <PageHeader
+      title="Look ahead"
+      description={
+        <>
+          Three-week window from the date above (Saturdays, Sundays, and bank holidays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
+        </>
+      }
+      actions={
+        <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnPrimary,padding:'8px 14px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>
+      }
+    />
+    <div style={{maxWidth:640,margin:'0 auto',padding:'0 14px 28px'}}>
       {stats.total>0?<div style={{
         marginBottom:18,
         padding:'14px 16px',
