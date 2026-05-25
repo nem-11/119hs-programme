@@ -12,6 +12,7 @@ import {
   isSiteEditor as roleIsSiteEditor,
 } from './userPermissions';
 import {T,S,shadowCard,grad} from './uiTheme';
+import PageHeader from './PageHeader';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
@@ -641,21 +642,25 @@ function TemplatePage({tab,isAdmin,onReload}){
   const scopedTemplates=templates.filter(t=>t.tab===templateTab);
 
   return<div style={{flex:1,overflowY:'auto',padding:16,background:T.bg}}>
-    <h2 style={{margin:'0 0 4px',fontSize:20,fontWeight:700,color:T.text}}>Programme Templates</h2>
-    <p style={{fontSize:11,color:T.faint,marginBottom:10}}>Build once, apply to any zone</p>
-    <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,flexWrap:'wrap'}}>
-      <label style={{fontSize:11,fontWeight:600,color:T.text}} htmlFor="tpl-scope">Programme</label>
-      <select id="tpl-scope" value={templateTab} onChange={e=>onTemplateScopeChange(e.target.value)} style={{...S.input,width:'auto',minWidth:200,fontSize:12,padding:'8px 12px'}}>
-        <option value="groundworks">Groundworks</option>
-        <option value="internals">Internals</option>
-        <option value="project_programme">Project programme</option>
-      </select>
-      <span style={{fontSize:10,color:T.muted}}>
-        {templateTab==='groundworks'?`${GW_SEQUENCE.length} groundworks activities`:
-          templateTab==='internals'?`${INT_SEQUENCE.length} internal activities`:
-          'Master programme lines — add named activities below (not tied to floor drawings).'}
-      </span>
-    </div>
+    <PageHeader
+      title="Programme Templates"
+      description="Build once, apply to any zone"
+      filters={
+        <>
+          <label style={{ fontSize: 11, fontWeight: 600, color: T.text }} htmlFor="tpl-scope">Programme</label>
+          <select id="tpl-scope" value={templateTab} onChange={e=>onTemplateScopeChange(e.target.value)} style={{...S.input,width:'auto',minWidth:200,fontSize:12,padding:'8px 12px'}}>
+            <option value="groundworks">Groundworks</option>
+            <option value="internals">Internals</option>
+            <option value="project_programme">Project programme</option>
+          </select>
+          <span style={{fontSize:10,color:T.muted}}>
+            {templateTab==='groundworks'?`${GW_SEQUENCE.length} groundworks activities`:
+              templateTab==='internals'?`${INT_SEQUENCE.length} internal activities`:
+              'Master programme lines — add named activities below (not tied to floor drawings).'}
+          </span>
+        </>
+      }
+    />
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:12,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text}}>New activity</span>
       <input value={newAct} onChange={e=>setNewAct(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewActivity()} placeholder={`Add ${templateTab} activity`} style={{...S.input,width:220,fontSize:12,padding:'7px 10px'}}/>
@@ -1005,28 +1010,27 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
           </div>
         </div>
       )}
-      <header style={{marginBottom:22}}>
-        <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',justifyContent:'space-between',gap:14}}>
-          <div>
-            <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.22em',marginBottom:8}}>119 High Street</div>
-            <h1 style={{margin:0,fontSize:'clamp(22px, 4.5vw, 28px)',fontWeight:800,color:T.text,letterSpacing:'-0.03em',lineHeight:1.15}}>Dashboard</h1>
-            <p style={{margin:'10px 0 0',fontSize:13,color:T.muted,maxWidth:420,lineHeight:1.5}}>
-              Programme snapshot — completion across scheduled groundworks and internals.
-            </p>
-          </div>
-          <div style={{
-            alignSelf:'flex-start',
-            padding:'10px 14px',
-            borderRadius:12,
-            background:grad.cardSurface,
-            border:'1px solid rgba(26,26,46,0.06)',
-            boxShadow:shadowCard,
-          }}>
-            <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
-            <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
-          </div>
-        </div>
-      </header>
+      <PageHeader
+        title="Dashboard"
+        description="Programme snapshot — completion across scheduled groundworks and internals."
+        actions={
+          <>
+            <div style={{
+              padding:'10px 14px',
+              borderRadius:12,
+              background:grad.cardSurface,
+              border:'1px solid rgba(26,26,46,0.06)',
+              boxShadow:shadowCard,
+            }}>
+              <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
+            </div>
+            <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'8px 14px',fontSize:12}}>
+              Refresh
+            </button>
+          </>
+        }
+      />
 
       <section style={{
         padding:'22px 22px 24px',

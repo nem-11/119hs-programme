@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import * as api from './api';
 import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
 import { T, S } from './uiTheme';
+import PageHeader from './PageHeader';
 import {
   calendarDaysBetween,
   isWeekendKey,
@@ -19,6 +20,8 @@ import {
 import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
 import './planPrint.css';
 import ActivityInspectModal from './ActivityInspectModal';
+import ActivityChipEditModal from './ActivityChipEditModal';
+import PlanActivityChip from './PlanActivityChip';
 
 /**
  * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
@@ -196,6 +199,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   const titleRestore = useRef(typeof document !== 'undefined' ? document.title : '');
   const isMobile = useIsMobile();
   const [inspect, setInspect] = useState(null);
+  const [chipEdit, setChipEdit] = useState(null);
   const [coarsePointer, setCoarsePointer] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
@@ -562,6 +566,24 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     await load();
   }
 
+  async function deleteActivityFromZone(zoneId, zoneItems, itemId) {
+    const items = [...zoneItems]
+      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+      .map((x) => ({ ...x }));
+    const idx = items.findIndex((x) => Number(x.id) === Number(itemId));
+    if (idx < 0) throw new Error('Activity not found');
+    items.splice(idx, 1);
+    const from = idx;
+    let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
+    for (let i = from; i < items.length; i++) {
+      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+      items[i].start_date = normalizeScheduleStartKey(cursor);
+      items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
+      cursor = nextScheduleableDayKey(items[i].end_date);
+    }
+    await applyZoneRows(zoneId, zoneItems, items);
+  }
+
   function detectClash(allRows) {
     const by = new Map();
     for (const r of allRows || []) {
@@ -665,19 +687,32 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         row={inspect?.row}
         zoneLabel={inspect?.zoneLabel}
       />
-      <div className="plan-no-print app-page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-          <div>
-            <h2 style={{ margin: '0 0 4px', fontSize: 20, fontWeight: 700, color: T.text }}>Plan</h2>
-            <p style={{ margin: 0, fontSize: 11, color: T.faint }}>
-              Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Mon–Fri only; Saturdays, Sundays, and England and Wales bank holidays are grey; you can still drag or edit onto a Saturday when needed). Admins: ＋ add per zone, drag to move, × remove, or click a chip to move/duration/delete.
-            </p>
+      <ActivityChipEditModal
+        open={Boolean(chipEdit)}
+        onClose={() => setChipEdit(null)}
+        row={chipEdit?.row}
+        zoneLabel={chipEdit?.zoneLabel}
+        onDelete={async () => {
+          if (!chipEdit) return;
+          await deleteActivityFromZone(chipEdit.zoneId, chipEdit.zoneItems, chipEdit.row.id);
+        }}
+      />
+      <PageHeader
+        className="plan-no-print"
+        title="Plan"
+        description={
+          <>
+            Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Mon–Fri only; Saturdays, Sundays, and England and Wales bank holidays are grey; you can still drag or edit onto a Saturday when needed). Admins: ＋ add per zone, drag to move, double-click (or long-press on mobile) a chip to delete, or single-click a chip to move/duration.
+          </>
+        }
+        toggles={
+          <div className="page-header__toggle-group">
+            <button type="button" onClick={() => setViewMode('grid')} style={{ ...S.btn, ...(viewMode === 'grid' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Grid</button>
+            <button type="button" onClick={() => setViewMode('drawing')} style={{ ...S.btn, ...(viewMode === 'drawing' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Drawing</button>
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: 4, background: 'rgba(26,26,46,0.06)', padding: 3, borderRadius: 8 }}>
-              <button type="button" onClick={() => setViewMode('grid')} style={{ ...S.btn, ...(viewMode === 'grid' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Grid</button>
-              <button type="button" onClick={() => setViewMode('drawing')} style={{ ...S.btn, ...(viewMode === 'drawing' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Drawing</button>
-            </div>
+        }
+        actions={
+          <>
             {isMobile && (
               <span style={{ fontSize: 10, color: T.muted, maxWidth: 220, lineHeight: 1.35 }}>
                 For best results, print from a desktop browser.
@@ -715,8 +750,145 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                 UNDO
               </button>
             )}
-          </div>
-        </div>
+          </>
+        }
+        filters={
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', width: '100%' }}>
+              <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
+                Start
+                <input
+                  type="date"
+                  value={toHtmlDateInputValue(startDate)}
+                  onChange={(e) => {
+                    setPreset('custom');
+                    setStartDate(e.target.value);
+                  }}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
+                />
+              </label>
+              <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
+                End
+                <input
+                  type="date"
+                  value={toHtmlDateInputValue(endDate)}
+                  onChange={(e) => {
+                    setPreset('custom');
+                    setEndDate(e.target.value);
+                  }}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
+                />
+              </label>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
+                <div style={{ fontSize: 9, color: T.faint, marginBottom: 4, maxWidth: 280, lineHeight: 1.35 }}>
+                  ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : ''}.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {['7', '14', '21', '28'].map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => applyPreset(p)}
+                      style={{ ...S.btn, ...(preset === p ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
+                    >
+                      {p}d
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setPreset('custom')}
+                    style={{ ...S.btn, ...(preset === 'custom' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
+                  >
+                    Custom
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {permittedTabs.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
+                <span className="page-header__filter-label">Scope</span>
+                <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
+                {permittedTabs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={selectAllProgrammeTabs}
+                    title="Show every programme scope you have access to"
+                    style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}
+                  >
+                    All tabs
+                  </button>
+                )}
+                {permittedTabs.map((t) => {
+                  const on = selectedSet.has(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => toggleProgrammeTab(t)}
+                      title={on ? 'Click to hide from this plan' : 'Click to include on this plan'}
+                      style={{
+                        ...S.btn,
+                        ...(on ? S.btnAct : {}),
+                        padding: '6px 12px',
+                        fontSize: 11,
+                        opacity: on ? 1 : 0.55,
+                        boxShadow: on ? undefined : 'inset 0 0 0 1px rgba(26,26,46,0.08)',
+                      }}
+                    >
+                      <span style={{ marginRight: 6, opacity: 0.85 }} aria-hidden>
+                        {on ? '✓' : '○'}
+                      </span>
+                      {drawingTabLabel(t)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {towersInView.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Towers</span>
+                <button type="button" onClick={selectAllTowers} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }}>
+                  All towers
+                </button>
+                {towersInView.map((tw) => {
+                  const active = towerWhitelist === null || towerWhitelist.has(tw);
+                  return (
+                    <button
+                      key={tw}
+                      type="button"
+                      onClick={() => toggleTower(tw)}
+                      style={{ ...S.btn, ...(active ? S.btnAct : {}), padding: '6px 10px', fontSize: 11, opacity: active ? 1 : 0.55 }}
+                    >
+                      {tw}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {viewMode === 'drawing' && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing date</span>
+                <button type="button" onClick={() => shiftVizDate(-1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Previous day">
+                  ← Prev day
+                </button>
+                <input type="date" value={toHtmlDateInputValue(vizDate)} onChange={(e) => setVizDate(e.target.value)} style={{ ...S.input, width: 150, fontSize: 12, padding: '6px 10px' }} />
+                <button type="button" onClick={() => shiftVizDate(1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Next day">
+                  Next day →
+                </button>
+                <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing</span>
+                <select value={drawingId || ''} onChange={(e) => setDrawingId(Number(e.target.value) || null)} style={{ ...S.input, width: 220, fontSize: 12, padding: '6px 10px' }}>
+                  {drawingOptions.length === 0 && <option value="">No drawing in this scope</option>}
+                  {drawingOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            )}
+          </>
+        }
+      >
         {isAdmin && (
           <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.hairline}`, background: 'rgba(66,133,244,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <div style={{ minWidth: 180 }}>
@@ -755,139 +927,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
             </button>
           </div>
         )}
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 8 }}>
-          <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
-            Start
-            <input
-              type="date"
-              value={toHtmlDateInputValue(startDate)}
-              onChange={(e) => {
-                setPreset('custom');
-                setStartDate(e.target.value);
-              }}
-              style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
-            />
-          </label>
-          <label style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>
-            End
-            <input
-              type="date"
-              value={toHtmlDateInputValue(endDate)}
-              onChange={(e) => {
-                setPreset('custom');
-                setEndDate(e.target.value);
-              }}
-              style={{ ...S.input, display: 'block', marginTop: 4, width: 148, fontSize: 12, padding: '6px 10px' }}
-            />
-          </label>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
-            <div style={{ fontSize: 9, color: T.faint, marginBottom: 4, maxWidth: 280, lineHeight: 1.35 }}>
-              ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : ''}.
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {['7', '14', '21', '28'].map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => applyPreset(p)}
-                  style={{ ...S.btn, ...(preset === p ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
-                >
-                  {p}d
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPreset('custom')}
-                style={{ ...S.btn, ...(preset === 'custom' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}
-              >
-                Custom
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {permittedTabs.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase' }}>Scope</span>
-            <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
-            {permittedTabs.length > 1 && (
-              <button
-                type="button"
-                onClick={selectAllProgrammeTabs}
-                title="Show every programme scope you have access to"
-                style={{ ...S.btn, padding: '5px 10px', fontSize: 10 }}
-              >
-                All tabs
-              </button>
-            )}
-            {permittedTabs.map((t) => {
-              const on = selectedSet.has(t);
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => toggleProgrammeTab(t)}
-                  title={on ? 'Click to hide from this plan' : 'Click to include on this plan'}
-                  style={{
-                    ...S.btn,
-                    ...(on ? S.btnAct : {}),
-                    padding: '6px 12px',
-                    fontSize: 11,
-                    opacity: on ? 1 : 0.55,
-                    boxShadow: on ? undefined : 'inset 0 0 0 1px rgba(26,26,46,0.08)',
-                  }}
-                >
-                  <span style={{ marginRight: 6, opacity: 0.85 }} aria-hidden>
-                    {on ? '✓' : '○'}
-                  </span>
-                  {drawingTabLabel(t)}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {towersInView.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Towers</span>
-            <button type="button" onClick={selectAllTowers} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }}>
-              All towers
-            </button>
-            {towersInView.map((tw) => {
-              const active = towerWhitelist === null || towerWhitelist.has(tw);
-              return (
-                <button
-                  key={tw}
-                  type="button"
-                  onClick={() => toggleTower(tw)}
-                  style={{ ...S.btn, ...(active ? S.btnAct : {}), padding: '6px 10px', fontSize: 11, opacity: active ? 1 : 0.55 }}
-                >
-                  {tw}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {viewMode === 'drawing' && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing date</span>
-            <button type="button" onClick={() => shiftVizDate(-1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Previous day">
-              ← Prev day
-            </button>
-            <input type="date" value={toHtmlDateInputValue(vizDate)} onChange={(e) => setVizDate(e.target.value)} style={{ ...S.input, width: 150, fontSize: 12, padding: '6px 10px' }} />
-            <button type="button" onClick={() => shiftVizDate(1)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }} aria-label="Next day">
-              Next day →
-            </button>
-            <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing</span>
-            <select value={drawingId || ''} onChange={(e) => setDrawingId(Number(e.target.value) || null)} style={{ ...S.input, width: 220, fontSize: 12, padding: '6px 10px' }}>
-              {drawingOptions.length === 0 && <option value="">No drawing in this scope</option>}
-              {drawingOptions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </div>
-        )}
-      </div>
+      </PageHeader>
 
       {loadErr && (
         <div className="plan-no-print" style={{ padding: '8px 14px', fontSize: 12, color: '#c0392b' }}>
@@ -1143,130 +1183,24 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                           {hits.map((it) => {
                             const done = String(it.status || '').toLowerCase() === 'done';
                             const label = abbrevActivity(it.activity_name);
+                            const zLab = zoneRowLabel(z);
                             return (
-                              <div
+                              <PlanActivityChip
                                 key={it.id}
-                                title={coarsePointer ? undefined : it.activity_name}
-                                draggable={isAdmin && !done}
-                                onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
-                                style={{
-                                  background: actColor(it.activity_name, done ? 0.35 : 0.88),
-                                  color: '#1a1a2e',
-                                  fontWeight: 700,
-                                  fontSize: isMobile ? 9 : 10,
-                                  lineHeight: 1.15,
-                                  padding: '4px 5px',
-                                  borderRadius: 4,
-                                  opacity: done ? 0.72 : 1,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  WebkitPrintColorAdjust: 'exact',
-                                  printColorAdjust: 'exact',
-                                  cursor: coarsePointer ? 'pointer' : isAdmin && !done ? 'grab' : 'default',
-                                }}
-                                onClick={async (e) => {
-                                  if (coarsePointer) {
-                                    e.preventDefault();
-                                    setInspect({ row: it, zoneLabel: zoneRowLabel(z) });
-                                    return;
-                                  }
-                                  if (!isAdmin || done) return;
-                                  const action = window.prompt(
-                                    `Edit ${it.activity_name} in ${zoneRowLabel(z)}\nType:\n- move YYYY-MM-DD\n- duration N\n- delete`,
-                                    ''
-                                  );
-                                  if (!action) return;
-                                  const items = [...z.items]
-                                    .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-                                    .map((x) => ({ ...x }));
-                                  const idx = items.findIndex((x) => Number(x.id) === Number(it.id));
-                                  if (idx < 0) return;
-                                  const cmd = action.trim().toLowerCase();
-                                  try {
-                                    if (cmd === 'delete') {
-                                      items.splice(idx, 1);
-                                    } else if (cmd.startsWith('move ')) {
-                                      const nk = normalizeScheduleStartKey(action.slice(5).trim());
-                                      const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-                                      items[idx].start_date = nk;
-                                      items[idx].end_date = endOfScheduleableSpan(nk, dur);
-                                    } else if (cmd.startsWith('duration ')) {
-                                      const d = Math.max(1, Number(action.slice(9).trim()) || 1);
-                                      items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, d);
-                                    } else {
-                                      window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
-                                      return;
-                                    }
-                                    let from = Math.max(0, idx + (cmd === 'delete' ? 0 : 1));
-                                    if (cmd === 'delete' && idx > 0) from = idx;
-                                    let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
-                                    for (let i = from; i < items.length; i++) {
-                                      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                                      items[i].start_date = normalizeScheduleStartKey(cursor);
-                                      items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
-                                      cursor = nextScheduleableDayKey(items[i].end_date);
-                                    }
-                                    await applyZoneRows(z.zone_id, z.items, items);
-                                  } catch (e) {
-                                    window.alert(e?.message || 'Edit failed');
-                                  }
-                                }}
-                              >
-                                {done && dk === String(it.start_date || '').trim() && (
-                                  <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
-                                )}
-                                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
-                                {isAdmin && !done && (
-                                  <button
-                                    type="button"
-                                    title="Remove this activity"
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      if (
-                                        !window.confirm(
-                                          `Remove "${it.activity_name}" from ${zoneRowLabel(z)}? Following activities in this zone will move earlier.`
-                                        )
-                                      )
-                                        return;
-                                      try {
-                                        const items = [...z.items]
-                                          .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-                                          .map((x) => ({ ...x }));
-                                        const idx = items.findIndex((x) => Number(x.id) === Number(it.id));
-                                        if (idx < 0) return;
-                                        items.splice(idx, 1);
-                                        const from = idx;
-                                        const cursor =
-                                          from === 0
-                                            ? items[0]?.start_date
-                                            : nextScheduleableDayKey(items[from - 1].end_date);
-                                        for (let i = from; i < items.length; i++) {
-                                          const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                                          items[i].start_date = normalizeScheduleStartKey(cursor);
-                                          items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
-                                          cursor = nextScheduleableDayKey(items[i].end_date);
-                                        }
-                                        await applyZoneRows(z.zone_id, z.items, items);
-                                      } catch (err) {
-                                        window.alert(err?.message || 'Delete failed');
-                                      }
-                                    }}
-                                    style={{
-                                      ...S.btn,
-                                      ...S.btnDanger,
-                                      padding: '0 5px',
-                                      fontSize: 11,
-                                      lineHeight: 1.15,
-                                      flexShrink: 0,
-                                      minWidth: 22,
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </div>
+                                it={it}
+                                z={z}
+                                dk={dk}
+                                isAdmin={isAdmin}
+                                done={done}
+                                isMobile={isMobile}
+                                coarsePointer={coarsePointer}
+                                label={label}
+                                zoneLabel={zLab}
+                                setDragState={setDragState}
+                                setInspect={setInspect}
+                                onOpenEdit={setChipEdit}
+                                applyZoneRows={applyZoneRows}
+                              />
                             );
                           })}
                         </div>
