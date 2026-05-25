@@ -522,6 +522,16 @@ app.post('/api/admin/reset-programme', auth, admin, (req, res) => {
     res.status(500).json({ error: e.message || 'Reset failed' });
   }
 });
+app.post('/api/admin/resequence-all-zones', auth, admin, (req, res) => {
+  try {
+    const out = db.resequenceAllZones();
+    if (out.error) return res.status(400).json(out);
+    res.json(out);
+  } catch (e) {
+    console.error('[119HS] POST /api/admin/resequence-all-zones', e);
+    res.status(500).json({ error: e.message || 'Resequence failed' });
+  }
+});
 app.put('/api/plan/admin/zone/:zoneId/items', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];

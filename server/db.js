@@ -1950,6 +1950,76 @@ module.exports = {
       zone_finish: rows[rows.length - 1].end_date,
     };
   },
+  /** Admin one-shot: rebuild programme_items for every zone with template + anchor metadata (§4.2). */
+  resequenceAllZones: () => {
+    const zones = all(
+      `SELECT * FROM zones
+       WHERE source_template_id IS NOT NULL
+         AND programme_anchor_date IS NOT NULL
+         AND TRIM(programme_anchor_date) <> ''`
+    );
+    const actRows = all('SELECT id, name FROM activities');
+    const activityLookup = schedule.buildActivityLookup(actRows);
+    let count = 0;
+    const errors = [];
+
+    for (const z of zones) {
+      const tid = Number(z.source_template_id);
+      const tpl = get('SELECT * FROM templates WHERE id=?', [tid]);
+      if (!tpl) {
+        errors.push({
+          zone_id: Number(z.id),
+          label: `${z.tower || ''} ${z.name || ''}`.trim(),
+          error: 'Template not found',
+        });
+        continue;
+      }
+      let seq = [];
+      let dur = [];
+      try {
+        seq = JSON.parse(tpl.sequence || '[]');
+      } catch (_) {}
+      try {
+        dur = JSON.parse(tpl.durations || '[]');
+      } catch (_) {}
+      const stageIdx =
+        z.programme_stage_idx != null && z.programme_stage_idx !== ''
+          ? Number(z.programme_stage_idx)
+          : 0;
+      const { anchorActivityId, anchorEndDateKey } = schedule.targetEndParamsFromStartStage({
+        sequence: seq,
+        durations: dur,
+        startStageIndex: stageIdx,
+        startDateKey: z.programme_anchor_date,
+        activityLookup,
+      });
+      if (!anchorActivityId || !anchorEndDateKey) {
+        errors.push({
+          zone_id: Number(z.id),
+          label: `${z.tower || ''} ${z.name || ''}`.trim(),
+          error: 'Could not resolve anchor activity or date',
+        });
+        continue;
+      }
+      const out = module.exports.scheduleFromTargetDate(
+        z.id,
+        anchorActivityId,
+        anchorEndDateKey,
+        tid
+      );
+      if (out && out.error) {
+        errors.push({
+          zone_id: Number(z.id),
+          label: `${z.tower || ''} ${z.name || ''}`.trim(),
+          error: out.error,
+        });
+        continue;
+      }
+      count += 1;
+    }
+
+    return { ok: true, count, total: zones.length, errors };
+  },
   /** Full regenerate from template stage 0. Fails if zone has any programme row with status done. */
   resetZoneProgrammeToTemplateStart: (zoneId, startDateKey) => {
     const zid = Number(zoneId);

@@ -417,6 +417,9 @@ function SettingsPage(){
   const[progResetBusy,setProgResetBusy]=useState(false);
   const[progResetErr,setProgResetErr]=useState('');
   const[progResetDeleted,setProgResetDeleted]=useState(null);
+  const[reseqBusy,setReseqBusy]=useState(false);
+  const[reseqResult,setReseqResult]=useState(null);
+  const[reseqErr,setReseqErr]=useState('');
   const load=useCallback(async()=>{
     try{
       const d=await api.getSitePhoto();
@@ -450,6 +453,18 @@ function SettingsPage(){
       setProgResetInput('');
     }catch(er){setProgResetErr(er?.message||'Reset failed');}
     finally{setProgResetBusy(false);}
+  }
+  async function onResequenceAllZones(){
+    if(!window.confirm('Resequence all zones that have a linked template and anchor date? This replaces programme rows with freshly calculated dates.'))return;
+    setReseqErr('');
+    setReseqResult(null);
+    setReseqBusy(true);
+    try{
+      const out=await api.resequenceAllZones();
+      if(isApiErrorPayload(out)){setReseqErr(String(out.error));return;}
+      setReseqResult(out);
+    }catch(er){setReseqErr(er?.message||'Resequence failed');}
+    finally{setReseqBusy(false);}
   }
   const thumbSrc=info.url?`${api.absoluteUrl(info.url)}${info.updated_at?`?v=${encodeURIComponent(info.updated_at)}`:''}`:'';
   const updatedLabel=formatSitePhotoUpdated(info.updated_at);
@@ -517,6 +532,38 @@ function SettingsPage(){
               <li key={table}><code style={{fontSize:11}}>{table}</code>: {String(n)}</li>
             ))}
           </ul>
+        </div>
+      )}
+    </div>
+    <div style={{maxWidth:520,marginTop:28,paddingTop:24,borderTop:`1px solid ${T.hairline}`}}>
+      <h3 style={{margin:'0 0 6px',fontSize:15,fontWeight:700,color:T.text}}>Resequence all zones</h3>
+      <p style={{fontSize:12,color:T.muted,margin:'0 0 12px',lineHeight:1.5}}>
+        Rebuilds <code style={{fontSize:11}}>programme_items</code> for every zone with a linked template and anchor date,
+        using the current <code style={{fontSize:11}}>scheduleFromTargetDate</code> engine. Use after scheduling logic fixes
+        or to repair zones built with the legacy apply path.
+      </p>
+      <button
+        type="button"
+        disabled={reseqBusy}
+        onClick={()=>void onResequenceAllZones()}
+        style={{...S.btn,padding:'10px 16px',fontSize:12,fontWeight:600,opacity:reseqBusy?0.55:1,cursor:reseqBusy?'default':'pointer'}}
+      >
+        {reseqBusy?'Resequencing…':'Resequence all zones'}
+      </button>
+      {reseqErr&&<div style={{fontSize:12,color:'#b91c1c',marginTop:10}}>{reseqErr}</div>}
+      {reseqResult&&typeof reseqResult.count==='number'&&(
+        <div style={{fontSize:12,color:T.muted,marginTop:12,lineHeight:1.55}}>
+          <strong style={{color:T.text}}>{reseqResult.count} zone{reseqResult.count===1?'':'s'} resequenced</strong>
+          {reseqResult.total!=null&&reseqResult.total!==reseqResult.count&&(
+            <span> ({reseqResult.total} eligible)</span>
+          )}
+          {Array.isArray(reseqResult.errors)&&reseqResult.errors.length>0&&(
+            <ul style={{margin:'8px 0 0',paddingLeft:18}}>
+              {reseqResult.errors.map((e)=>(
+                <li key={e.zone_id}>{e.label||`Zone ${e.zone_id}`}: {e.error}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

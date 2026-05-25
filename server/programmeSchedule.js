@@ -170,6 +170,27 @@ function buildRowsFromTargetEndDate({
   return rows.filter(Boolean);
 }
 
+/** Map stored zone anchor (stage index + start date) to scheduleFromTargetDate params. */
+function targetEndParamsFromStartStage({
+  sequence,
+  durations,
+  startStageIndex,
+  startDateKey,
+  activityLookup,
+}) {
+  const seq = Array.isArray(sequence) ? sequence : [];
+  const dur = alignTemplateDurations(seq, durations);
+  const n = seq.length;
+  const k = Math.min(Math.max(0, Number(startStageIndex) || 0), Math.max(0, n - 1));
+  const startNorm = pw.normalizeScheduleStartKey(String(startDateKey || '').trim());
+  if (!n || !startNorm) {
+    return { anchorIndex: k, anchorActivityId: null, anchorEndDateKey: null };
+  }
+  const anchorEndDateKey = endDateOfSpanStarting(startNorm, dur[k]);
+  const anchorActivityId = resolveActivityId(activityLookup, seq[k]);
+  return { anchorIndex: k, anchorActivityId, anchorEndDateKey };
+}
+
 function buildRowsFromTemplate({
   sequence,
   durations,
@@ -243,6 +264,7 @@ function addCalendarDays(dateKeyStr, delta) {
 module.exports = {
   buildRowsFromTemplate,
   buildRowsFromTargetEndDate,
+  targetEndParamsFromStartStage,
   buildActivityLookup,
   resolveActivityId,
   alignTemplateDurations,
