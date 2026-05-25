@@ -8,6 +8,7 @@ import {
   resolveActivityId,
   alignTemplateDurations,
 } from './programmeSchedule';
+import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 export default function ScheduleFromTargetModal({
   open,
@@ -172,8 +173,9 @@ export default function ScheduleFromTargetModal({
           type="date"
           value={toHtmlDateInputValue(anchorDate)}
           onChange={(e) => setAnchorDate(e.target.value)}
-          style={{ ...S.input, fontSize: 12, marginBottom: 8, width: '100%' }}
+          style={{ ...S.input, fontSize: 12, marginBottom: 4, width: '100%' }}
         />
+        <NonWorkingAnchorDateWarning dateKey={anchorDate} variant="finish" />
         <div style={{ fontSize: 10, color: T.faint, marginBottom: 14, lineHeight: 1.35 }}>
           Durations use working days only (weekends skipped), matching Generate programme.
         </div>

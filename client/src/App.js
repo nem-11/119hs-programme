@@ -18,6 +18,7 @@ import ProgrammePage from './ProgrammePage';
 import PlanPage from './PlanPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
+import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
 function isApiErrorPayload(x) {
@@ -725,6 +726,7 @@ function TemplatePage({tab,isAdmin,onReload}){
             <input type="date" value={toHtmlDateInputValue(apStart)} onChange={e=>setApStart(e.target.value)} style={{...S.input,width:140,fontSize:12,padding:'6px 10px'}}/>
             <button onClick={handleApply} style={{...S.btn,...S.btnPrimary,fontSize:11}}>Apply</button>
           </div>
+          <NonWorkingAnchorDateWarning dateKey={apStart} />
           <div style={{fontSize:9,color:T.faint,marginTop:4}}>Creates {total} scheduleable days (Mondays–Fridays; Saturdays, Sundays, and England and Wales bank holidays excluded)</div>
         </div>}
       </div>})}

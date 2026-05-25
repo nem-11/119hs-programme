@@ -12,6 +12,7 @@ import {
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
 import PageHeader from './PageHeader';
+import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 function sortZoneActs(z){
   return [...(z?.activities||[])].sort((a,b)=>(a.sequence_order||0)-(b.sequence_order||0));
@@ -790,6 +791,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                         </td>
                         <td style={{padding:'4px',verticalAlign:'middle'}}>
                           <input type="date" value={toHtmlDateInputValue(b.startDate)} onChange={e=>setBulk(o=>({...o,[z.id]:{...b,startDate:e.target.value}}))} style={{...S.input,fontSize:10,padding:'4px'}}/>
+                          <NonWorkingAnchorDateWarning dateKey={b.startDate} />
                         </td>
                       </tr>;
                     })}
@@ -836,8 +838,9 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                         ))}
                       </div>
                       <label style={{fontSize:10,color:T.muted,display:'block',marginBottom:4}}>Start date (first weekday of selected stage)</label>
-                      <input type="date" value={toHtmlDateInputValue(anchorDate)} onChange={e=>setAnchorDate(e.target.value)} style={{...S.input,fontSize:12,marginBottom:10,width:'100%'}}/>
-                      <button type="button" disabled={!schedTpl||saving} onClick={runGenerate} style={{...S.btn,...S.btnPrimary,width:'100%',padding:'10px',fontSize:12}}>Generate programme</button>
+                      <input type="date" value={toHtmlDateInputValue(anchorDate)} onChange={e=>setAnchorDate(e.target.value)} style={{...S.input,fontSize:12,marginBottom:4,width:'100%'}}/>
+                      <NonWorkingAnchorDateWarning dateKey={anchorDate} />
+                      <button type="button" disabled={!schedTpl||saving} onClick={runGenerate} style={{...S.btn,...S.btnPrimary,width:'100%',padding:'10px',fontSize:12,marginTop:6}}>Generate programme</button>
                       {isAdmin&&(
                         <button type="button" disabled={saving} onClick={()=>setTargetModalOpen(true)} style={{...S.btn,marginTop:10,width:'100%',padding:'10px',fontSize:12,border:`1px solid rgba(66,133,244,0.35)`,background:'rgba(66,133,244,0.08)'}}>
                           Schedule from target date
