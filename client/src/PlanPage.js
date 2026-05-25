@@ -21,6 +21,7 @@ import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
 import './planPrint.css';
 import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
+import PlanAddActivityModal from './PlanAddActivityModal';
 import PlanActivityChip from './PlanActivityChip';
 
 /**
@@ -200,6 +201,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   const isMobile = useIsMobile();
   const [inspect, setInspect] = useState(null);
   const [chipEdit, setChipEdit] = useState(null);
+  const [addActivityZone, setAddActivityZone] = useState(null);
   const [coarsePointer, setCoarsePointer] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
@@ -566,6 +568,57 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     await load();
   }
 
+  const catalogueActivities = useMemo(
+    () => activities.filter((a) => String(a.type || '') === String(tab || '')),
+    [activities, tab]
+  );
+
+  async function addActivityToZone(z, { activityKey, customName, startDate: startInput, duration, insertAfter }) {
+    let act;
+    if (activityKey === '__custom__') {
+      const name = String(customName || '').trim();
+      if (!name) throw new Error('Activity name is required');
+      act = activities.find((a) => String(a.name).toLowerCase() === name.toLowerCase());
+    } else {
+      act = activities.find((a) => Number(a.id) === Number(activityKey));
+    }
+    if (!act) throw new Error('Activity not found');
+    const start = normalizeScheduleStartKey(startInput);
+    const durationDays = Math.max(1, Number(duration) || 1);
+    const items = [...z.items]
+      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+      .map((x) => ({ ...x }));
+    let idx = items.length;
+    if (insertAfter) {
+      const afterIdx = items.findIndex(
+        (it) => String(it.activity_name).toLowerCase() === String(insertAfter).trim().toLowerCase()
+      );
+      idx = afterIdx >= 0 ? afterIdx + 1 : items.length;
+    }
+    const end = endOfScheduleableSpan(start, durationDays);
+    items.splice(idx, 0, {
+      id: `tmp_${Date.now()}`,
+      zone_id: z.zone_id,
+      activity_id: Number(act.id),
+      activity_name: act.name,
+      start_date: start,
+      end_date: end,
+      status: 'planned',
+      notes: '',
+    });
+    let cursor = idx === 0 ? items[0].start_date : nextScheduleableDayKey(items[idx - 1].end_date);
+    for (let i = idx; i < items.length; i++) {
+      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+      items[i] = {
+        ...items[i],
+        start_date: normalizeScheduleStartKey(cursor),
+        end_date: endOfScheduleableSpan(normalizeScheduleStartKey(cursor), dur),
+      };
+      cursor = nextScheduleableDayKey(items[i].end_date);
+    }
+    await applyZoneRows(z.zone_id, z.items, items);
+  }
+
   async function deleteActivityFromZone(zoneId, zoneItems, itemId) {
     const items = [...zoneItems]
       .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
@@ -694,6 +747,18 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         onDelete={async () => {
           if (!chipEdit) return;
           await deleteActivityFromZone(chipEdit.zoneId, chipEdit.zoneItems, chipEdit.row.id);
+        }}
+      />
+      <PlanAddActivityModal
+        open={Boolean(addActivityZone)}
+        onClose={() => setAddActivityZone(null)}
+        zoneLabel={addActivityZone ? zoneRowLabel(addActivityZone) : ''}
+        zoneItems={addActivityZone?.items || []}
+        catalogueActivities={catalogueActivities}
+        defaultStartDate={dayColumns[0] || startDate}
+        onConfirm={async (form) => {
+          if (!addActivityZone) return;
+          await addActivityToZone(addActivityZone, form);
         }}
       />
       <PageHeader
@@ -1057,44 +1122,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                             type="button"
                             title="Add activity"
                             style={{ ...S.btn, padding: '2px 6px', fontSize: 11 }}
-                            onClick={async () => {
-                              try {
-                                const actName = window.prompt(`Add activity to ${zoneRowLabel(z)}. Enter activity name exactly:`, '');
-                                if (!actName) return;
-                                const act = activities.find((a) => String(a.name).toLowerCase() === String(actName).trim().toLowerCase());
-                                if (!act) throw new Error('Activity not found');
-                                const start = normalizeScheduleStartKey(window.prompt('Start date (YYYY-MM-DD):', dayColumns[0] || startDate) || '');
-                                const duration = Math.max(1, Number(window.prompt('Duration (scheduleable days; Mon–Fri only, excludes Sat/Sun and England and Wales bank holidays):', '1')) || 1);
-                                const items = [...z.items].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
-                                const insertAfter = window.prompt('Insert after activity name (blank = at start):', '');
-                                let idx = 0;
-                                if (insertAfter) {
-                                  const afterIdx = items.findIndex((it) => String(it.activity_name).toLowerCase() === insertAfter.trim().toLowerCase());
-                                  idx = afterIdx >= 0 ? afterIdx + 1 : items.length;
-                                }
-                                const end = endOfScheduleableSpan(start, duration);
-                                items.splice(idx, 0, {
-                                  id: `tmp_${Date.now()}`,
-                                  zone_id: z.zone_id,
-                                  activity_id: Number(act.id),
-                                  activity_name: act.name,
-                                  start_date: start,
-                                  end_date: end,
-                                  status: 'planned',
-                                  notes: '',
-                                });
-                                let cursor = idx === 0 ? items[0].start_date : nextScheduleableDayKey(items[idx - 1].end_date);
-                                for (let i = idx; i < items.length; i++) {
-                                  const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                                  items[i].start_date = normalizeScheduleStartKey(cursor);
-                                  items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
-                                  cursor = nextScheduleableDayKey(items[i].end_date);
-                                }
-                                await applyZoneRows(z.zone_id, z.items, items);
-                              } catch (e) {
-                                window.alert(e?.message || 'Add failed');
-                              }
-                            }}
+                            onClick={() => setAddActivityZone(z)}
                           >
                             ＋
                           </button>
