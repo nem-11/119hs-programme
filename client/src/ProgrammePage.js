@@ -53,6 +53,35 @@ const tableHead={
   marginBottom:6,
 };
 
+const ppTableGrid={
+  display:'grid',
+  gridTemplateColumns:'32px minmax(52px,0.45fr) minmax(0,1.5fr) 88px 88px 64px 76px',
+  gap:6,
+  alignItems:'center',
+};
+
+const ppTableHead={
+  ...ppTableGrid,
+  fontSize:9,
+  fontWeight:700,
+  color:T.faint,
+  textTransform:'uppercase',
+  letterSpacing:'0.05em',
+  marginBottom:6,
+};
+
+function projectTaskType(row){
+  if(Number(row.is_summary)===1)return 'Summary';
+  if(Number(row.is_milestone)===1)return 'Milestone';
+  return 'Task';
+}
+
+function filterProjectTasks(tasks,mode){
+  if(mode==='milestones')return tasks.filter((t)=>Number(t.is_milestone)===1);
+  if(mode==='tasks')return tasks.filter((t)=>Number(t.is_summary)!==1);
+  return tasks;
+}
+
 export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneSetup,zoneSetupAvailable=true,isAdmin=false}){
   const typeTab=['groundworks','internals',PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
   const[drawings,setDrawings]=useState([]);
@@ -80,6 +109,18 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const[bulk,setBulk]=useState({});
   const[saving,setSaving]=useState(false);
   const[targetModalOpen,setTargetModalOpen]=useState(false);
+
+  const[xmlFile,setXmlFile]=useState(null);
+  const[xmlParsing,setXmlParsing]=useState(false);
+  const[xmlParseErr,setXmlParseErr]=useState('');
+  const[parsedXmlTasks,setParsedXmlTasks]=useState([]);
+  const[xmlChecked,setXmlChecked]=useState({});
+  const[xmlFilter,setXmlFilter]=useState('tasks');
+  const[xmlConfirmMsg,setXmlConfirmMsg]=useState('');
+  const[xmlConfirming,setXmlConfirming]=useState(false);
+  const[projectItems,setProjectItems]=useState([]);
+  const[loadingProjectItems,setLoadingProjectItems]=useState(false);
+  const xmlInputRef=useRef(null);
 
   const wrapRef=useRef(null);
 
@@ -132,6 +173,31 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   useEffect(()=>{reloadDrawings()},[reloadDrawings]);
   useEffect(()=>{api.getActivities().then(a=>setActivities(a||[]))},[]);
   useEffect(()=>{api.getTemplates().then(t=>setTemplates(t||[]))},[]);
+
+  const reloadProjectItems=useCallback(()=>{
+    if(tab!==PROJECT_PROGRAMME_TAB)return;
+    setLoadingProjectItems(true);
+    api.getProjectProgrammeItems().then((rows)=>{
+      setProjectItems(Array.isArray(rows)?rows:[]);
+      setLoadingProjectItems(false);
+    });
+  },[tab]);
+
+  useEffect(()=>{
+    if(tab===PROJECT_PROGRAMME_TAB)reloadProjectItems();
+  },[tab,reloadProjectItems]);
+
+  const filteredXmlTasks=useMemo(
+    ()=>filterProjectTasks(parsedXmlTasks,xmlFilter),
+    [parsedXmlTasks,xmlFilter]
+  );
+
+  const xmlStats=useMemo(()=>{
+    const milestones=parsedXmlTasks.filter((t)=>Number(t.is_milestone)===1).length;
+    const summary=parsedXmlTasks.filter((t)=>Number(t.is_summary)===1).length;
+    const selected=parsedXmlTasks.filter((t)=>xmlChecked[t.uid]).length;
+    return {milestones,summary,selected,total:parsedXmlTasks.length};
+  },[parsedXmlTasks,xmlChecked]);
 
   useEffect(()=>{
     if(!selDraw){setDrawData(null);setZones([]);return}
@@ -417,9 +483,191 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     clearZoneSelection();
   }
 
+  async function handleXmlUploadPreview(){
+    if(!xmlFile)return;
+    setXmlParsing(true);
+    setXmlParseErr('');
+    setXmlConfirmMsg('');
+    const res=await api.uploadProjectProgrammeXml(xmlFile);
+    setXmlParsing(false);
+    if(res&&res.error){
+      setXmlParseErr(String(res.error));
+      setParsedXmlTasks([]);
+      setXmlChecked({});
+      return;
+    }
+    const tasks=Array.isArray(res?.tasks)?res.tasks:[];
+    setParsedXmlTasks(tasks);
+    const chk={};
+    tasks.forEach((t)=>{chk[t.uid]=true});
+    setXmlChecked(chk);
+    setXmlFilter('tasks');
+  }
+
+  function setXmlCheckAll(visible,on){
+    setXmlChecked((prev)=>{
+      const next={...prev};
+      visible.forEach((t)=>{next[t.uid]=on});
+      return next;
+    });
+  }
+
+  async function handleXmlConfirmImport(){
+    const selected=parsedXmlTasks.filter((t)=>xmlChecked[t.uid]);
+    if(!selected.length)return;
+    setXmlConfirming(true);
+    setXmlConfirmMsg('');
+    const res=await api.confirmProjectProgrammeImport(selected);
+    setXmlConfirming(false);
+    if(res&&res.error){
+      setXmlParseErr(String(res.error));
+      return;
+    }
+    setXmlConfirmMsg(`Imported ${res.count ?? selected.length} row(s).`);
+    setParsedXmlTasks([]);
+    setXmlChecked({});
+    setXmlFile(null);
+    if(xmlInputRef.current)xmlInputRef.current.value='';
+    reloadProjectItems();
+  }
+
+  function renderProjectRow(row,{showCheckbox,checked,onToggle}){
+    const summary=Number(row.is_summary)===1;
+    const milestone=Number(row.is_milestone)===1;
+    const indent=(Number(row.outline_level)||1)*12;
+    const nameStyle={
+      fontSize:10,
+      fontWeight:summary?600:700,
+      fontStyle:summary?'italic':'normal',
+      color:summary?T.muted:T.text,
+      paddingLeft:indent,
+      lineHeight:1.3,
+      minWidth:0,
+      overflow:'hidden',
+      textOverflow:'ellipsis',
+    };
+    return (
+      <div key={showCheckbox?`p-${row.uid}`:row.id} style={{...ppTableGrid,marginBottom:4,fontSize:10,color:T.text}}>
+        {showCheckbox?(
+          <input type="checkbox" checked={!!checked} onChange={()=>onToggle(row.uid)} style={{width:14,height:14}}/>
+        ):(
+          <span/>
+        )}
+        <span style={{fontSize:9,color:T.faint}}>{row.wbs||'—'}</span>
+        <span style={nameStyle}>{milestone?'◆ ':''}{row.name}</span>
+        <span>{row.start_date||'—'}</span>
+        <span>{row.finish_date||'—'}</span>
+        <span>{row.duration_days!=null?Number(row.duration_days):'—'}</span>
+        <span style={{fontSize:9,color:summary?T.faint:T.muted}}>{projectTaskType(row)}</span>
+      </div>
+    );
+  }
+
+  const projectProgrammePanel=tab===PROJECT_PROGRAMME_TAB?(
+    <div style={{padding:'12px 14px',borderBottom:`1px solid ${T.hairline}`,background:T.surface,flexShrink:0}}>
+      {isAdmin&&(
+        <div style={{marginBottom:16,padding:12,borderRadius:12,border:`1px solid ${T.hairline}`,background:T.bg}}>
+          <h3 style={{margin:'0 0 10px',fontSize:14,fontWeight:700,color:T.text}}>Import from MS Project XML</h3>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:10}}>
+            <input
+              ref={xmlInputRef}
+              type="file"
+              accept=".xml,application/xml,text/xml"
+              onChange={(e)=>{setXmlFile(e.target.files?.[0]||null);setXmlParseErr('');setXmlConfirmMsg('')}}
+              style={{fontSize:11,maxWidth:280}}
+            />
+            <button
+              type="button"
+              disabled={!xmlFile||xmlParsing}
+              onClick={()=>void handleXmlUploadPreview()}
+              style={{...S.btn,...S.btnPrimary,padding:'6px 14px',fontSize:11}}
+            >
+              {xmlParsing?'Parsing…':'Upload & Preview'}
+            </button>
+          </div>
+          {xmlParseErr&&<div style={{fontSize:11,color:'#c0392b',marginBottom:8}}>{xmlParseErr}</div>}
+          {xmlConfirmMsg&&<div style={{fontSize:11,color:'rgba(46,178,96,0.95)',marginBottom:8}}>{xmlConfirmMsg}</div>}
+          {parsedXmlTasks.length>0&&(
+            <>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:8}}>
+                {[
+                  {id:'all',label:'All'},
+                  {id:'tasks',label:'Tasks only'},
+                  {id:'milestones',label:'Milestones only'},
+                ].map((f)=>(
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={()=>setXmlFilter(f.id)}
+                    style={{...S.btn,...(xmlFilter===f.id?S.btnAct:{}),padding:'4px 10px',fontSize:10}}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:10,color:T.muted,marginBottom:8}}>
+                {xmlStats.selected} of {xmlStats.total} tasks selected ({xmlStats.milestones} milestones, {xmlStats.summary} summary rows)
+              </div>
+              <div style={{display:'flex',gap:8,marginBottom:8}}>
+                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(filteredXmlTasks,true)}>Select all</button>
+                <button type="button" style={{...S.btn,padding:'4px 10px',fontSize:10}} onClick={()=>setXmlCheckAll(filteredXmlTasks,false)}>Deselect all</button>
+              </div>
+              <div style={{maxHeight:280,overflowY:'auto',marginBottom:10}}>
+                <div style={ppTableHead}>
+                  <span/>
+                  <span>WBS</span>
+                  <span>Name</span>
+                  <span>Start</span>
+                  <span>Finish</span>
+                  <span>Duration</span>
+                  <span>Type</span>
+                </div>
+                {filteredXmlTasks.map((row)=>renderProjectRow(row,{
+                  showCheckbox:true,
+                  checked:xmlChecked[row.uid],
+                  onToggle:(uid)=>setXmlChecked((c)=>({...c,[uid]:!c[uid]})),
+                }))}
+              </div>
+              <button
+                type="button"
+                disabled={xmlStats.selected<1||xmlConfirming}
+                onClick={()=>void handleXmlConfirmImport()}
+                style={{...S.btn,...S.btnPrimary,padding:'8px 16px',fontSize:12}}
+              >
+                {xmlConfirming?'Importing…':'Confirm Import'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:8}}>Project programme</div>
+        {loadingProjectItems&&<div style={{fontSize:11,color:T.faint}}>Loading…</div>}
+        {!loadingProjectItems&&projectItems.length===0&&(
+          <div style={{fontSize:11,color:T.muted}}>No project programme rows yet.{isAdmin?' Import an XML file above.':''}</div>
+        )}
+        {!loadingProjectItems&&projectItems.length>0&&(
+          <div style={{maxHeight:360,overflowY:'auto'}}>
+            <div style={ppTableHead}>
+              <span/>
+              <span>WBS</span>
+              <span>Name</span>
+              <span>Start</span>
+              <span>Finish</span>
+              <span>Duration</span>
+              <span>Type</span>
+            </div>
+            {projectItems.map((row)=>renderProjectRow(row,{showCheckbox:false}))}
+          </div>
+        )}
+      </div>
+    </div>
+  ):null;
+
   return(
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg}}>
       {isAdmin&&<ProgrammeNlCommand onApplied={onScheduleChanged}/>}
+      {projectProgrammePanel}
       <div className="app-page-header" style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
         {tabDrawings.length>0&&(
           <select value={selDraw||''} onChange={e=>{const id=Number(e.target.value);writeSavedDrawingId(tab,id);setSelDraw(id)}} style={{...S.input,width:'auto',fontSize:12,padding:'6px 10px'}}>

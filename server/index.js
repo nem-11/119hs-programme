@@ -47,6 +47,7 @@ app.use(express.json({ limit: '50mb' }));
 
 const multer = require('multer');
 const sitePhotoStore = require('./sitePhotoStore');
+const { parseMsProjectXml } = require('./projectProgrammeXml');
 sitePhotoStore.ensureUploadsDir();
 app.use('/uploads', express.static(sitePhotoStore.getUploadsDir()));
 
@@ -56,6 +57,20 @@ const uploadSitePhotoMw = multer({
   fileFilter(req, file, cb) {
     if (['image/jpeg', 'image/png'].includes(file.mimetype)) cb(null, true);
     else cb(new Error('Only JPG and PNG are allowed'));
+  },
+});
+
+const uploadProjectXmlMw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    const name = String(file.originalname || '').toLowerCase();
+    const okMime =
+      file.mimetype === 'text/xml' ||
+      file.mimetype === 'application/xml' ||
+      name.endsWith('.xml');
+    if (okMime) cb(null, true);
+    else cb(new Error('Only .xml files are allowed'));
   },
 });
 
@@ -418,6 +433,48 @@ app.post('/api/templates/apply', auth, admin, (req, res) => {
   const { tab, tower, zone_name, sequence, durations, startDate } = req.body;
   db.applyTemplate(tab, tower, zone_name, JSON.stringify(sequence), JSON.stringify(durations), startDate);
   res.json({ ok: true });
+});
+
+app.post('/api/project-programme/import-xml', auth, admin, (req, res, next) => {
+  uploadProjectXmlMw.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large (max 10MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'XML file required (.xml, max 10MB)' });
+  }
+  try {
+    const tasks = parseMsProjectXml(req.file.buffer);
+    res.json({ tasks });
+  } catch (e) {
+    console.error('[119HS] import-xml parse', e);
+    res.status(400).json({ error: e.message || 'Could not parse XML' });
+  }
+});
+
+app.post('/api/project-programme/confirm-import', auth, admin, (req, res) => {
+  const items = req.body?.items ?? req.body?.tasks;
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: 'items array required' });
+  }
+  try {
+    const out = db.confirmProjectProgrammeImport(items);
+    if (out.error) return res.status(400).json(out);
+    res.json({ ok: true, count: out.count });
+  } catch (e) {
+    console.error('[119HS] confirm-import', e);
+    res.status(500).json({ error: e.message || 'Import failed' });
+  }
+});
+
+app.get('/api/project-programme/items', auth, (req, res) => {
+  res.json(db.getProjectProgrammeItems());
 });
 app.post('/api/admin/reset-programme-data', auth, admin, (req, res) => {
   const out = db.resetProgrammeData();

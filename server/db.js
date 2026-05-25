@@ -461,6 +461,7 @@ async function getDb() {
   migrateMilestonesProgrammeItemId();
   migrateProgrammeItemsClampScheduleable();
   migrateProgrammeItemsClampScheduleableV2();
+  migrateProjectProgrammeItems();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -491,6 +492,28 @@ function migrateZoneProgrammeMeta() {
     db.run('ALTER TABLE zones ADD COLUMN programme_anchor_date TEXT');
     save();
   } catch (_) {}
+}
+
+// Project Programme items — docs/SOURCE_OF_TRUTH.md §10
+function migrateProjectProgrammeItems() {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS project_programme_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uid INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      wbs TEXT,
+      outline_level INTEGER DEFAULT 1,
+      start_date TEXT,
+      finish_date TEXT,
+      duration_days REAL,
+      is_summary INTEGER DEFAULT 0,
+      is_milestone INTEGER DEFAULT 0,
+      is_milestone_tagged INTEGER DEFAULT 0,
+      zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  save();
 }
 
 function migrateProgrammeCommandLog() {
@@ -1807,5 +1830,55 @@ module.exports = {
       zone_start: rows[0].start_date,
       zone_finish: rows[rows.length - 1].end_date,
     };
+  },
+  getProjectProgrammeItems: () =>
+    all('SELECT * FROM project_programme_items ORDER BY wbs, id'),
+  confirmProjectProgrammeImport: (tasks) => {
+    if (!Array.isArray(tasks) || !tasks.length) {
+      return { error: 'At least one task required' };
+    }
+    let inTx = false;
+    try {
+      runNoSave('BEGIN IMMEDIATE');
+      inTx = true;
+      runNoSave('DELETE FROM project_programme_items');
+      let inserted = 0;
+      for (const t of tasks) {
+        const uid = Number(t.uid);
+        const name = String(t.name || '').trim();
+        if (!Number.isFinite(uid) || uid === 0 || !name) continue;
+        runNoSave(
+          `INSERT INTO project_programme_items (
+            uid, name, wbs, outline_level, start_date, finish_date, duration_days,
+            is_summary, is_milestone, is_milestone_tagged, zone_id
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          [
+            uid,
+            name,
+            t.wbs != null ? String(t.wbs) : '',
+            Number(t.outline_level) || 1,
+            t.start_date != null ? String(t.start_date) : '',
+            t.finish_date != null ? String(t.finish_date) : '',
+            t.duration_days != null ? Number(t.duration_days) : null,
+            t.is_summary ? 1 : 0,
+            t.is_milestone ? 1 : 0,
+            t.is_milestone_tagged ? 1 : 0,
+            t.zone_id != null && t.zone_id !== '' ? Number(t.zone_id) : null,
+          ]
+        );
+        inserted += 1;
+      }
+      runNoSave('COMMIT');
+      inTx = false;
+      save();
+      return { ok: true, count: inserted };
+    } catch (e) {
+      if (inTx) {
+        try {
+          runNoSave('ROLLBACK');
+        } catch (_) {}
+      }
+      throw e;
+    }
   },
 };

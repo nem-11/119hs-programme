@@ -121,3 +121,23 @@ export const createTemplate=(name,tab,tower,zone_name,sequence,durations)=>api('
 export const deleteTemplate=(id)=>api('DELETE',`/api/templates/${id}`);
 export const updateTemplate=(id,body)=>api('PUT',`/api/templates/${id}`,body);
 export const applyTemplate=(tab,tower,zone_name,sequence,durations,startDate)=>api('POST','/api/templates/apply',{tab,tower,zone_name,sequence,durations,startDate});
+
+export async function uploadProjectProgrammeXml(file){
+  const fd=new FormData();
+  fd.append('file',file);
+  const url=BASE?`${BASE}/api/project-programme/import-xml`:'/api/project-programme/import-xml';
+  const token=getToken();
+  const headers={};
+  if(token)headers.Authorization='Bearer '+token;
+  const res=await fetch(url,{method:'POST',headers,body:fd});
+  let data={};
+  try{data=await res.json()}catch(_){}
+  if(!res.ok){
+    if(!data.error)data.error=`HTTP ${res.status}`;
+    return data;
+  }
+  return data;
+}
+
+export const confirmProjectProgrammeImport=(items)=>api('POST','/api/project-programme/confirm-import',{items});
+export const getProjectProgrammeItems=()=>api('GET','/api/project-programme/items');
