@@ -24,6 +24,7 @@ export default function PlanActivityChip({
   setInspect,
   onOpenEdit,
   applyZoneRows,
+  hasDependency,
 }) {
   const clickTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
@@ -92,7 +93,7 @@ export default function PlanActivityChip({
       draggable={isAdmin && !done}
       onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
       onDoubleClick={(e) => {
-        if (!isAdmin || done) return;
+        if (done) return;
         e.preventDefault();
         clearClickTimer();
         onOpenEdit({
@@ -103,7 +104,7 @@ export default function PlanActivityChip({
         });
       }}
       onTouchStart={() => {
-        if (!isAdmin || done || !coarsePointer) return;
+        if (done || !coarsePointer) return;
         longPressTriggeredRef.current = false;
         clearLongPressTimer();
         longPressTimerRef.current = setTimeout(() => {
@@ -161,6 +162,15 @@ export default function PlanActivityChip({
     >
       {done && dk === String(it.start_date || '').trim() && (
         <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
+      )}
+      {hasDependency && (
+        <span
+          title="Has dependencies"
+          style={{ flexShrink: 0, fontSize: 9, lineHeight: 1, opacity: 0.85 }}
+          aria-hidden
+        >
+          🔗
+        </span>
       )}
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
     </div>

@@ -116,6 +116,15 @@ export const getProgrammeItemsByZone=(zoneId)=>api('GET',`/api/programme-items/z
 export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes});
 export const updateProgrammeItem=(id,patch)=>api('PUT',`/api/programme-items/${id}`,patch);
 export const deleteProgrammeItem=(id)=>api('DELETE',`/api/programme-items/${id}`);
+export const getDependencies=(itemType,itemId)=>{
+  if(itemType!=null&&itemId!=null){
+    const q=new URLSearchParams({item_type:itemType,item_id:String(itemId)});
+    return api('GET',`/api/dependencies?${q}`);
+  }
+  return api('GET','/api/dependencies');
+};
+export const createDependency=(body)=>api('POST','/api/dependencies',body);
+export const deleteDependency=(id)=>api('DELETE',`/api/dependencies/${id}`);
 export const getTemplates=()=>api('GET','/api/templates');
 export const createTemplate=(name,tab,tower,zone_name,sequence,durations)=>api('POST','/api/templates',{name,tab,tower,zone_name,sequence,durations});
 export const deleteTemplate=(id)=>api('DELETE',`/api/templates/${id}`);

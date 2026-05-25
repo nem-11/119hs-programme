@@ -462,6 +462,7 @@ async function getDb() {
   migrateProgrammeItemsClampScheduleable();
   migrateProgrammeItemsClampScheduleableV2();
   migrateProjectProgrammeItems();
+  migrateActivityDependencies();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -492,6 +493,24 @@ function migrateZoneProgrammeMeta() {
     db.run('ALTER TABLE zones ADD COLUMN programme_anchor_date TEXT');
     save();
   } catch (_) {}
+}
+
+// Dependency model — docs/SOURCE_OF_TRUTH.md §3.8
+function migrateActivityDependencies() {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS activity_dependencies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      predecessor_type TEXT NOT NULL CHECK(predecessor_type IN ('programme_item','project_programme_item')),
+      predecessor_id INTEGER NOT NULL,
+      successor_type TEXT NOT NULL CHECK(successor_type IN ('programme_item','project_programme_item')),
+      successor_id INTEGER NOT NULL,
+      relationship_type TEXT NOT NULL DEFAULT 'FS',
+      created_by TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(predecessor_type, predecessor_id, successor_type, successor_id)
+    );
+  `);
+  save();
 }
 
 // Project Programme items — docs/SOURCE_OF_TRUTH.md §10
@@ -715,6 +734,132 @@ function enrichMilestoneRow(m, compMap) {
     tracks_live,
     ...(tracks_live ? { live_ticks_done, live_ticks_total } : {}),
   };
+}
+
+function resolveDependencyItemInfo(type, id) {
+  const nid = Number(id);
+  if (!Number.isFinite(nid)) return null;
+  if (type === 'programme_item') {
+    const row = get(
+      `SELECT pi.*, a.name AS activity_name, z.name AS zone_name, z.tower
+       FROM programme_items pi
+       JOIN activities a ON a.id = pi.activity_id
+       JOIN zones z ON z.id = pi.zone_id
+       WHERE pi.id = ?`,
+      [nid]
+    );
+    if (!row) return null;
+    const label = [row.tower, row.zone_name, row.activity_name].filter(Boolean).join(' — ');
+    return {
+      name: label || row.activity_name,
+      activity_name: row.activity_name,
+      end_date: row.end_date,
+      status: row.status,
+    };
+  }
+  if (type === 'project_programme_item') {
+    const row = get('SELECT * FROM project_programme_items WHERE id=?', [nid]);
+    if (!row) return null;
+    return {
+      name: row.name,
+      activity_name: row.name,
+      end_date: row.finish_date || row.start_date || null,
+      status: null,
+    };
+  }
+  return null;
+}
+
+function isPredecessorIncomplete(type, info) {
+  if (!info) return false;
+  if (type === 'programme_item') {
+    return String(info.status || '').toLowerCase() !== 'done';
+  }
+  return true;
+}
+
+function checkDependencyViolationForEarlierStart(successorType, successorId, newStartDate, oldStartDate) {
+  const nextStart = String(newStartDate || '').trim();
+  const prevStart = String(oldStartDate || '').trim();
+  if (!nextStart || !prevStart || nextStart >= prevStart) return null;
+
+  const preds = all(
+    'SELECT * FROM activity_dependencies WHERE successor_type=? AND successor_id=?',
+    [successorType, Number(successorId)]
+  );
+  for (const dep of preds) {
+    const predInfo = resolveDependencyItemInfo(dep.predecessor_type, dep.predecessor_id);
+    if (!predInfo || !isPredecessorIncomplete(dep.predecessor_type, predInfo)) continue;
+    const predEnd = String(predInfo.end_date || '').trim();
+    if (predEnd && predEnd > nextStart) {
+      return {
+        error: 'DEPENDENCY_VIOLATION',
+        message: `Cannot move: predecessor ${predInfo.name} ends on ${predEnd}`,
+      };
+    }
+  }
+  return null;
+}
+
+function enrichDependencyRow(dep) {
+  const pred = resolveDependencyItemInfo(dep.predecessor_type, dep.predecessor_id);
+  const succ = resolveDependencyItemInfo(dep.successor_type, dep.successor_id);
+  return {
+    ...dep,
+    predecessor_name: pred ? pred.name : null,
+    successor_name: succ ? succ.name : null,
+  };
+}
+
+function remapZoneProgrammeItemDependencies(oldItems, newItems) {
+  const oldByAct = new Map();
+  for (const it of oldItems || []) {
+    oldByAct.set(Number(it.activity_id), Number(it.id));
+  }
+  const newByAct = new Map();
+  for (const it of newItems || []) {
+    newByAct.set(Number(it.activity_id), Number(it.id));
+  }
+  for (const [actId, oldId] of oldByAct.entries()) {
+    const newId = newByAct.get(actId);
+    if (!Number.isFinite(newId) || newId === oldId) continue;
+    runNoSave(
+      "UPDATE activity_dependencies SET predecessor_id=? WHERE predecessor_type='programme_item' AND predecessor_id=?",
+      [newId, oldId]
+    );
+    runNoSave(
+      "UPDATE activity_dependencies SET successor_id=? WHERE successor_type='programme_item' AND successor_id=?",
+      [newId, oldId]
+    );
+  }
+}
+
+function deleteDependenciesForProgrammeItemIds(piIds, opts) {
+  const ids = (piIds || []).map(Number).filter((id) => Number.isFinite(id));
+  if (!ids.length) return;
+  const deferSave = opts && opts.deferSave;
+  const ph = ids.map(() => '?').join(',');
+  const sql = `DELETE FROM activity_dependencies WHERE (predecessor_type='programme_item' AND predecessor_id IN (${ph})) OR (successor_type='programme_item' AND successor_id IN (${ph}))`;
+  const params = [...ids, ...ids];
+  if (deferSave) runNoSave(sql, params);
+  else run(sql, params);
+}
+
+function createConsecutiveProgrammeItemDependencies(itemIdsOrdered, createdBy, opts) {
+  const ids = itemIdsOrdered || [];
+  const deferSave = opts && opts.deferSave;
+  const by = String(createdBy || 'system');
+  for (let i = 0; i < ids.length - 1; i++) {
+    const predId = Number(ids[i]);
+    const succId = Number(ids[i + 1]);
+    if (!Number.isFinite(predId) || !Number.isFinite(succId)) continue;
+    const sql = `INSERT OR IGNORE INTO activity_dependencies (
+      predecessor_type, predecessor_id, successor_type, successor_id, relationship_type, created_by
+    ) VALUES ('programme_item', ?, 'programme_item', ?, 'FS', ?)`;
+    const params = [predId, succId, by];
+    if (deferSave) runNoSave(sql, params);
+    else run(sql, params);
+  }
 }
 
 module.exports = {
@@ -1005,6 +1150,11 @@ module.exports = {
       runNoSave("DELETE FROM completions WHERE key LIKE ? ESCAPE '\\'", [likePat]);
 
       const pis = all('SELECT * FROM programme_items WHERE zone_id=?', [nid]);
+      const piIds = pis.map((pi) => Number(pi.id)).filter((id) => Number.isFinite(id));
+      if (piIds.length) {
+        // docs/SOURCE_OF_TRUTH.md §4.1 — remove dependency rows for this zone's programme items
+        deleteDependenciesForProgrammeItemIds(piIds, { deferSave: true });
+      }
       pis.forEach((pi) => shrinkScheduleForItem(pi, { deferSave: true }));
       runNoSave('DELETE FROM programme_items WHERE zone_id=?', [nid]);
       runNoSave('DELETE FROM zone_activities WHERE zone_id=?', [nid]);
@@ -1542,10 +1692,17 @@ module.exports = {
   updateProgrammeItem: (id, patch) => {
     const old = get('SELECT * FROM programme_items WHERE id=?', [id]);
     if (!old) return null;
+    const start_date = patch.start_date != null ? patch.start_date : old.start_date;
+    const violation = checkDependencyViolationForEarlierStart(
+      'programme_item',
+      id,
+      start_date,
+      old.start_date
+    );
+    if (violation) return violation;
     shrinkScheduleForItem(old);
     const zone_id = patch.zone_id != null ? patch.zone_id : old.zone_id;
     const activity_id = patch.activity_id != null ? patch.activity_id : old.activity_id;
-    const start_date = patch.start_date != null ? patch.start_date : old.start_date;
     const end_date = patch.end_date != null ? patch.end_date : old.end_date;
     const status = patch.status != null ? patch.status : old.status;
     const notes = patch.notes !== undefined ? patch.notes : old.notes;
@@ -1568,29 +1725,64 @@ module.exports = {
     const zone = get('SELECT * FROM zones WHERE id=?', [zid]);
     if (!zone) return { error: 'Zone not found' };
     const old = all('SELECT * FROM programme_items WHERE zone_id=?', [zid]);
-    old.forEach((it) => {
-      shrinkScheduleForItem(it);
-      run('DELETE FROM programme_items WHERE id=?', [it.id]);
-    });
+    const oldByAct = new Map();
+    for (const it of old) oldByAct.set(Number(it.activity_id), it);
+
     for (const r of rows || []) {
-      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(r.start_date, r.end_date);
-      run(
-        'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-        [
-          zid,
-          Number(r.activity_id),
-          sd,
-          ed,
-          r.status || 'planned',
-          r.notes || '',
-        ]
+      const prev = oldByAct.get(Number(r.activity_id));
+      if (!prev) continue;
+      const { start_date: sd } = clampProgrammeItemDates(r.start_date, r.end_date);
+      const violation = checkDependencyViolationForEarlierStart(
+        'programme_item',
+        prev.id,
+        sd,
+        prev.start_date
       );
-      const nid = get('SELECT last_insert_rowid() as id').id;
-      const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
-      expandScheduleForItem(pi);
+      if (violation) return violation;
     }
-    save();
-    return { ok: true };
+
+    let inTx = false;
+    try {
+      runNoSave('BEGIN IMMEDIATE');
+      inTx = true;
+      old.forEach((it) => {
+        shrinkScheduleForItem(it, { deferSave: true });
+        runNoSave('DELETE FROM programme_items WHERE id=?', [it.id]);
+      });
+      const inserted = [];
+      for (const r of rows || []) {
+        const { start_date: sd, end_date: ed } = clampProgrammeItemDates(r.start_date, r.end_date);
+        runNoSave(
+          'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
+          [
+            zid,
+            Number(r.activity_id),
+            sd,
+            ed,
+            r.status || 'planned',
+            r.notes || '',
+          ]
+        );
+        const nid = get('SELECT last_insert_rowid() as id').id;
+        const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
+        if (pi) {
+          expandScheduleForItem(pi, { deferSave: true });
+          inserted.push(pi);
+        }
+      }
+      remapZoneProgrammeItemDependencies(old, inserted);
+      runNoSave('COMMIT');
+      inTx = false;
+      save();
+      return { ok: true };
+    } catch (e) {
+      if (inTx) {
+        try {
+          runNoSave('ROLLBACK');
+        } catch (_) {}
+      }
+      throw e;
+    }
   },
   restoreZoneSnapshot: (snapshot) => {
     if (!snapshot || !snapshot.zone) return { error: 'Invalid snapshot' };
@@ -1714,11 +1906,13 @@ module.exports = {
     }
 
     const existing = all('SELECT * FROM programme_items WHERE zone_id=?', [zid]);
+    deleteDependenciesForProgrammeItemIds(existing.map((pi) => pi.id));
     for (const it of existing) {
       shrinkScheduleForItem(it);
       run('DELETE FROM programme_items WHERE id=?', [it.id]);
     }
 
+    const newItems = [];
     for (const row of rows) {
       const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
       run(
@@ -1728,7 +1922,11 @@ module.exports = {
       const nid = get('SELECT last_insert_rowid() as id').id;
       const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
       expandScheduleForItem(pi);
+      newItems.push(pi);
     }
+
+    newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+    createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
 
     const now = new Date().toISOString();
     run(
@@ -1880,5 +2078,67 @@ module.exports = {
       }
       throw e;
     }
+  },
+  getDependencies: (itemType, itemId) => {
+    if (itemType && itemId != null) {
+      const type = String(itemType);
+      const id = Number(itemId);
+      const rows = all(
+        `SELECT * FROM activity_dependencies
+         WHERE (predecessor_type=? AND predecessor_id=?)
+            OR (successor_type=? AND successor_id=?)
+         ORDER BY id`,
+        [type, id, type, id]
+      );
+      return rows.map(enrichDependencyRow);
+    }
+    return all('SELECT * FROM activity_dependencies ORDER BY id').map(enrichDependencyRow);
+  },
+  createDependency: (body, createdBy) => {
+    const predecessor_type = String(body?.predecessor_type || '').trim();
+    const successor_type = String(body?.successor_type || '').trim();
+    const predecessor_id = Number(body?.predecessor_id);
+    const successor_id = Number(body?.successor_id);
+    if (
+      !['programme_item', 'project_programme_item'].includes(predecessor_type) ||
+      !['programme_item', 'project_programme_item'].includes(successor_type) ||
+      !Number.isFinite(predecessor_id) ||
+      !Number.isFinite(successor_id)
+    ) {
+      return { error: 'Invalid dependency fields' };
+    }
+    if (
+      predecessor_type === successor_type &&
+      predecessor_id === successor_id
+    ) {
+      return { error: 'Activity cannot depend on itself' };
+    }
+    if (!resolveDependencyItemInfo(predecessor_type, predecessor_id)) {
+      return { error: 'Predecessor not found' };
+    }
+    if (!resolveDependencyItemInfo(successor_type, successor_id)) {
+      return { error: 'Successor not found' };
+    }
+    try {
+      run(
+        `INSERT INTO activity_dependencies (
+          predecessor_type, predecessor_id, successor_type, successor_id, relationship_type, created_by
+        ) VALUES (?,?,?,?,?,?)`,
+        [predecessor_type, predecessor_id, successor_type, successor_id, 'FS', String(createdBy || '')]
+      );
+    } catch (e) {
+      if (/UNIQUE constraint failed/i.test(String(e.message || e))) {
+        return { error: 'Dependency already exists' };
+      }
+      throw e;
+    }
+    const id = get('SELECT last_insert_rowid() as id').id;
+    return enrichDependencyRow(get('SELECT * FROM activity_dependencies WHERE id=?', [id]));
+  },
+  deleteDependency: (id) => {
+    const row = get('SELECT * FROM activity_dependencies WHERE id=?', [Number(id)]);
+    if (!row) return false;
+    run('DELETE FROM activity_dependencies WHERE id=?', [Number(id)]);
+    return true;
   },
 };

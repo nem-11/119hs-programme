@@ -400,6 +400,29 @@ app.put('/api/programme-items/:id', auth, programmeEditor, (req, res) => {
   const nextChk = perm.assertZoneTabAllowed(db, req.user, nextZoneId);
   if (!nextChk.ok) return res.status(403).json({ error: 'Zone not permitted' });
   const ok = db.updateProgrammeItem(req.params.id, patch);
+  if (ok && typeof ok === 'object' && ok.error) return res.status(400).json(ok);
+  if (!ok) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.get('/api/dependencies', auth, (req, res) => {
+  const { item_type, item_id } = req.query || {};
+  if (item_type != null || item_id != null) {
+    if (!item_type || item_id == null || item_id === '') {
+      return res.status(400).json({ error: 'item_type and item_id required together' });
+    }
+    res.json(db.getDependencies(String(item_type), item_id));
+    return;
+  }
+  res.json(db.getDependencies());
+});
+app.post('/api/dependencies', auth, admin, (req, res) => {
+  const username = req.user?.username || req.user?.name || 'admin';
+  const out = db.createDependency(req.body || {}, username);
+  if (out.error) return res.status(400).json(out);
+  res.json(out);
+});
+app.delete('/api/dependencies/:id', auth, admin, (req, res) => {
+  const ok = db.deleteDependency(req.params.id);
   if (!ok) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });

@@ -202,6 +202,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   const [inspect, setInspect] = useState(null);
   const [chipEdit, setChipEdit] = useState(null);
   const [addActivityZone, setAddActivityZone] = useState(null);
+  const [allDependencies, setAllDependencies] = useState([]);
+  const [projectProgrammeItems, setProjectProgrammeItems] = useState([]);
   const [coarsePointer, setCoarsePointer] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
@@ -209,6 +211,15 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     fn();
     mq.addEventListener('change', fn);
     return () => mq.removeEventListener('change', fn);
+  }, []);
+
+  const loadDependencies = useCallback(async () => {
+    try {
+      const data = await api.getDependencies();
+      setAllDependencies(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setAllDependencies([]);
+    }
   }, []);
 
   const load = useCallback(async () => {
@@ -222,11 +233,12 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         data = await api.getPlanProgramme();
       }
       setRows(Array.isArray(data) ? data : []);
+      await loadDependencies();
     } catch (e) {
       setLoadErr(e?.message || 'Failed to load programme');
       setRows([]);
     }
-  }, [isAdmin]);
+  }, [isAdmin, loadDependencies]);
 
   useEffect(() => {
     load();
@@ -234,6 +246,10 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
 
   useEffect(() => {
     api.getActivities().then((a) => setActivities(Array.isArray(a) ? a : []));
+  }, []);
+
+  useEffect(() => {
+    api.getProjectProgrammeItems().then((d) => setProjectProgrammeItems(Array.isArray(d) ? d : []));
   }, []);
 
   useEffect(() => {
@@ -275,6 +291,38 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   }, [permittedTabs]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
+
+  const dependencyLinkedKeys = useMemo(() => {
+    const s = new Set();
+    for (const d of allDependencies) {
+      s.add(`${d.predecessor_type}:${d.predecessor_id}`);
+      s.add(`${d.successor_type}:${d.successor_id}`);
+    }
+    return s;
+  }, [allDependencies]);
+
+  const dependencyPickerOptions = useMemo(() => {
+    const opts = [];
+    const seen = new Set();
+    for (const r of rows) {
+      const key = `programme_item:${r.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      opts.push({
+        type: 'programme_item',
+        id: Number(r.id),
+        label: [r.tower, r.zone_name, r.activity_name].filter(Boolean).join(' — '),
+      });
+    }
+    for (const p of projectProgrammeItems) {
+      opts.push({
+        type: 'project_programme_item',
+        id: Number(p.id),
+        label: `Project — ${p.name}`,
+      });
+    }
+    return opts.sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows, projectProgrammeItems]);
 
   const applyPreset = useCallback((p) => {
     const t0 = new Date();
@@ -551,7 +599,9 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       };
     });
     const out = await api.replacePlanZoneItems(zoneId, payload);
-    if (out && out.error) throw new Error(out.error);
+    if (out && out.error) {
+      throw new Error(out.message || out.error);
+    }
     setUndoState({
       type: 'zone_rows',
       zoneId,
@@ -744,6 +794,9 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         onClose={() => setChipEdit(null)}
         row={chipEdit?.row}
         zoneLabel={chipEdit?.zoneLabel}
+        isAdmin={isAdmin}
+        pickerOptions={dependencyPickerOptions}
+        onDependenciesChange={loadDependencies}
         onDelete={async () => {
           if (!chipEdit) return;
           await deleteActivityFromZone(chipEdit.zoneId, chipEdit.zoneItems, chipEdit.row.id);
@@ -1223,6 +1276,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                                 coarsePointer={coarsePointer}
                                 label={label}
                                 zoneLabel={zLab}
+                                hasDependency={dependencyLinkedKeys.has(`programme_item:${it.id}`)}
                                 setDragState={setDragState}
                                 setInspect={setInspect}
                                 onOpenEdit={setChipEdit}
