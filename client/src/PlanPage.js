@@ -3,6 +3,7 @@ import * as api from './api';
 import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
 import { T, S } from './uiTheme';
 import PageHeader from './PageHeader';
+import { useRefreshOnFocus, usePollingWhenVisible, formatLastRefreshed } from './useRefreshOnFocus';
 import {
   calendarDaysBetween,
   isWeekendKey,
@@ -205,6 +206,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
   const [allDependencies, setAllDependencies] = useState([]);
   const [projectProgrammeItems, setProjectProgrammeItems] = useState([]);
   const [coarsePointer, setCoarsePointer] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
+  const [, setRefreshLabelTick] = useState(0);
   useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
     const fn = () => setCoarsePointer(!!mq.matches);
@@ -222,8 +225,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     }
   }, []);
 
-  const load = useCallback(async () => {
-    setLoadErr('');
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoadErr('');
     try {
       let data;
       if (isAdmin) {
@@ -234,11 +237,25 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       }
       setRows(Array.isArray(data) ? data : []);
       await loadDependencies();
+      setLastRefreshed(new Date());
     } catch (e) {
-      setLoadErr(e?.message || 'Failed to load programme');
-      setRows([]);
+      if (!silent) {
+        setLoadErr(e?.message || 'Failed to load programme');
+        setRows([]);
+      }
     }
   }, [isAdmin, loadDependencies]);
+
+  const silentRefresh = useCallback(() => load({ silent: true }), [load]);
+
+  useRefreshOnFocus(silentRefresh);
+  usePollingWhenVisible(silentRefresh, 45000);
+
+  useEffect(() => {
+    if (!lastRefreshed) return undefined;
+    const id = setInterval(() => setRefreshLabelTick((t) => t + 1), 30000);
+    return () => clearInterval(id);
+  }, [lastRefreshed]);
 
   useEffect(() => {
     load();
@@ -830,6 +847,11 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         }
         actions={
           <>
+            {lastRefreshed && (
+              <span style={{ fontSize: 10, color: T.faint, whiteSpace: 'nowrap', alignSelf: 'center' }}>
+                {formatLastRefreshed(lastRefreshed)}
+              </span>
+            )}
             {isMobile && (
               <span style={{ fontSize: 10, color: T.muted, maxWidth: 220, lineHeight: 1.35 }}>
                 For best results, print from a desktop browser.

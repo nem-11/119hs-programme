@@ -15,6 +15,7 @@ import {T,S,shadowCard,grad} from './uiTheme';
 import PageHeader from './PageHeader';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
+import { useRefreshOnFocus } from './useRefreshOnFocus';
 import PlanPage from './PlanPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
@@ -866,16 +867,41 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
   const[pickDateEdge,setPickDateEdge]=useState('end');/* start | end */
   const[pickStatus,setPickStatus]=useState('planned');
 
-  const refreshMilestones=useCallback(async()=>{
-    setMLoadErr('');
+  const refreshMilestones=useCallback(async({silent=false}={})=>{
+    if(!silent)setMLoadErr('');
     try{
       const m=await api.getMilestones();
       setMilestones(Array.isArray(m)?m:[]);
     }catch(e){
-      setMLoadErr(e?.message||'Failed to load milestones');
-      setMilestones([]);
+      if(!silent){
+        setMLoadErr(e?.message||'Failed to load milestones');
+        setMilestones([]);
+      }
     }
   },[]);
+
+  const refreshPlanMetrics=useCallback(async({silent=false}={})=>{
+    try{
+      let raw;
+      if(isAdmin){
+        raw=await api.getPlanProgrammeFullExport();
+        if(!Array.isArray(raw)||isApiErrorPayload(raw))raw=await api.getPlanProgramme();
+      }else{
+        raw=await api.getPlanProgramme();
+      }
+      setMetricPlanRows(Array.isArray(raw)&&!isApiErrorPayload(raw)?raw:[]);
+    }catch(_){
+      if(!silent)setMetricPlanRows([]);
+    }
+  },[isAdmin]);
+
+  const silentRefresh=useCallback(()=>{
+    void onActivate?.({silent:true});
+    void refreshMilestones({silent:true});
+    void refreshPlanMetrics({silent:true});
+  },[onActivate,refreshMilestones,refreshPlanMetrics]);
+
+  useRefreshOnFocus(silentRefresh);
 
   const compSig=useMemo(()=>JSON.stringify(comp||{}),[comp]);
   useEffect(()=>{void refreshMilestones()},[refreshMilestones,compSig]);
@@ -885,24 +911,8 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
   },[onActivate]);
 
   useEffect(()=>{
-    let cancelled=false;
-    (async()=>{
-      try{
-        let raw;
-        if(isAdmin){
-          raw=await api.getPlanProgrammeFullExport();
-          if(!Array.isArray(raw)||isApiErrorPayload(raw))raw=await api.getPlanProgramme();
-        }else{
-          raw=await api.getPlanProgramme();
-        }
-        if(cancelled)return;
-        setMetricPlanRows(Array.isArray(raw)&&!isApiErrorPayload(raw)?raw:[]);
-      }catch(_){
-        if(!cancelled)setMetricPlanRows([]);
-      }
-    })();
-    return()=>{cancelled=true};
-  },[isAdmin,onActivate]);
+    void refreshPlanMetrics();
+  },[refreshPlanMetrics,onActivate]);
 
   useEffect(()=>{
     if(!isAdmin)return;
@@ -1492,7 +1502,7 @@ function readStoredUpdateVisibleTabs() {
   }
 }
 
-function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted }) {
+function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted, onRefreshLiveData }) {
   const k = dateKey(date);
   const nonWorkingDay = isNonWorkingPlanDayKey(k);
   const [planRows, setPlanRows] = useState([]);
@@ -1501,8 +1511,8 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   const updateTabsInitRef = useRef(false);
   const skipNextVisibleTabsPersistRef = useRef(true);
 
-  const reloadPlan = useCallback(async () => {
-    setLoadErr('');
+  const reloadPlan = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoadErr('');
     try {
       let data;
       if (isAdmin) {
@@ -1513,10 +1523,19 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
       }
       setPlanRows(Array.isArray(data) ? data : []);
     } catch (e) {
-      setLoadErr(e?.message || 'Failed to load programme');
-      setPlanRows([]);
+      if (!silent) {
+        setLoadErr(e?.message || 'Failed to load programme');
+        setPlanRows([]);
+      }
     }
   }, [isAdmin]);
+
+  const silentRefresh = useCallback(() => {
+    void reloadPlan({ silent: true });
+    void onRefreshLiveData?.({ silent: true });
+  }, [reloadPlan, onRefreshLiveData]);
+
+  useRefreshOnFocus(silentRefresh);
 
   useEffect(() => {
     void reloadPlan();
@@ -2005,7 +2024,8 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   );
 }
 
-function LAPage({gw,int_s,project_s,comp,date,tab}){
+function LAPage({gw,int_s,project_s,comp,date,tab,onRefreshLiveData}){
+  useRefreshOnFocus(()=>{void onRefreshLiveData?.({silent:true})});
   const todayKey=dateKey(new Date());
   const days=useMemo(()=>lookaheadWorkingDays(date),[date]);
   const weeks=useMemo(()=>{
@@ -2182,10 +2202,11 @@ function MainApp({user,onLogout}){
   const[liveDataErr,setLiveDataErr]=useState('');
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
   const allowedPageIds=useMemo(()=>allowedPageIdsForRole(user.role),[user.role]);
-  const loadData=useCallback(async()=>{
+  const loadData=useCallback(async(opts)=>{
+    const silent=opts?.silent===true;
     let tabs=Array.isArray(user.tabs)?[...user.tabs].filter(Boolean):[];
     if(!tabs.length&&(roleIsAdmin(user.role)||roleIsSiteEditor(user.role)||roleIsBoardViewer(user.role)))tabs=[...MAIN_HEADER_TAB_ORDER];
-    setLiveDataErr('');
+    if(!silent)setLiveDataErr('');
     try{
       const[g,i,c,p]=await Promise.all([
         tabs.includes('groundworks')?api.getSchedule('groundworks'):Promise.resolve({}),
@@ -2198,17 +2219,23 @@ function MainApp({user,onLogout}){
       if(isApiErrorPayload(i))errMsgs.push(`Internals schedule: ${i.error}`);
       if(isApiErrorPayload(p))errMsgs.push(`Project programme schedule: ${p.error}`);
       if(isApiErrorPayload(c))errMsgs.push(`Completions: ${c.error}`);
-      setLiveDataErr(errMsgs.join(' · '));
-      setGw(asScheduleMap(g));
-      setInt(asScheduleMap(i));
-      setProjectSched(asScheduleMap(p));
-      setComp(asCompletionsMap(c));
+      if(!silent){
+        setLiveDataErr(errMsgs.join(' · '));
+      }else if(errMsgs.length){
+        console.warn('[119HS] silent live-data refresh failed:',errMsgs.join(' · '));
+      }
+      if(!isApiErrorPayload(g))setGw(asScheduleMap(g));
+      if(!isApiErrorPayload(i))setInt(asScheduleMap(i));
+      if(!isApiErrorPayload(p))setProjectSched(asScheduleMap(p));
+      if(!isApiErrorPayload(c))setComp(asCompletionsMap(c));
     }catch(e){
       console.error(e);
-      setLiveDataErr(e?.message||'Failed to load programme data');
-      setGw({});setInt({});setProjectSched({});setComp({});
+      if(!silent){
+        setLiveDataErr(e?.message||'Failed to load programme data');
+        setGw({});setInt({});setProjectSched({});setComp({});
+      }
     }finally{
-      setLoading(false);
+      if(!silent)setLoading(false);
     }
   },[user.tabs,user.role]);
   useEffect(()=>{void loadData()},[loadData]);
@@ -2238,8 +2265,8 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} onActivate={loadData} liveDataErr={liveDataErr}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData}/>}
-      {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData}/>}
+      {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
