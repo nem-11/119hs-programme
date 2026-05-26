@@ -1488,11 +1488,11 @@ function buildLookAheadExportRows(planRows, comp, anchorDate, tab) {
   return rows;
 }
 
-const UPDATE_VISIBLE_TABS_KEY = '119hs-update-visible-tabs';
+const SELECTED_TABS_KEY = '119hs_selected_tabs';
 
-function readStoredUpdateVisibleTabs() {
+function readStoredSelectedTabs() {
   try {
-    const raw = localStorage.getItem(UPDATE_VISIBLE_TABS_KEY);
+    const raw = localStorage.getItem(SELECTED_TABS_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw);
     return Array.isArray(p) ? p.map(String) : null;
@@ -1501,14 +1501,11 @@ function readStoredUpdateVisibleTabs() {
   }
 }
 
-function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted, onRefreshLiveData }) {
+function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted, onRefreshLiveData, selectedTabs, onSelectedTabsChange }) {
   const k = dateKey(date);
   const nonWorkingDay = isNonWorkingPlanDayKey(k);
   const [planRows, setPlanRows] = useState([]);
   const [loadErr, setLoadErr] = useState('');
-  const [selectedTabs, setSelectedTabs] = useState(() => (userTabs?.length ? [...userTabs] : ['groundworks', 'internals']));
-  const updateTabsInitRef = useRef(false);
-  const skipNextVisibleTabsPersistRef = useRef(true);
 
   const reloadPlan = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoadErr('');
@@ -1552,30 +1549,12 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
 
   useEffect(() => {
     if (!permittedTabs.length) return;
-    setSelectedTabs((prev) => {
-      if (!updateTabsInitRef.current) {
-        updateTabsInitRef.current = true;
-        const stored = readStoredUpdateVisibleTabs();
-        const fromStore = stored?.filter((t) => permittedTabs.includes(t));
-        if (fromStore?.length) return permittedTabs.filter((t) => fromStore.includes(t));
-        return [...permittedTabs];
-      }
+    onSelectedTabsChange((prev) => {
       const kept = prev.filter((t) => permittedTabs.includes(t));
       if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [...permittedTabs];
     });
-  }, [permittedTabs]);
-
-  useEffect(() => {
-    if (!selectedTabs.length) return;
-    if (skipNextVisibleTabsPersistRef.current) {
-      skipNextVisibleTabsPersistRef.current = false;
-      return;
-    }
-    try {
-      localStorage.setItem(UPDATE_VISIBLE_TABS_KEY, JSON.stringify(selectedTabs));
-    } catch (_) {}
-  }, [selectedTabs]);
+  }, [permittedTabs, onSelectedTabsChange]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
@@ -1613,7 +1592,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   }
 
   function toggleProgrammeTab(t) {
-    setSelectedTabs((prev) => {
+    onSelectedTabsChange((prev) => {
       const next = new Set(prev);
       if (next.has(t)) {
         next.delete(t);
@@ -1626,7 +1605,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   }
 
   function selectAllProgrammeTabs() {
-    setSelectedTabs([...permittedTabs]);
+    onSelectedTabsChange([...permittedTabs]);
   }
 
   function toggleDraft(ck) {
@@ -2200,6 +2179,16 @@ function MainApp({user,onLogout}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[planRows,setPlanRows]=useState([]);const[loading,setLoading]=useState(true);
   const[liveDataErr,setLiveDataErr]=useState('');
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
+  const[selectedScopeTabs,setSelectedScopeTabs]=useState(()=>{
+    const base=Array.isArray(user.tabs)&&user.tabs.length?[...user.tabs].filter(Boolean):['groundworks','internals'];
+    const stored=readStoredSelectedTabs();
+    if(stored?.length){
+      const kept=stored.filter((t)=>base.includes(t));
+      if(kept.length)return base.filter((t)=>kept.includes(t));
+      return stored;
+    }
+    return [...base];
+  });
   const allowedPageIds=useMemo(()=>allowedPageIdsForRole(user.role),[user.role]);
   const loadData=useCallback(async(opts)=>{
     const silent=opts?.silent===true;
@@ -2246,6 +2235,12 @@ function MainApp({user,onLogout}){
   useEffect(()=>{void loadData()},[loadData]);
   useEffect(()=>{void loadData()},[page,loadData]);
   useEffect(()=>{
+    if(!selectedScopeTabs.length)return;
+    try{
+      localStorage.setItem(SELECTED_TABS_KEY,JSON.stringify(selectedScopeTabs));
+    }catch(_){}
+  },[selectedScopeTabs]);
+  useEffect(()=>{
     if(!allowedPageIds.has(page))setPage('dashboard');
   },[page,allowedPageIds]);
   useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
@@ -2271,9 +2266,9 @@ function MainApp({user,onLogout}){
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} onActivate={loadData} liveDataErr={liveDataErr}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
-      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name}/>}
+      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}

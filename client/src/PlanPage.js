@@ -164,7 +164,7 @@ function useIsMobile() {
   return m;
 }
 
-export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) {
+export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, selectedTabs, onSelectedTabsChange }) {
   const [rows, setRows] = useState([]);
   const [comp, setComp] = useState({});
   const [activities, setActivities] = useState([]);
@@ -182,8 +182,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) 
   const [startDate, setStartDate] = useState(() => dateKey(todayRef.current));
   const [endDate, setEndDate] = useState(() => dateKey(defaultEnd));
 
-  /** Explicit selected drawing tabs (multi-select); synced from header `tab`. */
-  const [selectedTabs, setSelectedTabs] = useState(() => [tab]);
+  /** Explicit selected drawing tabs (multi-select); persisted in App via localStorage. */
   /** null = all towers; otherwise whitelist */
   const [towerWhitelist, setTowerWhitelist] = useState(null);
 
@@ -311,19 +310,14 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) 
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [isAdmin, userTabs, rows]);
 
-  /** When the header programme tab changes, match Plan scope to that tab only. */
-  useEffect(() => {
-    setSelectedTabs([tab]);
-  }, [tab]);
-
   useEffect(() => {
     if (!permittedTabs.length) return;
-    setSelectedTabs((prev) => {
+    onSelectedTabsChange((prev) => {
       const kept = prev.filter((t) => permittedTabs.includes(t));
-      if (kept.length) return kept;
+      if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [permittedTabs[0]];
     });
-  }, [permittedTabs]);
+  }, [permittedTabs, onSelectedTabsChange]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
@@ -606,7 +600,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) 
   }
 
   function toggleProgrammeTab(t) {
-    setSelectedTabs((prev) => {
+    onSelectedTabsChange((prev) => {
       const next = new Set(prev);
       if (next.has(t)) {
         next.delete(t);
@@ -619,7 +613,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) 
   }
 
   function selectAllProgrammeTabs() {
-    setSelectedTabs([...permittedTabs]);
+    onSelectedTabsChange([...permittedTabs]);
   }
 
   async function applyZoneRows(zoneId, zoneItems, nextItems) {
