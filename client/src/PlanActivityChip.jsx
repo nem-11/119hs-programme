@@ -50,6 +50,7 @@ export default function PlanActivityChip({
       zoneId: z.zone_id,
       zoneItems: z.items,
       zoneLabel,
+      dayKey: dk,
     });
   }
 
@@ -101,6 +102,7 @@ export default function PlanActivityChip({
           zoneId: z.zone_id,
           zoneItems: z.items,
           zoneLabel,
+          dayKey: dk,
         });
       }}
       onTouchStart={() => {

@@ -193,3 +193,28 @@ export function zoneRowLabel(row) {
   if (tw && zn) return `${tw} ${zn}`.toUpperCase();
   return (zn || tw || 'ZONE').toUpperCase();
 }
+
+/** Update / Plan completion key: tower|zone_name|activity_name */
+export function completionKeyFromProgrammeRow(row) {
+  const tw = String(row?.tower || '').trim();
+  const zn = String(row?.zone_name || '').trim();
+  const act = String(row?.activity_name || '').trim();
+  if (!tw || !zn || !act) return '';
+  return `${tw}|${zn}|${act}`;
+}
+
+export function asCompletionsMap(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return {};
+  if (typeof x.error === 'string') return {};
+  return x;
+}
+
+/** True when Update tick exists for this day or programme row status is done. */
+export function isProgrammeItemDoneOnDay(row, dayKey, comp) {
+  if (!row) return false;
+  if (String(row.status || '').toLowerCase() === 'done') return true;
+  const ck = completionKeyFromProgrammeRow(row);
+  const dk = String(dayKey || '').trim();
+  if (!ck || !dk) return false;
+  return !!comp?.[dk]?.[ck];
+}

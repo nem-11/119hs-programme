@@ -1438,9 +1438,9 @@ function lookaheadWorkingDays(anchorDate) {
 }
 
 /** One CSV row per scheduled activity; includes ISO date and Update tick status. */
-function buildLookAheadExportRows(gw,int_s,project_s,comp,anchorDate,tab){
-  const scope=drawingTabLabel(tab);
-  const header=[
+function buildLookAheadExportRows(planRows, comp, anchorDate, tab) {
+  const scope = drawingTabLabel(tab);
+  const header = [
     'Date_ISO',
     'Date_display',
     'Weekday',
@@ -1454,21 +1454,20 @@ function buildLookAheadExportRows(gw,int_s,project_s,comp,anchorDate,tab){
     'Completed_at',
     'Scope',
   ];
-  const rows=[header];
-  const days=lookaheadWorkingDays(anchorDate);
-  days.forEach((d,idx)=>{
-    const dk=dateKey(d);
-    const dayData=scheduleSliceForLookaheadTab(gw,int_s,project_s,tab,dk);
-    const sections=flattenDaySections(dayData);
-    const weekChunk=Math.floor(idx/7)+1;
-    const wd=d.toLocaleDateString('en-GB',{weekday:'short'});
-    const display=`${formatShort(d)} ${d.getFullYear()}`;
-    sections.forEach((sec)=>{
-      sec.acts.forEach((act)=>{
-        const ck=`${sec.pfx}|${act}`;
-        const cm=comp[dk]?.[ck];
-        const done=cm?'Yes':'No';
-        const {tower,zone}=towerZoneFromPfx(sec.pfx);
+  const rows = [header];
+  const days = lookaheadWorkingDays(anchorDate);
+  days.forEach((d, idx) => {
+    const dk = dateKey(d);
+    const { sections } = buildUpdateSectionsFromPlanRows(planRows, dk, [tab]);
+    const weekChunk = Math.floor(idx / 7) + 1;
+    const wd = d.toLocaleDateString('en-GB', { weekday: 'short' });
+    const display = `${formatShort(d)} ${d.getFullYear()}`;
+    sections.forEach((sec) => {
+      sec.acts.forEach((act) => {
+        const ck = `${sec.pfx}|${act}`;
+        const cm = comp[dk]?.[ck];
+        const done = cm ? 'Yes' : 'No';
+        const { tower, zone } = towerZoneFromPfx(sec.pfx);
         rows.push([
           dk,
           display,
@@ -1479,8 +1478,8 @@ function buildLookAheadExportRows(gw,int_s,project_s,comp,anchorDate,tab){
           act,
           ck,
           done,
-          cm?.by||'',
-          cm?.at||'',
+          cm?.by || '',
+          cm?.at || '',
           scope,
         ]);
       });
@@ -2024,40 +2023,40 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   );
 }
 
-function LAPage({gw,int_s,project_s,comp,date,tab,onRefreshLiveData}){
-  useRefreshOnFocus(()=>{void onRefreshLiveData?.({silent:true})});
-  const todayKey=dateKey(new Date());
-  const days=useMemo(()=>lookaheadWorkingDays(date),[date]);
-  const weeks=useMemo(()=>{
-    const chunks=[];
-    for(let i=0;i<days.length;i+=7)chunks.push(days.slice(i,i+7));
+function LAPage({ planRows, comp, date, tab, onRefreshLiveData }) {
+  useRefreshOnFocus(() => { void onRefreshLiveData?.({ silent: true }); });
+  const todayKey = dateKey(new Date());
+  const days = useMemo(() => lookaheadWorkingDays(date), [date]);
+  const weeks = useMemo(() => {
+    const chunks = [];
+    for (let i = 0; i < days.length; i += 7) chunks.push(days.slice(i, i + 7));
     return chunks;
-  },[days]);
-  const stats=useMemo(()=>{
-    let total=0,done=0;
-    days.forEach((d)=>{
-      const dk=dateKey(d);
-      const dayData=scheduleSliceForLookaheadTab(gw,int_s,project_s,tab,dk);
-      flattenDaySections(dayData).forEach((sec)=>{
-        sec.acts.forEach((act)=>{
+  }, [days]);
+  const stats = useMemo(() => {
+    let total = 0;
+    let done = 0;
+    days.forEach((d) => {
+      const dk = dateKey(d);
+      const { sections } = buildUpdateSectionsFromPlanRows(planRows, dk, [tab]);
+      sections.forEach((sec) => {
+        sec.acts.forEach((act) => {
           total++;
-          if(comp[dk]?.[`${sec.pfx}|${act}`])done++;
+          if (comp[dk]?.[`${sec.pfx}|${act}`]) done++;
         });
       });
     });
-    return{total,done,pct:total?Math.round((done/total)*100):0};
-  },[days,gw,int_s,project_s,tab,comp]);
+    return { total, done, pct: total ? Math.round((done / total) * 100) : 0 };
+  }, [days, planRows, tab, comp]);
 
-  function exportCsv(){
-    const rows=buildLookAheadExportRows(gw,int_s,project_s,comp,date,tab);
-    const fn=`119hs-lookahead-detail-${tab}-${dateKey(date)}.csv`;
-    downloadCsv(fn,rows);
+  function exportCsv() {
+    const rows = buildLookAheadExportRows(planRows, comp, date, tab);
+    const fn = `119hs-lookahead-detail-${tab}-${dateKey(date)}.csv`;
+    downloadCsv(fn, rows);
   }
 
-  function renderDayCard(d){
-    const k=dateKey(d);
-    const dayData=scheduleSliceForLookaheadTab(gw,int_s,project_s,tab,k);
-    const sections=flattenDaySections(dayData);
+  function renderDayCard(d) {
+    const k = dateKey(d);
+    const { sections } = buildUpdateSectionsFromPlanRows(planRows, k, [tab]);
     const isToday = k === todayKey;
     const weekday=d.toLocaleDateString('en-GB',{weekday:'long'});
     const lines=[];
@@ -2198,7 +2197,7 @@ function LAPage({gw,int_s,project_s,comp,date,tab,onRefreshLiveData}){
 }
 
 function MainApp({user,onLogout}){
-  const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[loading,setLoading]=useState(true);
+  const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[planRows,setPlanRows]=useState([]);const[loading,setLoading]=useState(true);
   const[liveDataErr,setLiveDataErr]=useState('');
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
   const allowedPageIds=useMemo(()=>allowedPageIdsForRole(user.role),[user.role]);
@@ -2208,17 +2207,22 @@ function MainApp({user,onLogout}){
     if(!tabs.length&&(roleIsAdmin(user.role)||roleIsSiteEditor(user.role)||roleIsBoardViewer(user.role)))tabs=[...MAIN_HEADER_TAB_ORDER];
     if(!silent)setLiveDataErr('');
     try{
-      const[g,i,c,p]=await Promise.all([
+      const planPromise = roleIsAdmin(user.role)
+        ? api.getPlanProgrammeFullExport().then((d) => (Array.isArray(d) && !isApiErrorPayload(d) ? d : api.getPlanProgramme()))
+        : api.getPlanProgramme();
+      const[g,i,c,p,planRaw]=await Promise.all([
         tabs.includes('groundworks')?api.getSchedule('groundworks'):Promise.resolve({}),
         tabs.includes('internals')?api.getSchedule('internals'):Promise.resolve({}),
         api.getCompletions(),
         tabs.includes(PROJECT_PROGRAMME_TAB)?api.getSchedule(PROJECT_PROGRAMME_TAB):Promise.resolve({}),
+        planPromise,
       ]);
       const errMsgs=[];
       if(isApiErrorPayload(g))errMsgs.push(`Groundworks schedule: ${g.error}`);
       if(isApiErrorPayload(i))errMsgs.push(`Internals schedule: ${i.error}`);
       if(isApiErrorPayload(p))errMsgs.push(`Project programme schedule: ${p.error}`);
       if(isApiErrorPayload(c))errMsgs.push(`Completions: ${c.error}`);
+      if(isApiErrorPayload(planRaw))errMsgs.push(`Plan programme: ${planRaw.error}`);
       if(!silent){
         setLiveDataErr(errMsgs.join(' · '));
       }else if(errMsgs.length){
@@ -2228,17 +2232,19 @@ function MainApp({user,onLogout}){
       if(!isApiErrorPayload(i))setInt(asScheduleMap(i));
       if(!isApiErrorPayload(p))setProjectSched(asScheduleMap(p));
       if(!isApiErrorPayload(c))setComp(asCompletionsMap(c));
+      if(!isApiErrorPayload(planRaw))setPlanRows(Array.isArray(planRaw)?planRaw:[]);
     }catch(e){
       console.error(e);
       if(!silent){
         setLiveDataErr(e?.message||'Failed to load programme data');
-        setGw({});setInt({});setProjectSched({});setComp({});
+        setGw({});setInt({});setProjectSched({});setComp({});setPlanRows({});
       }
     }finally{
       if(!silent)setLoading(false);
     }
   },[user.tabs,user.role]);
   useEffect(()=>{void loadData()},[loadData]);
+  useEffect(()=>{void loadData()},[page,loadData]);
   useEffect(()=>{
     if(!allowedPageIds.has(page))setPage('dashboard');
   },[page,allowedPageIds]);
@@ -2266,8 +2272,8 @@ function MainApp({user,onLogout}){
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} onActivate={loadData} liveDataErr={liveDataErr}/>}
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData}/>}
-      {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
-      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin}/>}
+      {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
+      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}

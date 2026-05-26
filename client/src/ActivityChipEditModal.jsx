@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as api from './api';
 import { T, S } from './uiTheme';
 import { formatShort } from './constants';
+import { completionKeyFromProgrammeRow, isProgrammeItemDoneOnDay } from './planUtils';
 
 function formatPlanDate(key) {
   const k = String(key || '').trim();
@@ -176,10 +177,15 @@ export default function ActivityChipEditModal({
   onClose,
   row,
   zoneLabel,
+  completionDayKey,
+  comp,
+  canTick,
+  userName,
   onDelete,
   isAdmin,
   pickerOptions,
   onDependenciesChange,
+  onCompletionChange,
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -187,8 +193,10 @@ export default function ActivityChipEditModal({
   const [deps, setDeps] = useState([]);
   const [depsLoading, setDepsLoading] = useState(false);
   const [depBusy, setDepBusy] = useState(false);
+  const [compBusy, setCompBusy] = useState(false);
 
   const itemId = row ? Number(row.id) : null;
+  const isComplete = isProgrammeItemDoneOnDay(row, completionDayKey, comp);
 
   useEffect(() => {
     if (!open) return;
@@ -196,11 +204,11 @@ export default function ActivityChipEditModal({
     setDeleting(false);
     setErr('');
     const onKey = (e) => {
-      if (e.key === 'Escape' && !deleting && !depBusy) onClose();
+      if (e.key === 'Escape' && !deleting && !depBusy && !compBusy) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, deleting, depBusy]);
+  }, [open, onClose, deleting, depBusy, compBusy]);
 
   useEffect(() => {
     if (!open || !itemId) {
@@ -320,6 +328,22 @@ export default function ActivityChipEditModal({
     }
   }
 
+  async function toggleComplete() {
+    const ck = completionKeyFromProgrammeRow(row);
+    const dk = String(completionDayKey || '').trim();
+    if (!ck || !dk || !canTick) return;
+    setCompBusy(true);
+    setErr('');
+    try {
+      await api.toggleCompletion(dk, ck, userName || '');
+      if (onCompletionChange) await onCompletionChange();
+    } catch (e) {
+      setErr(e?.message || 'Could not update completion');
+    } finally {
+      setCompBusy(false);
+    }
+  }
+
   if (!open || !row) return null;
 
   async function handleDeleteClick() {
@@ -357,7 +381,7 @@ export default function ActivityChipEditModal({
       aria-modal="true"
       aria-label="Edit activity"
       onClick={() => {
-        if (!deleting && !depBusy) onClose();
+        if (!deleting && !depBusy && !compBusy) onClose();
       }}
       style={{
         position: 'fixed',
@@ -403,6 +427,34 @@ export default function ActivityChipEditModal({
             <dd style={{ margin: '4px 0 0', color: T.text, fontWeight: 600 }}>{formatPlanDate(ed)}</dd>
           </div>
         </dl>
+
+        {canTick && completionDayKey && (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginBottom: 16,
+              padding: '10px 12px',
+              borderRadius: 10,
+              border: `1px solid ${T.hairline}`,
+              background: isComplete ? 'rgba(46,178,96,0.08)' : 'rgba(26,26,46,0.03)',
+              cursor: compBusy ? 'wait' : 'pointer',
+              fontSize: 14,
+              fontWeight: 600,
+              color: T.text,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={isComplete}
+              disabled={compBusy || depBusy || deleting}
+              onChange={() => void toggleComplete()}
+              style={{ width: 18, height: 18, flexShrink: 0 }}
+            />
+            Mark as complete
+          </label>
+        )}
 
         <div
           style={{
@@ -460,7 +512,7 @@ export default function ActivityChipEditModal({
           {isAdmin && (
             <button
               type="button"
-              disabled={deleting || depBusy}
+              disabled={deleting || depBusy || compBusy}
               onClick={handleDeleteClick}
               style={{
                 ...btnBase,
@@ -473,7 +525,7 @@ export default function ActivityChipEditModal({
           )}
           <button
             type="button"
-            disabled={deleting || depBusy}
+            disabled={deleting || depBusy || compBusy}
             onClick={onClose}
             style={btnBase}
           >

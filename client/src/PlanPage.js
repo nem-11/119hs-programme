@@ -17,6 +17,8 @@ import {
   normalizeScheduleStartKey,
   endOfScheduleableSpan,
   nextScheduleableDayKey,
+  asCompletionsMap,
+  isProgrammeItemDoneOnDay,
 } from './planUtils';
 import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
 import './planPrint.css';
@@ -162,8 +164,9 @@ function useIsMobile() {
   return m;
 }
 
-export default function PlanPage({ tab, userTabs, isAdmin }) {
+export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName }) {
   const [rows, setRows] = useState([]);
+  const [comp, setComp] = useState({});
   const [activities, setActivities] = useState([]);
   const [loadErr, setLoadErr] = useState('');
   const [preset, setPreset] = useState('7');
@@ -229,13 +232,21 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
     if (!silent) setLoadErr('');
     try {
       let data;
+      let completionsRaw;
       if (isAdmin) {
-        data = await api.getPlanProgrammeFullExport();
+        [data, completionsRaw] = await Promise.all([
+          api.getPlanProgrammeFullExport().then((d) => (Array.isArray(d) ? d : api.getPlanProgramme())),
+          api.getCompletions(),
+        ]);
         if (!Array.isArray(data)) data = await api.getPlanProgramme();
       } else {
-        data = await api.getPlanProgramme();
+        [data, completionsRaw] = await Promise.all([
+          api.getPlanProgramme(),
+          api.getCompletions(),
+        ]);
       }
       setRows(Array.isArray(data) ? data : []);
+      setComp(asCompletionsMap(completionsRaw));
       await loadDependencies();
       setLastRefreshed(new Date());
     } catch (e) {
@@ -245,6 +256,13 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       }
     }
   }, [isAdmin, loadDependencies]);
+
+  const reloadCompletions = useCallback(async () => {
+    try {
+      const completionsRaw = await api.getCompletions();
+      setComp(asCompletionsMap(completionsRaw));
+    } catch (_) {}
+  }, []);
 
   const silentRefresh = useCallback(() => load({ silent: true }), [load]);
 
@@ -498,8 +516,8 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         by.set(id, r);
         continue;
       }
-      const curDone = String(cur.status || '').toLowerCase() === 'done';
-      const nextDone = String(r.status || '').toLowerCase() === 'done';
+      const curDone = isProgrammeItemDoneOnDay(cur, vizDate, comp);
+      const nextDone = isProgrammeItemDoneOnDay(r, vizDate, comp);
       if (curDone && !nextDone) {
         by.set(id, r);
         continue;
@@ -507,7 +525,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       if (String(r.start_date) < String(cur.start_date)) by.set(id, r);
     }
     return by;
-  }, [filteredRows, vizDate]);
+  }, [filteredRows, vizDate, comp]);
 
   /** One row per zone on this drawing with programme that day: tower + zone - activity. */
   const drawingDayLegendEntries = useMemo(() => {
@@ -522,12 +540,12 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
       const zn = String(z?.name ?? r.zone_name ?? '').trim();
       const zonePart = [tw, zn].filter(Boolean).join(' ');
       const label = zonePart ? `${zonePart} - ${r.activity_name}` : String(r.activity_name);
-      const done = String(r.status || '').toLowerCase() === 'done';
+      const done = isProgrammeItemDoneOnDay(r, vizDate, comp);
       out.push({ key: zid, label, activity_name: r.activity_name, done });
     });
     out.sort((a, b) => a.label.localeCompare(b.label));
     return out;
-  }, [zoneDayActivity, drawZones]);
+  }, [zoneDayActivity, drawZones, vizDate, comp]);
 
   const drawingZoneColorMeta = useMemo(() => {
     const sorted = [...drawZones].sort((a, b) => Number(a.id) - Number(b.id));
@@ -811,9 +829,14 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
         onClose={() => setChipEdit(null)}
         row={chipEdit?.row}
         zoneLabel={chipEdit?.zoneLabel}
+        completionDayKey={chipEdit?.dayKey}
+        comp={comp}
+        canTick={canTick}
+        userName={userName}
         isAdmin={isAdmin}
         pickerOptions={dependencyPickerOptions}
         onDependenciesChange={loadDependencies}
+        onCompletionChange={reloadCompletions}
         onDelete={async () => {
           if (!chipEdit) return;
           await deleteActivityFromZone(chipEdit.zoneId, chipEdit.zoneItems, chipEdit.row.id);
@@ -1283,7 +1306,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                       >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
                           {hits.map((it) => {
-                            const done = String(it.status || '').toLowerCase() === 'done';
+                            const done = isProgrammeItemDoneOnDay(it, dk, comp);
                             const label = abbrevActivity(it.activity_name);
                             const zLab = zoneRowLabel(z);
                             return (
@@ -1330,7 +1353,7 @@ export default function PlanPage({ tab, userTabs, isAdmin }) {
                     const g = parseZoneGeometry(z);
                     if (!g) return null;
                     const hit = zoneDayActivity.get(Number(z.id));
-                    const done = String(hit?.status || '').toLowerCase() === 'done';
+                    const done = isProgrammeItemDoneOnDay(hit, vizDate, comp);
                     const zi = drawingZoneColorMeta.byId.get(Number(z.id)) ?? 0;
                     const zStyles = planZoneDrawingStyles(zi, { done, active: !!hit });
                     const { fill, stroke, strokeW } = zStyles;
