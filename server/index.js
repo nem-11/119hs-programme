@@ -525,7 +525,7 @@ app.post('/api/admin/reset-programme', auth, admin, (req, res) => {
 app.post('/api/admin/resequence-all-zones', auth, admin, (req, res) => {
   try {
     const out = db.resequenceAllZones();
-    if (out.error) return res.status(400).json(out);
+    if (!out || out.error) return res.status(400).json(out || { error: 'Resequence failed' });
     res.json(out);
   } catch (e) {
     console.error('[119HS] POST /api/admin/resequence-all-zones', e);

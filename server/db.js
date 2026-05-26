@@ -1914,6 +1914,7 @@ module.exports = {
 
     const newItems = [];
     for (const row of rows) {
+      if (!row || row.start_date == null || row.end_date == null) continue;
       const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
       run(
         'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
@@ -1921,21 +1922,32 @@ module.exports = {
       );
       const nid = get('SELECT last_insert_rowid() as id').id;
       const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
-      expandScheduleForItem(pi);
-      newItems.push(pi);
+      if (pi) {
+        expandScheduleForItem(pi);
+        newItems.push(pi);
+      }
     }
+
+    if (!newItems.length) return { error: 'Could not store programme rows — check anchor date' };
 
     newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
     createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
 
+    const anchorRow = rows.find((r) => r && Number(r.idx) === k) || rows[k];
+    if (!anchorRow || !anchorRow.start_date) {
+      return { error: 'Could not resolve anchor row for zone update' };
+    }
+
     const now = new Date().toISOString();
     run(
       'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, updated_at=? WHERE id=?',
-      [tid, k, rows[k].start_date, now, zid]
+      [tid, k, anchorRow.start_date, now, zid]
     );
     save();
 
-    const activities = rows.map((r) => ({
+    const activities = rows
+      .filter((r) => r && r.start_date != null && r.end_date != null)
+      .map((r) => ({
       idx: r.idx,
       activity_id: r.activity_id,
       activity_name: r.activity_name,
@@ -1944,10 +1956,16 @@ module.exports = {
       status: r.status,
     }));
 
+    const firstRow = rows.find((r) => r && r.start_date != null) || rows[0];
+    const lastRow = [...rows].reverse().find((r) => r && r.end_date != null) || rows[rows.length - 1];
+    if (!firstRow || !lastRow) {
+      return { error: 'Could not compute zone date span' };
+    }
+
     return {
       activities,
-      zone_start: rows[0].start_date,
-      zone_finish: rows[rows.length - 1].end_date,
+      zone_start: firstRow.start_date,
+      zone_finish: lastRow.end_date,
     };
   },
   /** Admin one-shot: rebuild programme_items for every zone with template + anchor metadata (§4.2). */
@@ -2020,11 +2038,11 @@ module.exports = {
         anchorEndDateKey,
         tid
       );
-      if (out && out.error) {
-        errors.push({
+      if (!out || out.error) {
+        skipped.push({
           zone_id: Number(z.id),
-          label: `${z.tower || ''} ${z.name || ''}`.trim(),
-          error: out.error,
+          label: `${z.tower || ''} ${z.name || ''}`.trim() || `Zone ${z.id}`,
+          reason: out?.error || 'skipped — schedule failed',
         });
         continue;
       }
