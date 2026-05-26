@@ -7,6 +7,7 @@ import {
   parseYMD,
   resolveActivityId,
   alignTemplateDurations,
+  interpretScheduleFromTargetResult,
 } from './programmeSchedule';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
@@ -22,6 +23,7 @@ export default function ScheduleFromTargetModal({
   activityLookup,
   existingItems,
   onApplied,
+  onAnchorWarning,
 }) {
   const seq = Array.isArray(sequence) ? sequence : [];
   const dur = useMemo(() => alignTemplateDurations(seq, durations), [seq, durations]);
@@ -95,9 +97,14 @@ export default function ScheduleFromTargetModal({
         anchor_date: anchorDate,
         template_id: Number(templateId),
       });
-      if (res && res.error) {
-        window.alert(String(res.error));
+      const outcome = interpretScheduleFromTargetResult(res);
+      if (!outcome.ok) {
+        window.alert(outcome.hardError);
         return;
+      }
+      if (outcome.anchorWarning) {
+        if (onAnchorWarning) onAnchorWarning(outcome.anchorWarning);
+        else window.alert(outcome.anchorWarning);
       }
       if (onApplied) await onApplied();
       onClose();

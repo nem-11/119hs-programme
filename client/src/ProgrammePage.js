@@ -9,6 +9,8 @@ import {
   addCalendarDays,
   buildActivityLookup,
   targetEndParamsFromStartStage,
+  interpretScheduleFromTargetResult,
+  ANCHOR_METADATA_WARNING,
 } from './programmeSchedule';
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
@@ -127,6 +129,8 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const[bulk,setBulk]=useState({});
   const[saving,setSaving]=useState(false);
   const[targetModalOpen,setTargetModalOpen]=useState(false);
+  const[toast,setToast]=useState('');
+  const[toastWarning,setToastWarning]=useState(false);
 
   const[xmlFile,setXmlFile]=useState(null);
   const[xmlParsing,setXmlParsing]=useState(false);
@@ -327,6 +331,16 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     setReviewMode(true);
   }
 
+  function showAnchorMetadataWarning(msg){
+    const text=msg||ANCHOR_METADATA_WARNING;
+    setToastWarning(true);
+    setToast(text);
+    window.setTimeout(()=>{
+      setToast('');
+      setToastWarning(false);
+    },5000);
+  }
+
   async function saveDraftRows(){
     if(!canEdit||!selectedId||draftRows.length===0||!schedTpl)return;
     if(draftRows.some(r=>!r.activity_id)){
@@ -354,10 +368,12 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
         programme_anchor_date:anchorDate,
         programme_anchor_activity_id:Number(anchorActivityId),
       });
-      if(res&&typeof res==='object'&&res.error){
-        window.alert(String(res.error));
+      const outcome=interpretScheduleFromTargetResult(res);
+      if(!outcome.ok){
+        window.alert(outcome.hardError);
         return;
       }
+      if(outcome.anchorWarning)showAnchorMetadataWarning(outcome.anchorWarning);
       if(onScheduleChanged)await onScheduleChanged();
       setReviewMode(false);
       setDraftRows([]);
@@ -475,10 +491,12 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           programme_anchor_date:b.startDate||dateKey(new Date()),
           programme_anchor_activity_id:Number(anchorActivityId),
         });
-        if(res&&typeof res==='object'&&res.error){
-          window.alert(`${z.tower} ${z.name}: ${res.error}`);
+        const outcome=interpretScheduleFromTargetResult(res);
+        if(!outcome.ok){
+          window.alert(`${z.tower} ${z.name}: ${outcome.hardError}`);
           return;
         }
+        if(outcome.anchorWarning)showAnchorMetadataWarning(outcome.anchorWarning);
       }
       if(onScheduleChanged)await onScheduleChanged();
       if(selectedId)await loadItemsForZone(selectedId);
@@ -885,6 +903,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                       if(onScheduleChanged)await onScheduleChanged();
                       await loadItemsForZone(selectedId);
                     }}
+                    onAnchorWarning={showAnchorMetadataWarning}
                   />
                 )}
 
@@ -1004,6 +1023,29 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           </>}
         </div>
       </div>
+      {toast&&(
+        <div
+          style={{
+            position:'fixed',
+            bottom:88,
+            left:'50%',
+            transform:'translateX(-50%)',
+            background:toastWarning?'rgba(241,196,15,0.96)':'rgba(46,178,96,0.95)',
+            color:toastWarning?'rgba(26,26,46,0.92)':'#fff',
+            padding:'8px 16px',
+            borderRadius:10,
+            fontSize:13,
+            fontWeight:600,
+            zIndex:25,
+            boxShadow:'0 4px 16px rgba(0,0,0,0.15)',
+            maxWidth:'min(92vw, 420px)',
+            textAlign:'center',
+            lineHeight:1.35,
+          }}
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

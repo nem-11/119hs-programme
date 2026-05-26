@@ -261,3 +261,30 @@ export function targetEndParamsFromStartStage({
   const anchorActivityId = resolveActivityId(activityLookup, seq[k]);
   return { anchorIndex: k, anchorActivityId, anchorEndDateKey };
 }
+
+export const ANCHOR_METADATA_WARNING =
+  'Programme saved — anchor metadata could not be updated.';
+
+/** Distinguish hard failures (no rows saved) from anchor-metadata-only warnings. */
+export function interpretScheduleFromTargetResult(res) {
+  if (!res || typeof res !== 'object') {
+    return { ok: false, hardError: 'Request failed', anchorWarning: null };
+  }
+  const hasItems = Array.isArray(res.activities) && res.activities.length > 0;
+  if (res.error && !hasItems) {
+    return { ok: false, hardError: String(res.error), anchorWarning: null };
+  }
+  if (hasItems || res.zone_start) {
+    return {
+      ok: true,
+      hardError: null,
+      anchorWarning:
+        res.anchor_metadata_warning ||
+        (res.error ? ANCHOR_METADATA_WARNING : null),
+    };
+  }
+  if (res.error) {
+    return { ok: false, hardError: String(res.error), anchorWarning: null };
+  }
+  return { ok: true, hardError: null, anchorWarning: null };
+}

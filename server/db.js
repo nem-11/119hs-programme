@@ -1947,9 +1947,38 @@ module.exports = {
     newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
     createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
 
+    const anchorMetadataWarning =
+      'Programme saved — anchor metadata could not be updated.';
+
+    const buildSuccessPayload = () => {
+      const activities = rows
+        .filter((r) => r && r.start_date != null && r.end_date != null)
+        .map((r) => ({
+          idx: r.idx,
+          activity_id: r.activity_id,
+          activity_name: r.activity_name,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          status: r.status,
+        }));
+      const datedStart = rows.filter((r) => r && r.start_date != null);
+      const datedEnd = rows.filter((r) => r && r.end_date != null);
+      const firstRow = datedStart[0] || newItems[0];
+      const lastRow = datedEnd.length ? datedEnd[datedEnd.length - 1] : newItems[newItems.length - 1];
+      return {
+        ok: true,
+        activities,
+        zone_start: firstRow?.start_date || null,
+        zone_finish: lastRow?.end_date || null,
+      };
+    };
+
     const anchorRow = rows.find((r) => r && Number(r.idx) === k) || rows[k];
     if (!anchorRow || !anchorRow.start_date) {
-      return { error: 'Could not resolve anchor row for zone update' };
+      return {
+        ...buildSuccessPayload(),
+        anchor_metadata_warning: anchorMetadataWarning,
+      };
     }
 
     const storedStageIdx =
@@ -1967,35 +1996,21 @@ module.exports = {
         ? Number(zoneMetaOpt.programme_anchor_activity_id)
         : Number(anchorActivityId);
 
-    const now = new Date().toISOString();
-    run(
-      'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
-      [tid, storedStageIdx, storedAnchorDate, storedAnchorActId, now, zid]
-    );
-    save();
-
-    const activities = rows
-      .filter((r) => r && r.start_date != null && r.end_date != null)
-      .map((r) => ({
-      idx: r.idx,
-      activity_id: r.activity_id,
-      activity_name: r.activity_name,
-      start_date: r.start_date,
-      end_date: r.end_date,
-      status: r.status,
-    }));
-
-    const firstRow = rows.find((r) => r && r.start_date != null) || rows[0];
-    const lastRow = [...rows].reverse().find((r) => r && r.end_date != null) || rows[rows.length - 1];
-    if (!firstRow || !lastRow) {
-      return { error: 'Could not compute zone date span' };
+    try {
+      const now = new Date().toISOString();
+      run(
+        'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
+        [tid, storedStageIdx, storedAnchorDate, storedAnchorActId, now, zid]
+      );
+      save();
+    } catch (_) {
+      return {
+        ...buildSuccessPayload(),
+        anchor_metadata_warning: anchorMetadataWarning,
+      };
     }
 
-    return {
-      activities,
-      zone_start: firstRow.start_date,
-      zone_finish: lastRow.end_date,
-    };
+    return buildSuccessPayload();
   },
   /** Admin one-shot: rebuild programme_items for every zone with template + anchor metadata (§4.2). */
   resequenceAllZones: () => {
