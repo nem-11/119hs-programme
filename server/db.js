@@ -480,6 +480,7 @@ async function getDb() {
   return db;
 }
 
+/** Zone template + anchor metadata — docs/SOURCE_OF_TRUTH.md §4.2, §13 (resequence / Generate programme). */
 function migrateZoneProgrammeMeta() {
   try {
     db.run('ALTER TABLE zones ADD COLUMN source_template_id INTEGER');
@@ -1035,8 +1036,12 @@ module.exports = {
       }
     } catch (_) {}
     try {
-      run('UPDATE zones SET programme_anchor_date=NULL, programme_stage_idx=NULL');
-      cleared.push('zones.programme_anchor_date, programme_stage_idx (nulled)');
+      run(
+        'UPDATE zones SET programme_anchor_date=NULL, programme_stage_idx=NULL, programme_anchor_activity_id=NULL'
+      );
+      cleared.push(
+        'zones.programme_anchor_date, programme_stage_idx, programme_anchor_activity_id (nulled)'
+      );
     } catch (_) {}
     save();
     return { ok: true, cleared, skipped };
