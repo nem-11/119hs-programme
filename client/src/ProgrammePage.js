@@ -350,6 +350,9 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
         anchor_activity_id:Number(anchorActivityId),
         anchor_date:anchorEndDateKey,
         template_id:Number(schedTpl),
+        programme_stage_idx:startStageIdx,
+        programme_anchor_date:anchorDate,
+        programme_anchor_activity_id:Number(anchorActivityId),
       });
       if(res&&typeof res==='object'&&res.error){
         window.alert(String(res.error));
@@ -468,6 +471,9 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           anchor_activity_id:Number(anchorActivityId),
           anchor_date:anchorEndDateKey,
           template_id:Number(b.templateId),
+          programme_stage_idx:b.stageIdx??0,
+          programme_anchor_date:b.startDate||dateKey(new Date()),
+          programme_anchor_activity_id:Number(anchorActivityId),
         });
         if(res&&typeof res==='object'&&res.error){
           window.alert(`${z.tower} ${z.name}: ${res.error}`);

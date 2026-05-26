@@ -359,11 +359,22 @@ app.delete('/api/zones/:id', auth, programmeEditor, (req, res) => {
 });
 app.post('/api/zones/:zoneId/schedule-from-target', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
-  const { anchor_activity_id, anchor_date, template_id } = req.body || {};
+  const {
+    anchor_activity_id,
+    anchor_date,
+    template_id,
+    programme_stage_idx,
+    programme_anchor_date,
+    programme_anchor_activity_id,
+  } = req.body || {};
   if (anchor_activity_id == null || anchor_activity_id === '' || !String(anchor_date || '').trim()) {
     return res.status(400).json({ error: 'anchor_activity_id and anchor_date required' });
   }
-  const out = db.scheduleFromTargetDate(zoneId, anchor_activity_id, anchor_date, template_id);
+  const out = db.scheduleFromTargetDate(zoneId, anchor_activity_id, anchor_date, template_id, {
+    programme_stage_idx,
+    programme_anchor_date,
+    programme_anchor_activity_id,
+  });
   if (out.error) return res.status(400).json(out);
   res.json(out);
 });
@@ -526,10 +537,28 @@ app.post('/api/admin/resequence-all-zones', auth, admin, (req, res) => {
   try {
     const out = db.resequenceAllZones();
     if (!out || out.error) return res.status(400).json(out || { error: 'Resequence failed' });
+    if (Array.isArray(out.skipped)) {
+      for (const s of out.skipped) {
+        if (s?.error && s.error !== 'skipped — no anchor set') {
+          console.error('[119HS] resequence-all-zones skipped zone', s);
+        }
+      }
+    }
     res.json(out);
   } catch (e) {
     console.error('[119HS] POST /api/admin/resequence-all-zones', e);
     res.status(500).json({ error: e.message || 'Resequence failed' });
+  }
+});
+app.post('/api/admin/set-zone-anchors', auth, admin, (req, res) => {
+  try {
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : req.body;
+    const out = db.setZoneAnchors(entries);
+    if (!out || out.error) return res.status(400).json(out || { error: 'Set zone anchors failed' });
+    res.json(out);
+  } catch (e) {
+    console.error('[119HS] POST /api/admin/set-zone-anchors', e);
+    res.status(500).json({ error: e.message || 'Set zone anchors failed' });
   }
 });
 app.put('/api/plan/admin/zone/:zoneId/items', auth, admin, (req, res) => {

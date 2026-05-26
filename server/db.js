@@ -493,6 +493,10 @@ function migrateZoneProgrammeMeta() {
     db.run('ALTER TABLE zones ADD COLUMN programme_anchor_date TEXT');
     save();
   } catch (_) {}
+  try {
+    db.run('ALTER TABLE zones ADD COLUMN programme_anchor_activity_id INTEGER');
+    save();
+  } catch (_) {}
 }
 
 // Dependency model — docs/SOURCE_OF_TRUTH.md §3.8
@@ -1090,6 +1094,10 @@ module.exports = {
       patch.programme_anchor_date !== undefined
         ? patch.programme_anchor_date
         : cur.programme_anchor_date;
+    const anchorActId =
+      patch.programme_anchor_activity_id !== undefined
+        ? patch.programme_anchor_activity_id
+        : cur.programme_anchor_activity_id;
     const bb = bboxFromGeom(g);
     const now = new Date().toISOString();
     const oldTower = String(cur.tower || '');
@@ -1110,7 +1118,7 @@ module.exports = {
       }
     }
     run(
-      'UPDATE zones SET name=?, tower=?, x=?, y=?, w=?, h=?, geometry=?, activity_id=?, source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, updated_at=? WHERE id=?',
+      'UPDATE zones SET name=?, tower=?, x=?, y=?, w=?, h=?, geometry=?, activity_id=?, source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
       [
         name,
         tower,
@@ -1123,6 +1131,7 @@ module.exports = {
         stid != null ? stid : null,
         stIdx != null ? stIdx : null,
         anchor != null ? anchor : null,
+        anchorActId != null ? Number(anchorActId) : null,
         now,
         id,
       ]
@@ -1849,7 +1858,7 @@ module.exports = {
    * Replace zone programme from template, anchoring one activity's finish date (weekday).
    * @param {number|null|undefined} templateIdOpt — defaults to zone.source_template_id
    */
-  scheduleFromTargetDate: (zoneId, anchorActivityId, anchorDateKey, templateIdOpt) => {
+  scheduleFromTargetDate: (zoneId, anchorActivityId, anchorDateKey, templateIdOpt, zoneMetaOpt) => {
     const zid = Number(zoneId);
     const zone = get('SELECT * FROM zones WHERE id=?', [zid]);
     if (!zone) return { error: 'Zone not found' };
@@ -1938,10 +1947,25 @@ module.exports = {
       return { error: 'Could not resolve anchor row for zone update' };
     }
 
+    const storedStageIdx =
+      zoneMetaOpt?.programme_stage_idx != null && zoneMetaOpt.programme_stage_idx !== ''
+        ? Number(zoneMetaOpt.programme_stage_idx)
+        : k;
+    const storedAnchorDate =
+      zoneMetaOpt?.programme_anchor_date != null &&
+      String(zoneMetaOpt.programme_anchor_date).trim()
+        ? pw.normalizeScheduleStartKey(String(zoneMetaOpt.programme_anchor_date).trim())
+        : anchorRow.start_date;
+    const storedAnchorActId =
+      zoneMetaOpt?.programme_anchor_activity_id != null &&
+      zoneMetaOpt.programme_anchor_activity_id !== ''
+        ? Number(zoneMetaOpt.programme_anchor_activity_id)
+        : Number(anchorActivityId);
+
     const now = new Date().toISOString();
     run(
-      'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, updated_at=? WHERE id=?',
-      [tid, k, anchorRow.start_date, now, zid]
+      'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
+      [tid, storedStageIdx, storedAnchorDate, storedAnchorActId, now, zid]
     );
     save();
 
@@ -2013,10 +2037,19 @@ module.exports = {
       try {
         dur = JSON.parse(tpl.durations || '[]');
       } catch (_) {}
-      const stageIdx =
+      let stageIdx =
         z.programme_stage_idx != null && z.programme_stage_idx !== ''
           ? Number(z.programme_stage_idx)
           : 0;
+      if (z.programme_anchor_activity_id != null && z.programme_anchor_activity_id !== '') {
+        const wantAct = Number(z.programme_anchor_activity_id);
+        for (let i = 0; i < seq.length; i++) {
+          if (schedule.resolveActivityId(activityLookup, seq[i]) === wantAct) {
+            stageIdx = i;
+            break;
+          }
+        }
+      }
       const { anchorActivityId, anchorEndDateKey } = schedule.targetEndParamsFromStartStage({
         sequence: seq,
         durations: dur,
@@ -2039,10 +2072,20 @@ module.exports = {
         tid
       );
       if (!out || out.error) {
+        const errMsg = out?.error || 'skipped — schedule failed';
+        console.error('[119HS] resequence-all-zones zone failed', {
+          zone_id: Number(z.id),
+          label: `${z.tower || ''} ${z.name || ''}`.trim() || `Zone ${z.id}`,
+          template_id: tid,
+          stage_idx: stageIdx,
+          anchor_date: z.programme_anchor_date,
+          error: errMsg,
+        });
         skipped.push({
           zone_id: Number(z.id),
           label: `${z.tower || ''} ${z.name || ''}`.trim() || `Zone ${z.id}`,
-          reason: out?.error || 'skipped — schedule failed',
+          reason: errMsg,
+          error: errMsg,
         });
         continue;
       }
@@ -2050,6 +2093,79 @@ module.exports = {
     }
 
     return { ok: true, count, total: zones.length, errors, skipped, skipped_count: skipped.length };
+  },
+  /** Admin bulk-set zone anchor metadata for resequence (§4.2). */
+  setZoneAnchors: (entries) => {
+    if (!Array.isArray(entries)) return { error: 'entries array required' };
+    const actRows = all('SELECT id, name FROM activities');
+    const activityLookup = schedule.buildActivityLookup(actRows);
+    let updated = 0;
+    const errors = [];
+
+    for (const e of entries) {
+      const zid = Number(e?.zone_id);
+      const tid = Number(e?.template_id);
+      const aid = Number(e?.anchor_activity_id);
+      const anchorDateRaw = String(e?.anchor_date || '').trim();
+      if (
+        !Number.isFinite(zid) ||
+        !Number.isFinite(tid) ||
+        !Number.isFinite(aid) ||
+        !anchorDateRaw
+      ) {
+        errors.push({
+          zone_id: Number.isFinite(zid) ? zid : null,
+          error: 'Missing zone_id, template_id, anchor_activity_id, or anchor_date',
+        });
+        continue;
+      }
+
+      const zone = get('SELECT * FROM zones WHERE id=?', [zid]);
+      if (!zone) {
+        errors.push({ zone_id: zid, error: 'Zone not found' });
+        continue;
+      }
+
+      const tpl = get('SELECT * FROM templates WHERE id=?', [tid]);
+      if (!tpl) {
+        errors.push({ zone_id: zid, error: 'Template not found' });
+        continue;
+      }
+
+      let seq = [];
+      try {
+        seq = JSON.parse(tpl.sequence || '[]');
+      } catch (_) {}
+      if (!Array.isArray(seq) || !seq.length) {
+        errors.push({ zone_id: zid, error: 'Template has no sequence' });
+        continue;
+      }
+
+      let stageIdx = 0;
+      let found = false;
+      for (let i = 0; i < seq.length; i++) {
+        if (schedule.resolveActivityId(activityLookup, seq[i]) === aid) {
+          stageIdx = i;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        errors.push({ zone_id: zid, error: 'anchor_activity_id not in template sequence' });
+        continue;
+      }
+
+      const normDate = pw.normalizeScheduleStartKey(anchorDateRaw);
+      const now = new Date().toISOString();
+      run(
+        'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
+        [tid, stageIdx, normDate, aid, now, zid]
+      );
+      updated += 1;
+    }
+
+    save();
+    return { ok: true, updated, errors };
   },
   /** Full regenerate from template stage 0. Fails if zone has any programme row with status done. */
   resetZoneProgrammeToTemplateStart: (zoneId, startDateKey) => {
