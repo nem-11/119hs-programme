@@ -20,7 +20,8 @@ import {
   asCompletionsMap,
   isProgrammeItemDoneOnDay,
 } from './planUtils';
-import { parseZoneGeometry, svgPolygonPoints } from './zoneGeom';
+import { parseZoneGeometry, geomBBox } from './zoneGeom';
+import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import './planPrint.css';
 import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
@@ -88,46 +89,6 @@ function planZoneDrawingStyles(zoneIndex, { done, active }) {
   return { fill, stroke, strokeW: 1.05 };
 }
 
-/** Bounding box + centre for zone geometry (viewBox 0–100). */
-function geomBBox(g, z) {
-  if (g?.kind === 'rect') {
-    return {
-      x: g.x,
-      y: g.y,
-      w: g.w,
-      h: g.h,
-      cx: g.x + g.w / 2,
-      cy: g.y + g.h / 2,
-    };
-  }
-  if (g?.kind === 'poly' && Array.isArray(g.points) && g.points.length >= 3) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of g.points) {
-      minX = Math.min(minX, p[0]);
-      minY = Math.min(minY, p[1]);
-      maxX = Math.max(maxX, p[0]);
-      maxY = Math.max(maxY, p[1]);
-    }
-    const w = maxX - minX;
-    const h = maxY - minY;
-    return { x: minX, y: minY, w, h, cx: minX + w / 2, cy: minY + h / 2 };
-  }
-  const x = Number(z?.x) || 0;
-  const y = Number(z?.y) || 0;
-  const w = Number(z?.w) || 0;
-  const h = Number(z?.h) || 0;
-  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
-}
-
-/** Readable micro-label size from zone footprint; cap so text stays subtle on large zones. */
-function zoneLabelFontSize(bb) {
-  const m = Math.min(bb.w, bb.h);
-  return Math.min(1.15, Math.max(0.52, m * 0.16));
-}
-
 function csvEscape(v) {
   if (v == null || v === undefined) return '';
   const s = String(v);
@@ -192,6 +153,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     legend: true,
     header: true,
     showWeekends: true,
+    paper: 'A3',
+    orientation: 'landscape',
   });
 
   /** Active during print preview + print dialog */
@@ -295,6 +258,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       document.body.classList.remove('plan-print-mode');
       document.title = titleRestore.current || '119HS';
       setPrintLayout(null);
+      const styleEl = document.getElementById('plan-print-page-style');
+      if (styleEl) styleEl.remove();
     }
     window.addEventListener('afterprint', afterPrint);
     return () => window.removeEventListener('afterprint', afterPrint);
@@ -735,7 +700,24 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     return null;
   }
 
+  function applyPrintPageSize(paper, orientation) {
+    const p = String(paper || 'A3').toUpperCase();
+    const o = String(orientation || 'landscape').toLowerCase();
+    let el = document.getElementById('plan-print-page-style');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'plan-print-page-style';
+      document.head.appendChild(el);
+    }
+    el.textContent = `@media print { @page { size: ${p} ${o}; margin: 10mm; } }`;
+    document.body.dataset.planPrintPaper = p;
+    document.body.dataset.planPrintOrientation = o;
+  }
+
   function runPrint(layout) {
+    const paper = layout?.paper || pdfOpts.paper || 'A3';
+    const orientation = layout?.orientation || pdfOpts.orientation || 'landscape';
+    applyPrintPageSize(paper, orientation);
     titleRestore.current = document.title;
     document.title = `119HS_Programme_${startDate}_${endDate}`;
     setPrintLayout(layout);
@@ -747,10 +729,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
   function handlePrintClick() {
     runPrint({
-      showWeekends: true,
-      legend: true,
-      header: true,
+      showWeekends: pdfOpts.showWeekends,
+      legend: pdfOpts.legend,
+      header: pdfOpts.header,
       emptyZones: false,
+      paper: pdfOpts.paper,
+      orientation: pdfOpts.orientation,
     });
   }
 
@@ -761,6 +745,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       legend: pdfOpts.legend,
       header: pdfOpts.header,
       emptyZones: pdfOpts.allZones,
+      paper: pdfOpts.paper,
+      orientation: pdfOpts.orientation,
     });
   }
 
@@ -810,6 +796,18 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   const legendVisible = printLayout == null || printLayout.legend;
   const clash = useMemo(() => detectClash(rows), [rows]);
 
+  const headerSummaryChips = useMemo(() => {
+    const scopeLabels = selectedTabs.map((t) => drawingTabLabel(t));
+    const scope = scopeLabels.length ? scopeLabels.join(' + ') : '—';
+    const dayCount = calendarDaysBetween(startDate, endDate).length;
+    const windowLabel = preset !== 'custom' ? `${preset}d` : `${dayCount}d`;
+    const towersLabel =
+      towerWhitelist === null
+        ? 'All towers'
+        : `${towerWhitelist.size} tower${towerWhitelist.size === 1 ? '' : 's'}`;
+    return [scope, windowLabel, towersLabel];
+  }, [selectedTabs, preset, startDate, endDate, towerWhitelist]);
+
   return (
     <div className="plan-print-root" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: T.bg }}>
       <ActivityInspectModal
@@ -850,6 +848,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       />
       <PageHeader
         className="plan-no-print"
+        collapsible
+        collapsibleSummary={headerSummaryChips}
         title="Plan"
         description={
           <>
@@ -1334,81 +1334,38 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         )}
         {viewMode === 'drawing' && (
           <div style={{ marginTop: 10, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: 'hidden' }}>
-            {!drawData?.image_data && (
-              <div style={{ padding: 30, textAlign: 'center', color: T.faint, fontSize: 12 }}>
-                No drawing selected for current scope.
-              </div>
-            )}
-            {drawData?.image_data && (
-              <div style={{ position: 'relative', minHeight: 420, background: '#ececf1' }}>
-                <img alt="Plan drawing" src={`data:image/jpeg;base64,${drawData.image_data}`} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
-                <svg style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }} viewBox="0 0 100 100" preserveAspectRatio="none">
-                  {drawZones.map((z) => {
-                    const g = parseZoneGeometry(z);
-                    if (!g) return null;
-                    const hit = zoneDayActivity.get(Number(z.id));
-                    const done = isProgrammeItemDoneOnDay(hit, vizDate, comp);
-                    const zi = drawingZoneColorMeta.byId.get(Number(z.id)) ?? 0;
-                    const zStyles = planZoneDrawingStyles(zi, { done, active: !!hit });
-                    const { fill, stroke, strokeW } = zStyles;
-                    const bb = geomBBox(g, z);
-                    const cx = bb.cx;
-                    const cy = bb.cy;
-                    const minDim = Math.min(bb.w, bb.h);
-                    const fs = zoneLabelFontSize(bb);
-                    const vertical = bb.h > bb.w * 1.15;
-                    let shortLabel = '';
-                    if (hit?.activity_name) {
-                      shortLabel = abbrevActivity(hit.activity_name);
-                    } else if (minDim >= 2.4) {
-                      const zn = String(z.name || '').trim();
-                      shortLabel = zn.length > 10 ? `${zn.slice(0, 9)}…` : zn;
-                    }
-                    const showText = shortLabel && minDim >= 1.6;
-                    const shape = g.kind === 'poly'
-                      ? <polygon points={svgPolygonPoints(g)} fill={fill} stroke={stroke} strokeWidth={strokeW} strokeLinejoin="round" />
-                      : <rect x={g.x} y={g.y} width={g.w} height={g.h} fill={fill} stroke={stroke} strokeWidth={strokeW} />;
-                    const zLab = [String(z.tower || '').trim(), String(z.name || '').trim()].filter(Boolean).join(' ') || 'Zone';
-                    return (
-                      <g
-                        key={z.id}
-                        style={{ cursor: coarsePointer && hit ? 'pointer' : 'default' }}
-                        onClick={(e) => {
-                          if (!coarsePointer || !hit) return;
-                          e.stopPropagation();
-                          setInspect({ row: hit, zoneLabel: zLab });
-                        }}
-                        onKeyDown={(e) => {
-                          if (!coarsePointer || !hit) return;
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setInspect({ row: hit, zoneLabel: zLab });
-                          }
-                        }}
-                        role={coarsePointer && hit ? 'button' : undefined}
-                        tabIndex={coarsePointer && hit ? 0 : undefined}
-                      >
-                        {shape}
-                        {showText && (
-                          <text
-                            transform={`translate(${cx},${cy}) rotate(${vertical ? -90 : 0})`}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            fill={hit ? T.text : 'rgba(26,26,46,0.55)'}
-                            fontSize={fs}
-                            fontWeight="700"
-                            stroke="rgba(255,255,255,0.88)"
-                            strokeWidth={Math.max(0.04, fs * 0.07)}
-                            paintOrder="stroke fill"
-                            pointerEvents="none"
-                          >
-                            {shortLabel}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                </svg>
+            <ZoneDrawingCanvas
+              drawing={drawData}
+              zones={drawZones}
+              coarsePointer={coarsePointer}
+              emptyMessage="No drawing selected for current scope."
+              styleForZone={(z) => {
+                const hit = zoneDayActivity.get(Number(z.id));
+                const done = isProgrammeItemDoneOnDay(hit, vizDate, comp);
+                const zi = drawingZoneColorMeta.byId.get(Number(z.id)) ?? 0;
+                return planZoneDrawingStyles(zi, { done, active: !!hit });
+              }}
+              labelForZone={(z) => {
+                const hit = zoneDayActivity.get(Number(z.id));
+                const g = parseZoneGeometry(z);
+                if (!g) return '';
+                const bb = geomBBox(g, z);
+                const minDim = Math.min(bb.w, bb.h);
+                if (hit?.activity_name) return abbrevActivity(hit.activity_name);
+                if (minDim >= 2.4) {
+                  const zn = String(z.name || '').trim();
+                  return zn.length > 10 ? `${zn.slice(0, 9)}…` : zn;
+                }
+                return '';
+              }}
+              labelActiveForZone={(z) => !!zoneDayActivity.get(Number(z.id))}
+              onZoneClick={(z) => {
+                const hit = zoneDayActivity.get(Number(z.id));
+                if (!hit) return;
+                const zLab = [String(z.tower || '').trim(), String(z.name || '').trim()].filter(Boolean).join(' ') || 'Zone';
+                setInspect({ row: hit, zoneLabel: zLab });
+              }}
+              legend={
                 <div
                   className="plan-drawing-activity-key"
                   style={{
@@ -1476,8 +1433,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                     Large square = zone tint on plan (unique per zone). Narrow strip = activity type colour.
                   </div>
                 </div>
-              </div>
-            )}
+              }
+            />
           </div>
         )}
 
@@ -1554,6 +1511,30 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               />
               Show weekends
             </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
+                Paper
+                <select
+                  value={pdfOpts.paper}
+                  onChange={(e) => setPdfOpts((o) => ({ ...o, paper: e.target.value }))}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
+                >
+                  <option value="A3">A3</option>
+                  <option value="A4">A4</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
+                Orientation
+                <select
+                  value={pdfOpts.orientation}
+                  onChange={(e) => setPdfOpts((o) => ({ ...o, orientation: e.target.value }))}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
+                >
+                  <option value="landscape">Landscape</option>
+                  <option value="portrait">Portrait</option>
+                </select>
+              </label>
+            </div>
             <p style={{ fontSize: 10, color: T.faint, margin: '0 0 14px', lineHeight: 1.4 }}>
               Uses your browser print dialog → choose “Save as PDF”. Suggested filename:{' '}
               <code style={{ fontSize: 10 }}>119HS_Programme_{startDate}_{endDate}.pdf</code>

@@ -42,3 +42,43 @@ export function svgPolygonPoints(g) {
   if (g?.kind !== 'poly' || !g.points?.length) return '';
   return g.points.map((p) => `${p[0]},${p[1]}`).join(' ');
 }
+
+/** Bounding box + centre for zone geometry (viewBox 0–100). */
+export function geomBBox(g, z) {
+  if (g?.kind === 'rect') {
+    return {
+      x: g.x,
+      y: g.y,
+      w: g.w,
+      h: g.h,
+      cx: g.x + g.w / 2,
+      cy: g.y + g.h / 2,
+    };
+  }
+  if (g?.kind === 'poly' && Array.isArray(g.points) && g.points.length >= 3) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of g.points) {
+      minX = Math.min(minX, p[0]);
+      minY = Math.min(minY, p[1]);
+      maxX = Math.max(maxX, p[0]);
+      maxY = Math.max(maxY, p[1]);
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    return { x: minX, y: minY, w, h, cx: minX + w / 2, cy: minY + h / 2 };
+  }
+  const x = Number(z?.x) || 0;
+  const y = Number(z?.y) || 0;
+  const w = Number(z?.w) || 0;
+  const h = Number(z?.h) || 0;
+  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+}
+
+/** Readable micro-label size from zone footprint; cap so text stays subtle on large zones. */
+export function zoneLabelFontSize(bb) {
+  const m = Math.min(bb.w, bb.h);
+  return Math.min(1.15, Math.max(0.52, m * 0.16));
+}

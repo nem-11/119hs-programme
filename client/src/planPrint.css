@@ -10,9 +10,9 @@ body.plan-print-mode {
   print-color-adjust: exact;
 }
 
-@media print {
-  @page { size: A3 landscape; margin: 10mm; }
+/* @page size for Plan is injected at print time via #plan-print-page-style in PlanPage.js */
 
+@media print {
   body.plan-print-mode {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -27,10 +27,14 @@ body.plan-print-mode {
     overflow: visible !important;
     height: auto !important;
     max-height: none !important;
+    width: 100% !important;
   }
 
   body.plan-print-mode .plan-grid-scroll {
     overflow: visible !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
   }
 
   body.plan-print-mode .plan-zone-col {
@@ -39,12 +43,23 @@ body.plan-print-mode {
   }
 
   body.plan-print-mode .plan-print-root table {
-    font-size: 10px;
+    width: 100% !important;
+    max-width: none !important;
+    table-layout: fixed;
+    font-size: 9px;
+    border-collapse: collapse;
   }
 
   body.plan-print-mode .plan-print-root th,
   body.plan-print-mode .plan-print-root td {
-    padding: 3px 4px !important;
+    padding: 2px 3px !important;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  body.plan-print-mode .plan-print-root colgroup,
+  body.plan-print-mode .plan-print-root col {
+    width: auto !important;
   }
 }
 
@@ -61,7 +76,10 @@ body.zone-setup-print-mode {
 }
 
 @media print {
-  @page { size: A3 landscape; margin: 10mm; }
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
 
   body.zone-setup-print-mode {
     -webkit-print-color-adjust: exact !important;
@@ -116,7 +134,10 @@ body.zone-setup-day-list-print-mode {
 }
 
 @media print {
-  @page { size: A3 landscape; margin: 10mm; }
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
 
   body.zone-setup-day-list-print-mode {
     -webkit-print-color-adjust: exact !important;
