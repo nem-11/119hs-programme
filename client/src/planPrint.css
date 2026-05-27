@@ -10,7 +10,7 @@ body.plan-print-mode {
   print-color-adjust: exact;
 }
 
-/* @page size for Plan is injected at print time via #plan-print-page-style in PlanPage.js */
+/* @page size for Plan is injected at print time via printPage.js */
 
 @media print {
   body.plan-print-mode {
@@ -60,6 +60,25 @@ body.plan-print-mode {
   body.plan-print-mode .plan-print-root colgroup,
   body.plan-print-mode .plan-print-root col {
     width: auto !important;
+  }
+
+  body.plan-print-mode .plan-print-page {
+    break-after: page;
+    page-break-after: always;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.plan-print-mode .plan-print-page--last {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.plan-print-mode .plan-print-compact-key {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

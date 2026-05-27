@@ -1,6 +1,7 @@
 import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'react';
 import * as api from './api';
 import './loginLanding.css';
+import './dashboardCompletionPrint.css';
 import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
 import {
   bottomNavItemsForRole,
@@ -20,6 +21,7 @@ import PlanPage from './PlanPage';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
 import { zoneCompletionsAsOf } from './completionStats';
+import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
@@ -866,6 +868,19 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   const [replayIndex, setReplayIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loadErr, setLoadErr] = useState('');
+  const [printOpen, setPrintOpen] = useState(false);
+  const [printOpts, setPrintOpts] = useState({ paper: 'A3', orientation: 'landscape' });
+  const titleRestoreRef = useRef(typeof document !== 'undefined' ? document.title : '');
+
+  useEffect(() => {
+    function afterPrint() {
+      document.body.classList.remove('dashboard-completion-print-mode');
+      document.title = titleRestoreRef.current || '119HS';
+      clearPrintPageSize();
+    }
+    window.addEventListener('afterprint', afterPrint);
+    return () => window.removeEventListener('afterprint', afterPrint);
+  }, []);
 
   const permittedTabs = useMemo(() => {
     const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
@@ -975,6 +990,17 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
 
   const drawingLabel = scopeDrawings.find((d) => String(d.id) === String(drawingId))?.name || 'No drawing';
 
+  function runCompletionPrint() {
+    setPrintOpen(false);
+    setPrintPageSize(printOpts);
+    titleRestoreRef.current = document.title;
+    document.title = `119HS_Completion_${scopeTab || 'scope'}_${asOfDate}`;
+    document.body.classList.add('dashboard-completion-print-mode');
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  }
+
   function labelForZone(z) {
     const stat = zoneStats.get(Number(z.id));
     const zn = String(z.name || '').trim();
@@ -1026,7 +1052,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   );
 
   return (
-    <section style={{
+    <section className="dashboard-completion-section" style={{
       padding: '18px 20px',
       borderRadius: 16,
       background: grad.cardSurface,
@@ -1042,12 +1068,12 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
             Zones shade green as activities are ticked off. Pick a drawing, scope, and date.
           </div>
         </div>
-        <button type="button" disabled style={{ ...S.btn, padding: '6px 12px', fontSize: 11, opacity: 0.45 }} title="Print setup is added in the next step">
+        <button type="button" onClick={() => setPrintOpen(true)} className="dashboard-completion-no-print" style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }}>
           Print
         </button>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 14 }}>
+      <div className="dashboard-completion-no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 14 }}>
         <label style={{ fontSize: 10, fontWeight: 700, color: T.muted }}>
           Scope
           <select value={scopeTab} onChange={(e) => setScopeTab(e.target.value)} style={{ ...S.input, display: 'block', marginTop: 4, width: 170, fontSize: 12, padding: '6px 10px' }}>
@@ -1114,6 +1140,69 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
           legend={legend}
         />
       </div>
+      {printOpen && (
+        <div
+          className="dashboard-completion-print-modal dashboard-completion-no-print"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(26,26,46,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 16,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dashboard-completion-print-title"
+        >
+          <div style={{ width: 'min(400px,100%)', background: T.surface, borderRadius: 14, border: `1px solid ${T.hairline}`, padding: 18, boxShadow: '0 12px 40px rgba(26,26,46,0.15)' }}>
+            <div id="dashboard-completion-print-title" style={{ fontSize: 16, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+              Print Completion Drawing
+            </div>
+            <p style={{ fontSize: 12, color: T.muted, margin: '0 0 12px', lineHeight: 1.45 }}>
+              Drawing: <strong>{drawingLabel}</strong>
+              <br />
+              Scope: <strong>{drawingTabLabel(scopeTab)}</strong>
+              <br />
+              As of: <strong>{asOfDate}</strong>
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
+                Paper
+                <select
+                  value={printOpts.paper}
+                  onChange={(e) => setPrintOpts((o) => ({ ...o, paper: e.target.value }))}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
+                >
+                  <option value="A3">A3</option>
+                  <option value="A4">A4</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
+                Orientation
+                <select
+                  value={printOpts.orientation}
+                  onChange={(e) => setPrintOpts((o) => ({ ...o, orientation: e.target.value }))}
+                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
+                >
+                  <option value="landscape">Landscape</option>
+                  <option value="portrait">Portrait</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setPrintOpen(false)} style={{ ...S.btn, padding: '10px 16px' }}>
+                Cancel
+              </button>
+              <button type="button" onClick={runCompletionPrint} style={{ ...S.btn, ...S.btnPrimary, padding: '10px 16px' }}>
+                Print
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1325,7 +1414,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT day-slots ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
     {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (scheduled slots)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
   ];
-  return<div style={{
+  return<div className="dashboard-page-root" style={{
     flex:1,
     overflowY:'auto',
     background:`linear-gradient(165deg,rgba(235,238,245,0.85) 0%,${T.bg} 22%,${T.bg} 100%)`,
@@ -1351,7 +1440,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         </>
       }
     />
-    <div style={{maxWidth:760,margin:'0 auto',padding:'22px 18px 40px'}}>
+    <div className="dashboard-page-content" style={{maxWidth:760,margin:'0 auto',padding:'22px 18px 40px'}}>
       {liveDataErr&&(
         <div style={{
           marginBottom:14,

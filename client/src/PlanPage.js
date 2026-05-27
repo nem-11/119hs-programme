@@ -27,6 +27,7 @@ import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
 import PlanAddActivityModal from './PlanAddActivityModal';
 import PlanActivityChip from './PlanActivityChip';
+import { clearPrintPageSize, setPrintPageSize } from './printPage';
 
 /**
  * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
@@ -87,6 +88,23 @@ function planZoneDrawingStyles(zoneIndex, { done, active }) {
   const sb = Math.max(0, b - 42);
   const stroke = `rgb(${sr},${sg},${sb})`;
   return { fill, stroke, strokeW: 1.05 };
+}
+
+const PDF_ROWS_PER_PAGE_PRESETS = [15, 20, 25, 30];
+
+function sanitizeRowsPerPage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 25;
+  return Math.max(1, Math.min(100, Math.round(n)));
+}
+
+function chunkArray(items, size) {
+  const n = sanitizeRowsPerPage(size);
+  const chunks = [];
+  for (let i = 0; i < items.length; i += n) {
+    chunks.push(items.slice(i, i + n));
+  }
+  return chunks.length ? chunks : [[]];
 }
 
 function csvEscape(v) {
@@ -155,6 +173,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     showWeekends: true,
     paper: 'A3',
     orientation: 'landscape',
+    rows_per_page: 25,
+    rows_per_page_custom: false,
   });
 
   /** Active during print preview + print dialog */
@@ -258,8 +278,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       document.body.classList.remove('plan-print-mode');
       document.title = titleRestore.current || '119HS';
       setPrintLayout(null);
-      const styleEl = document.getElementById('plan-print-page-style');
-      if (styleEl) styleEl.remove();
+      clearPrintPageSize();
     }
     window.addEventListener('afterprint', afterPrint);
     return () => window.removeEventListener('afterprint', afterPrint);
@@ -700,24 +719,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     return null;
   }
 
-  function applyPrintPageSize(paper, orientation) {
-    const p = String(paper || 'A3').toUpperCase();
-    const o = String(orientation || 'landscape').toLowerCase();
-    let el = document.getElementById('plan-print-page-style');
-    if (!el) {
-      el = document.createElement('style');
-      el.id = 'plan-print-page-style';
-      document.head.appendChild(el);
-    }
-    el.textContent = `@media print { @page { size: ${p} ${o}; margin: 10mm; } }`;
-    document.body.dataset.planPrintPaper = p;
-    document.body.dataset.planPrintOrientation = o;
-  }
-
   function runPrint(layout) {
     const paper = layout?.paper || pdfOpts.paper || 'A3';
     const orientation = layout?.orientation || pdfOpts.orientation || 'landscape';
-    applyPrintPageSize(paper, orientation);
+    const printSize = setPrintPageSize({ paper, orientation });
+    document.body.dataset.planPrintPaper = printSize.paper;
+    document.body.dataset.planPrintOrientation = printSize.orientation;
     titleRestore.current = document.title;
     document.title = `119HS_Programme_${startDate}_${endDate}`;
     setPrintLayout(layout);
@@ -735,6 +742,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       emptyZones: false,
       paper: pdfOpts.paper,
       orientation: pdfOpts.orientation,
+      rowsPerPage: pdfOpts.rows_per_page,
     });
   }
 
@@ -747,6 +755,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       emptyZones: pdfOpts.allZones,
       paper: pdfOpts.paper,
       orientation: pdfOpts.orientation,
+      rowsPerPage: pdfOpts.rows_per_page,
     });
   }
 
@@ -794,6 +803,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
   const printHeaderVisible = printLayout && printLayout.header;
   const legendVisible = printLayout == null || printLayout.legend;
+  const activeRowsPerPage = sanitizeRowsPerPage(printLayout?.rowsPerPage ?? pdfOpts.rows_per_page);
+  const printZoneBlockPages = useMemo(() => {
+    if (!printLayout) return [zoneBlocks];
+    return chunkArray(zoneBlocks, activeRowsPerPage);
+  }, [zoneBlocks, printLayout, activeRowsPerPage]);
+  const rowsPerPageIsCustom = !!pdfOpts.rows_per_page_custom;
   const clash = useMemo(() => detectClash(rows), [rows]);
 
   const headerSummaryChips = useMemo(() => {
@@ -1114,223 +1129,250 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           <div style={{ padding: 40, textAlign: 'center', color: T.faint, fontSize: 13 }}>No programme rows in this range or filters.</div>
         )}
         {viewMode === 'grid' && zoneBlocks.length > 0 && (
-          <table
-            style={{
-              borderCollapse: 'collapse',
-              fontSize: isMobile ? 10 : 11,
-              minWidth: 480,
-              background: T.surface,
-              border: `1px solid ${T.hairline}`,
-              borderRadius: 8,
-              overflow: 'hidden',
-            }}
-          >
-            <thead>
-              <tr>
-                <th
-                  className="plan-zone-col"
-                  style={{
-                    textAlign: 'left',
-                    padding: '8px 10px',
-                    borderBottom: `1px solid ${T.hairline}`,
-                    borderRight: `1px solid ${T.hairline}`,
-                    background: T.surface,
-                    fontWeight: 700,
-                    color: T.text,
-                    minWidth: 140,
-                    maxWidth: 220,
-                    width: 180,
-                    position: 'sticky',
-                    left: 0,
-                    zIndex: 3,
-                  }}
+          <>
+            {printZoneBlockPages.map((pageRows, pageIndex, pages) => {
+              const isLastPrintPage = pageIndex === pages.length - 1;
+              return (
+                <div
+                  key={`plan-print-page-${pageIndex}`}
+                  className={printLayout ? `plan-print-page${isLastPrintPage ? ' plan-print-page--last' : ''}` : undefined}
                 >
-                  Zone
-                </th>
-                {dayColumns.map((dk) => {
-                  const d = new Date(dk + 'T12:00:00');
-                  const colGrey = isNonWorkingPlanDayKey(dk);
-                  const isToday = dk === todayKey && !isNonWorkingPlanDayKey(dk);
-                  return (
-                    <th
-                      key={dk}
-                      role="button"
-                      tabIndex={0}
-                      title="Jump date range to start on this day (same number of columns)"
-                      onClick={() => jumpGridToDayColumn(dk)}
-                      onKeyDown={(ev) => {
-                        if (ev.key === 'Enter' || ev.key === ' ') {
-                          ev.preventDefault();
-                          jumpGridToDayColumn(dk);
-                        }
-                      }}
-                      style={{
-                        padding: '8px 6px',
-                        borderBottom: `1px solid ${T.hairline}`,
-                        borderLeft: `1px solid ${T.hairline}`,
-                        fontWeight: 700,
-                        color: T.text,
-                        textAlign: 'center',
-                        minWidth: 56,
-                        maxWidth: 72,
-                        background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
-                        boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                      }}
-                    >
-                      <div>{formatShort(d)}</div>
-                      <div style={{ fontSize: 9, fontWeight: 600, color: T.faint }}>{d.getDate()}</div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {zoneBlocks.map((z) => (
-                <tr key={z.zone_id}>
-                  <td
-                    className="plan-zone-col"
+                  <table
                     style={{
-                      padding: '8px 10px',
-                      borderTop: `1px solid ${T.hairline}`,
-                      borderRight: `1px solid ${T.hairline}`,
-                      fontWeight: 600,
-                      color: T.text,
-                      verticalAlign: 'top',
+                      borderCollapse: 'collapse',
+                      fontSize: isMobile ? 10 : 11,
+                      minWidth: 480,
                       background: T.surface,
-                      lineHeight: 1.25,
-                      position: 'sticky',
-                      left: 0,
-                      zIndex: 2,
-                      boxShadow: '4px 0 8px rgba(26,26,46,0.06)',
+                      border: `1px solid ${T.hairline}`,
+                      borderRadius: 8,
+                      overflow: 'hidden',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                      <span>{zoneRowLabel(z)}</span>
-                      {isAdmin && (
-                        <span style={{ display: 'flex', gap: 4 }}>
-                          <button
-                            type="button"
-                            title="Add activity"
-                            style={{ ...S.btn, padding: '2px 6px', fontSize: 11 }}
-                            onClick={() => setAddActivityZone(z)}
-                          >
-                            ＋
-                          </button>
-                          <button
-                            type="button"
-                            title="Delete zone"
-                            style={{ ...S.btn, ...S.btnDanger, padding: '2px 6px', fontSize: 11 }}
-                            onClick={async () => {
-                              if (!window.confirm(`Delete ${zoneRowLabel(z)} and all its activities?\nThis cannot be undone.`)) return;
-                              try {
-                                const out = await api.deletePlanZone(z.zone_id);
-                                if (out && out.error) throw new Error(out.error);
-                                setUndoState({
-                                  type: 'delete_zone',
-                                  snapshot: out.snapshot,
-                                  label: `Restore deleted zone ${zoneRowLabel(z)}`,
-                                  at: new Date().toISOString(),
-                                });
-                                await load();
-                              } catch (e) {
-                                window.alert(e?.message || 'Delete zone failed');
-                              }
+                    <thead>
+                      <tr>
+                        <th
+                          className="plan-zone-col"
+                          style={{
+                            textAlign: 'left',
+                            padding: '8px 10px',
+                            borderBottom: `1px solid ${T.hairline}`,
+                            borderRight: `1px solid ${T.hairline}`,
+                            background: T.surface,
+                            fontWeight: 700,
+                            color: T.text,
+                            minWidth: 140,
+                            maxWidth: 220,
+                            width: 180,
+                            position: 'sticky',
+                            left: 0,
+                            zIndex: 3,
+                          }}
+                        >
+                          Zone
+                        </th>
+                        {dayColumns.map((dk) => {
+                          const d = new Date(dk + 'T12:00:00');
+                          const colGrey = isNonWorkingPlanDayKey(dk);
+                          const isToday = dk === todayKey && !isNonWorkingPlanDayKey(dk);
+                          return (
+                            <th
+                              key={dk}
+                              role="button"
+                              tabIndex={0}
+                              title="Jump date range to start on this day (same number of columns)"
+                              onClick={() => jumpGridToDayColumn(dk)}
+                              onKeyDown={(ev) => {
+                                if (ev.key === 'Enter' || ev.key === ' ') {
+                                  ev.preventDefault();
+                                  jumpGridToDayColumn(dk);
+                                }
+                              }}
+                              style={{
+                                padding: '8px 6px',
+                                borderBottom: `1px solid ${T.hairline}`,
+                                borderLeft: `1px solid ${T.hairline}`,
+                                fontWeight: 700,
+                                color: T.text,
+                                textAlign: 'center',
+                                minWidth: 56,
+                                maxWidth: 72,
+                                background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
+                                boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                              }}
+                            >
+                              <div>{formatShort(d)}</div>
+                              <div style={{ fontSize: 9, fontWeight: 600, color: T.faint }}>{d.getDate()}</div>
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map((z) => (
+                        <tr key={z.zone_id}>
+                          <td
+                            className="plan-zone-col"
+                            style={{
+                              padding: '8px 10px',
+                              borderTop: `1px solid ${T.hairline}`,
+                              borderRight: `1px solid ${T.hairline}`,
+                              fontWeight: 600,
+                              color: T.text,
+                              verticalAlign: 'top',
+                              background: T.surface,
+                              lineHeight: 1.25,
+                              position: 'sticky',
+                              left: 0,
+                              zIndex: 2,
+                              boxShadow: '4px 0 8px rgba(26,26,46,0.06)',
                             }}
                           >
-                            ✕
-                          </button>
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  {dayColumns.map((dk) => {
-                    const hits = z.cells[dk] || [];
-                    const colGrey = isNonWorkingPlanDayKey(dk);
-                    return (
-                      <td
-                        key={dk}
-                        style={{
-                          borderTop: `1px solid ${T.hairline}`,
-                          borderLeft: `1px solid ${T.hairline}`,
-                          padding: 2,
-                          verticalAlign: 'top',
-                          minHeight: 36,
-                          height: 36,
-                          background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
-                        }}
-                        onDragOver={(e) => {
-                          if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
-                        }}
-                        onDrop={async () => {
-                          if (!isAdmin || !dragState) return;
-                          if (isSundayOrBankHolidayKey(dk)) {
-                            window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
-                            setDragState(null);
-                            return;
-                          }
-                          try {
-                            const moved = dragState.item;
-                            if (String(moved.status || '').toLowerCase() === 'done') return;
-                            if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
-                              setDragState(null);
-                              return;
-                            }
-                            const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
-                            const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
-                            if (idx < 0) return;
-                            const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-                            items[idx].start_date = normalizeScheduleStartKey(dk);
-                            items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
-                            let cursor = nextScheduleableDayKey(items[idx].end_date);
-                            for (let i = idx + 1; i < items.length; i++) {
-                              const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                              items[i].start_date = normalizeScheduleStartKey(cursor);
-                              items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
-                              cursor = nextScheduleableDayKey(items[i].end_date);
-                            }
-                            await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
-                          } catch (e) {
-                            window.alert(e?.message || 'Move failed');
-                          } finally {
-                            setDragState(null);
-                          }
-                        }}
-                      >
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
-                          {hits.map((it) => {
-                            const done = isProgrammeItemDoneOnDay(it, dk, comp);
-                            const label = abbrevActivity(it.activity_name);
-                            const zLab = zoneRowLabel(z);
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                              <span>{zoneRowLabel(z)}</span>
+                              {isAdmin && !printLayout && (
+                                <span style={{ display: 'flex', gap: 4 }}>
+                                  <button
+                                    type="button"
+                                    title="Add activity"
+                                    style={{ ...S.btn, padding: '2px 6px', fontSize: 11 }}
+                                    onClick={() => setAddActivityZone(z)}
+                                  >
+                                    ＋
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="Delete zone"
+                                    style={{ ...S.btn, ...S.btnDanger, padding: '2px 6px', fontSize: 11 }}
+                                    onClick={async () => {
+                                      if (!window.confirm(`Delete ${zoneRowLabel(z)} and all its activities?\nThis cannot be undone.`)) return;
+                                      try {
+                                        const out = await api.deletePlanZone(z.zone_id);
+                                        if (out && out.error) throw new Error(out.error);
+                                        setUndoState({
+                                          type: 'delete_zone',
+                                          snapshot: out.snapshot,
+                                          label: `Restore deleted zone ${zoneRowLabel(z)}`,
+                                          at: new Date().toISOString(),
+                                        });
+                                        await load();
+                                      } catch (e) {
+                                        window.alert(e?.message || 'Delete zone failed');
+                                      }
+                                    }}
+                                  >
+                                    ✕
+                                  </button>
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          {dayColumns.map((dk) => {
+                            const hits = z.cells[dk] || [];
+                            const colGrey = isNonWorkingPlanDayKey(dk);
                             return (
-                              <PlanActivityChip
-                                key={it.id}
-                                it={it}
-                                z={z}
-                                dk={dk}
-                                isAdmin={isAdmin}
-                                done={done}
-                                isMobile={isMobile}
-                                coarsePointer={coarsePointer}
-                                label={label}
-                                zoneLabel={zLab}
-                                hasDependency={dependencyLinkedKeys.has(`programme_item:${it.id}`)}
-                                setDragState={setDragState}
-                                setInspect={setInspect}
-                                onOpenEdit={setChipEdit}
-                                applyZoneRows={applyZoneRows}
-                              />
+                              <td
+                                key={dk}
+                                style={{
+                                  borderTop: `1px solid ${T.hairline}`,
+                                  borderLeft: `1px solid ${T.hairline}`,
+                                  padding: 2,
+                                  verticalAlign: 'top',
+                                  minHeight: 36,
+                                  height: 36,
+                                  background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
+                                }}
+                                onDragOver={(e) => {
+                                  if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
+                                }}
+                                onDrop={async () => {
+                                  if (!isAdmin || !dragState) return;
+                                  if (isSundayOrBankHolidayKey(dk)) {
+                                    window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
+                                    setDragState(null);
+                                    return;
+                                  }
+                                  try {
+                                    const moved = dragState.item;
+                                    if (String(moved.status || '').toLowerCase() === 'done') return;
+                                    if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
+                                      setDragState(null);
+                                      return;
+                                    }
+                                    const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
+                                    const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
+                                    if (idx < 0) return;
+                                    const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
+                                    items[idx].start_date = normalizeScheduleStartKey(dk);
+                                    items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
+                                    let cursor = nextScheduleableDayKey(items[idx].end_date);
+                                    for (let i = idx + 1; i < items.length; i++) {
+                                      const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                                      items[i].start_date = normalizeScheduleStartKey(cursor);
+                                      items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
+                                      cursor = nextScheduleableDayKey(items[i].end_date);
+                                    }
+                                    await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
+                                  } catch (e) {
+                                    window.alert(e?.message || 'Move failed');
+                                  } finally {
+                                    setDragState(null);
+                                  }
+                                }}
+                              >
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
+                                  {hits.map((it) => {
+                                    const done = isProgrammeItemDoneOnDay(it, dk, comp);
+                                    const label = abbrevActivity(it.activity_name);
+                                    const zLab = zoneRowLabel(z);
+                                    return (
+                                      <PlanActivityChip
+                                        key={it.id}
+                                        it={it}
+                                        z={z}
+                                        dk={dk}
+                                        isAdmin={isAdmin}
+                                        done={done}
+                                        isMobile={isMobile}
+                                        coarsePointer={coarsePointer}
+                                        label={label}
+                                        zoneLabel={zLab}
+                                        hasDependency={dependencyLinkedKeys.has(`programme_item:${it.id}`)}
+                                        setDragState={setDragState}
+                                        setInspect={setInspect}
+                                        onOpenEdit={setChipEdit}
+                                        applyZoneRows={applyZoneRows}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              </td>
                             );
                           })}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {printLayout && legendVisible && legendActs.length > 0 && (
+                    <div className="plan-print-compact-key" style={{ marginTop: 8, padding: '6px 8px', background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        <span style={{ flex: '0 0 auto', fontSize: 8, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                          Key
+                        </span>
+                        {legendActs.map((name) => (
+                          <span key={name} title={`${name} (${abbrevActivity(name)})`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, fontSize: 8, color: T.text, fontWeight: 700 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: actColor(name, 0.88), flex: '0 0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
+                            <span>{abbrevActivity(name)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
         {viewMode === 'drawing' && (
           <div style={{ marginTop: 10, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 10, overflow: 'hidden' }}>
@@ -1438,7 +1480,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           </div>
         )}
 
-        {legendVisible && viewMode === 'grid' && legendActs.length > 0 && (
+        {!printLayout && legendVisible && viewMode === 'grid' && legendActs.length > 0 && (
           <div style={{ marginTop: 14, padding: 12, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 8 }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
               Legend
@@ -1473,7 +1515,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           aria-modal="true"
           aria-labelledby="plan-pdf-title"
         >
-          <div style={{ width: 'min(400px,100%)', background: T.surface, borderRadius: 14, border: `1px solid ${T.hairline}`, padding: 18, boxShadow: '0 12px 40px rgba(26,26,46,0.15)' }}>
+          <div style={{ width: 'min(460px,100%)', background: T.surface, borderRadius: 14, border: `1px solid ${T.hairline}`, padding: 18, boxShadow: '0 12px 40px rgba(26,26,46,0.15)' }}>
             <div id="plan-pdf-title" style={{ fontSize: 16, fontWeight: 800, color: T.text, marginBottom: 12 }}>
               Export Programme to PDF
             </div>
@@ -1487,53 +1529,97 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               Days shown: {calendarDaysBetween(startDate, endDate).length}
             </p>
             <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>Include:</div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, color: T.text, cursor: 'pointer' }}>
               <input
                 type="checkbox"
                 checked={pdfOpts.allZones}
                 onChange={(e) => setPdfOpts((o) => ({ ...o, allZones: e.target.checked }))}
               />
-              All zones (include rows with no activity in range)
+              <span>All zones (include rows with no activity in range)</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, color: T.text, cursor: 'pointer' }}>
               <input type="checkbox" checked={pdfOpts.legend} onChange={(e) => setPdfOpts((o) => ({ ...o, legend: e.target.checked }))} />
-              Legend
+              <span>Legend</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, color: T.text, cursor: 'pointer' }}>
               <input type="checkbox" checked={pdfOpts.header} onChange={(e) => setPdfOpts((o) => ({ ...o, header: e.target.checked }))} />
-              Page header
+              <span>Page header</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 12, cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 12, color: T.text, cursor: 'pointer' }}>
               <input
                 type="checkbox"
                 checked={pdfOpts.showWeekends}
                 onChange={(e) => setPdfOpts((o) => ({ ...o, showWeekends: e.target.checked }))}
               />
-              Show weekends
+              <span>Show weekends</span>
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
-                Paper
-                <select
-                  value={pdfOpts.paper}
-                  onChange={(e) => setPdfOpts((o) => ({ ...o, paper: e.target.value }))}
-                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Paper</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {['A3', 'A4'].map((paper) => (
+                    <button
+                      key={paper}
+                      type="button"
+                      onClick={() => setPdfOpts((o) => ({ ...o, paper }))}
+                      style={{ ...S.btn, ...(pdfOpts.paper === paper ? S.btnAct : {}), flex: 1, padding: '7px 10px', fontSize: 12 }}
+                    >
+                      {paper}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Orientation</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[
+                    ['landscape', 'Landscape'],
+                    ['portrait', 'Portrait'],
+                  ].map(([orientation, label]) => (
+                    <button
+                      key={orientation}
+                      type="button"
+                      onClick={() => setPdfOpts((o) => ({ ...o, orientation }))}
+                      style={{ ...S.btn, ...(pdfOpts.orientation === orientation ? S.btnAct : {}), flex: 1, padding: '7px 10px', fontSize: 12 }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Rows per page</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {PDF_ROWS_PER_PAGE_PRESETS.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setPdfOpts((o) => ({ ...o, rows_per_page: n, rows_per_page_custom: false }))}
+                    style={{ ...S.btn, ...(!rowsPerPageIsCustom && sanitizeRowsPerPage(pdfOpts.rows_per_page) === n ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setPdfOpts((o) => ({ ...o, rows_per_page: sanitizeRowsPerPage(o.rows_per_page), rows_per_page_custom: true }))}
+                  style={{ ...S.btn, ...(rowsPerPageIsCustom ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
                 >
-                  <option value="A3">A3</option>
-                  <option value="A4">A4</option>
-                </select>
-              </label>
-              <label style={{ fontSize: 11, fontWeight: 600, color: T.muted }}>
-                Orientation
-                <select
-                  value={pdfOpts.orientation}
-                  onChange={(e) => setPdfOpts((o) => ({ ...o, orientation: e.target.value }))}
-                  style={{ ...S.input, display: 'block', marginTop: 4, width: '100%', fontSize: 12, padding: '6px 10px' }}
-                >
-                  <option value="landscape">Landscape</option>
-                  <option value="portrait">Portrait</option>
-                </select>
-              </label>
+                  Custom
+                </button>
+              </div>
+              {rowsPerPageIsCustom && (
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={sanitizeRowsPerPage(pdfOpts.rows_per_page)}
+                  onChange={(e) => setPdfOpts((o) => ({ ...o, rows_per_page: sanitizeRowsPerPage(e.target.value) }))}
+                  style={{ ...S.input, display: 'block', marginTop: 6, width: 120, fontSize: 12, padding: '6px 10px' }}
+                  aria-label="Custom rows per page"
+                />
+              )}
             </div>
             <p style={{ fontSize: 10, color: T.faint, margin: '0 0 14px', lineHeight: 1.4 }}>
               Uses your browser print dialog → choose “Save as PDF”. Suggested filename:{' '}
