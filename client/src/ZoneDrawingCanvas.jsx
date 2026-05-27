@@ -58,7 +58,8 @@ export default function ZoneDrawingCanvas({
           const fs = zoneLabelFontSize(bb);
           const vertical = bb.h > bb.w * 1.15;
           const shortLabel = labelForZone?.(z) || '';
-          const showText = shortLabel && minDim >= 1.6;
+          const labelLines = String(shortLabel || '').split('\n').filter(Boolean).slice(0, 2);
+          const showText = labelLines.length > 0 && minDim >= 1.6;
           const labelActive = labelActiveForZone?.(z) ?? false;
           const clickable = coarsePointer && typeof onZoneClick === 'function';
           const shape =
@@ -107,7 +108,16 @@ export default function ZoneDrawingCanvas({
                   paintOrder="stroke fill"
                   pointerEvents="none"
                 >
-                  {shortLabel}
+                  {labelLines.map((line, idx) => (
+                    <tspan
+                      key={`${line}-${idx}`}
+                      x="0"
+                      dy={labelLines.length === 1 ? 0 : idx === 0 ? -fs * 0.18 : fs * 0.92}
+                      fontSize={idx === 0 ? fs : fs * 0.82}
+                    >
+                      {line}
+                    </tspan>
+                  ))}
                 </text>
               )}
             </g>

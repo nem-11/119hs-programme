@@ -17,8 +17,11 @@ import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import { useRefreshOnFocus } from './useRefreshOnFocus';
 import PlanPage from './PlanPage';
+import ZoneDrawingCanvas from './ZoneDrawingCanvas';
+import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
+import { zoneCompletionsAsOf } from './completionStats';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
-import { scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
+import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
@@ -851,7 +854,271 @@ function TemplatePage({tab,isAdmin,onReload}){
   </div>;
 }
 
-function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
+function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
+  const todayKey = dateKey(new Date());
+  const [drawings, setDrawings] = useState([]);
+  const [drawing, setDrawing] = useState(null);
+  const [zones, setZones] = useState([]);
+  const [scopeTab, setScopeTab] = useState('');
+  const [drawingId, setDrawingId] = useState('');
+  const [mode, setMode] = useState('today'); // today | date | replay
+  const [manualDate, setManualDate] = useState(todayKey);
+  const [replayIndex, setReplayIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [loadErr, setLoadErr] = useState('');
+
+  const permittedTabs = useMemo(() => {
+    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
+    if (!isAdmin) return base;
+    const s = new Set(base);
+    for (const r of planRows || []) {
+      if (r.drawing_tab) s.add(String(r.drawing_tab));
+    }
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [isAdmin, userTabs, planRows]);
+
+  useEffect(() => {
+    if (!permittedTabs.length) return;
+    setScopeTab((prev) => (prev && permittedTabs.includes(prev) ? prev : permittedTabs[0]));
+  }, [permittedTabs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadErr('');
+    api.getDrawings()
+      .then((data) => {
+        if (cancelled) return;
+        setDrawings(Array.isArray(data) ? data : []);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadErr(e?.message || 'Could not load drawings');
+        setDrawings([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const scopeDrawings = useMemo(
+    () => drawings.filter((d) => String(d.tab || '') === String(scopeTab || '')),
+    [drawings, scopeTab]
+  );
+
+  useEffect(() => {
+    setDrawingId((prev) => {
+      if (prev && scopeDrawings.some((d) => Number(d.id) === Number(prev))) return prev;
+      return scopeDrawings[0]?.id ? String(scopeDrawings[0].id) : '';
+    });
+  }, [scopeDrawings]);
+
+  useEffect(() => {
+    if (!drawingId) {
+      setDrawing(null);
+      setZones([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoadErr('');
+    Promise.all([api.getDrawing(drawingId), api.getZonesForDrawing(drawingId)])
+      .then(([d, z]) => {
+        if (cancelled) return;
+        setDrawing(d || null);
+        setZones(Array.isArray(z) ? z : []);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setLoadErr(e?.message || 'Could not load drawing zones');
+        setDrawing(null);
+        setZones([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drawingId]);
+
+  const rowsInScope = useMemo(
+    () => (planRows || []).filter((r) => String(r.drawing_tab || '') === String(scopeTab || '')),
+    [planRows, scopeTab]
+  );
+
+  const replayDays = useMemo(() => {
+    const starts = rowsInScope.map((r) => String(r.start_date || '').trim()).filter(Boolean).sort();
+    const start = starts[0] || todayKey;
+    return calendarDaysBetween(start, todayKey);
+  }, [rowsInScope, todayKey]);
+
+  useEffect(() => {
+    setReplayIndex((idx) => Math.min(Math.max(0, idx), Math.max(0, replayDays.length - 1)));
+  }, [replayDays]);
+
+  useEffect(() => {
+    if (!playing || mode !== 'replay' || replayDays.length <= 1) return undefined;
+    const id = window.setInterval(() => {
+      setReplayIndex((idx) => {
+        if (idx >= replayDays.length - 1) {
+          window.clearInterval(id);
+          setPlaying(false);
+          return idx;
+        }
+        return idx + 1;
+      });
+    }, 120);
+    return () => window.clearInterval(id);
+  }, [playing, mode, replayDays]);
+
+  const asOfDate = mode === 'today' ? todayKey : mode === 'date' ? manualDate : replayDays[replayIndex] || todayKey;
+  const zoneStats = useMemo(
+    () => zoneCompletionsAsOf(asOfDate, zones, rowsInScope, comp),
+    [asOfDate, zones, rowsInScope, comp]
+  );
+
+  const drawingLabel = scopeDrawings.find((d) => String(d.id) === String(drawingId))?.name || 'No drawing';
+
+  function labelForZone(z) {
+    const stat = zoneStats.get(Number(z.id));
+    const zn = String(z.name || '').trim();
+    if (!stat || stat.pct == null) return zn.length > 10 ? `${zn.slice(0, 9)}...` : zn;
+    const pct = Math.round(stat.pct * 100);
+    const short = zn.length > 10 ? `${zn.slice(0, 9)}...` : zn;
+    return `${short}\n${pct}%`;
+  }
+
+  const legend = (
+    <div
+      style={{
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        zIndex: 2,
+        maxWidth: 'min(260px, 70vw)',
+        padding: '10px 12px',
+        borderRadius: 10,
+        background: 'rgba(255,255,255,0.94)',
+        border: `1px solid ${T.hairline}`,
+        boxShadow: '0 4px 18px rgba(26,26,46,0.12)',
+        pointerEvents: 'none',
+        WebkitPrintColorAdjust: 'exact',
+        printColorAdjust: 'exact',
+      }}
+    >
+      <div style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 6 }}>
+        Completion
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {COMPLETION_BUCKETS.map((b) => (
+          <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 4,
+                background: b.fill,
+                border: `2px solid ${b.stroke}`,
+                boxSizing: 'border-box',
+              }}
+            />
+            <span style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{b.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <section style={{
+      padding: '18px 20px',
+      borderRadius: 16,
+      background: grad.cardSurface,
+      border: '1px solid rgba(26,26,46,0.06)',
+      boxShadow: shadowCard,
+      marginTop: 18,
+    }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: 6 }}>Completion</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>Completion drawing</div>
+          <div style={{ fontSize: 11, color: T.muted, marginTop: 4, lineHeight: 1.45 }}>
+            Zones shade green as activities are ticked off. Pick a drawing, scope, and date.
+          </div>
+        </div>
+        <button type="button" disabled style={{ ...S.btn, padding: '6px 12px', fontSize: 11, opacity: 0.45 }} title="Print setup is added in the next step">
+          Print
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 14 }}>
+        <label style={{ fontSize: 10, fontWeight: 700, color: T.muted }}>
+          Scope
+          <select value={scopeTab} onChange={(e) => setScopeTab(e.target.value)} style={{ ...S.input, display: 'block', marginTop: 4, width: 170, fontSize: 12, padding: '6px 10px' }}>
+            {permittedTabs.map((t) => <option key={t} value={t}>{drawingTabLabel(t)}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 10, fontWeight: 700, color: T.muted }}>
+          Drawing
+          <select value={drawingId} onChange={(e) => setDrawingId(e.target.value)} style={{ ...S.input, display: 'block', marginTop: 4, width: 220, fontSize: 12, padding: '6px 10px' }}>
+            {scopeDrawings.length === 0 && <option value="">No drawings</option>}
+            {scopeDrawings.map((d) => <option key={d.id} value={String(d.id)}>{d.name}</option>)}
+          </select>
+        </label>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, marginBottom: 4 }}>View</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {['today', 'date', 'replay'].map((m) => (
+              <button key={m} type="button" onClick={() => { setMode(m); if (m !== 'replay') setPlaying(false); }} style={{ ...S.btn, ...(mode === m ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>
+                {m === 'today' ? 'Today' : m === 'date' ? 'Date' : 'Replay'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {mode === 'date' && (
+          <label style={{ fontSize: 10, fontWeight: 700, color: T.muted }}>
+            As of
+            <input type="date" value={toHtmlDateInputValue(manualDate)} onChange={(e) => setManualDate(e.target.value)} style={{ ...S.input, display: 'block', marginTop: 4, width: 150, fontSize: 12, padding: '6px 10px' }} />
+          </label>
+        )}
+        {mode === 'replay' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, minWidth: 240, flex: '1 1 280px' }}>
+            <button type="button" disabled={replayDays.length <= 1} onClick={() => setPlaying((v) => !v)} style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }}>
+              {playing ? 'Pause' : 'Play'}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, replayDays.length - 1)}
+              value={replayIndex}
+              onChange={(e) => { setPlaying(false); setReplayIndex(Number(e.target.value) || 0); }}
+              style={{ flex: '1 1 180px' }}
+            />
+            <span style={{ fontSize: 11, color: T.muted, fontWeight: 600, minWidth: 82 }}>{asOfDate}</span>
+          </div>
+        )}
+      </div>
+
+      {loadErr && <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 10 }}>{loadErr}</div>}
+      <div style={{ fontSize: 10, color: T.faint, marginBottom: 10 }}>
+        {drawingLabel} · as of {asOfDate}
+      </div>
+      <div style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${T.hairline}`, background: '#ececf1' }}>
+        <ZoneDrawingCanvas
+          drawing={drawing}
+          zones={zones}
+          minHeight={720}
+          emptyMessage="No drawing selected for this scope."
+          styleForZone={(z) => greenShadeForPct(zoneStats.get(Number(z.id))?.pct ?? null)}
+          labelForZone={labelForZone}
+          labelActiveForZone={(z) => {
+            const stat = zoneStats.get(Number(z.id));
+            return Boolean(stat && stat.pct != null);
+          }}
+          legend={legend}
+        />
+      </div>
+    </section>
+  );
+}
+
+function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataErr}){
   const today=new Date();
   const[metricPlanRows,setMetricPlanRows]=useState([]);
   const[milestones,setMilestones]=useState([]);
@@ -1393,6 +1660,13 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,onActivate,liveDataErr}){
           </div>
         </>}
       </section>
+
+      <DashboardCompletionSection
+        userTabs={userTabs}
+        isAdmin={isAdmin}
+        planRows={metricPlanRows}
+        comp={comp}
+      />
     </div>
   </div>;
 }
@@ -2265,7 +2539,7 @@ function MainApp({user,onLogout}){
       <button onClick={()=>nav(-1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>←</button><div style={{fontSize:15,fontWeight:700,color:T.text}}>{formatDate(date)}</div><button onClick={()=>nav(1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>→</button>
     </div>}
     <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} onActivate={loadData} liveDataErr={liveDataErr}/>}
+      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} userTabs={user.tabs} onActivate={loadData} liveDataErr={liveDataErr}/>}
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
