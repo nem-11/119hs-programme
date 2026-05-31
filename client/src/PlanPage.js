@@ -953,7 +953,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
                 <div style={{ fontSize: 9, color: T.faint, marginBottom: 4, maxWidth: 280, lineHeight: 1.35 }}>
-                  ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : ''}.
+                  ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : '; scroll to zoom and drag to pan the drawing'}.
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {['7', '14', '21', '28'].map((p) => (
@@ -1380,6 +1380,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               drawing={drawData}
               zones={drawZones}
               coarsePointer={coarsePointer}
+              enableZoomPan
+              minHeight="min(72vh, 640px)"
               emptyMessage="No drawing selected for current scope."
               styleForZone={(z) => {
                 const hit = zoneDayActivity.get(Number(z.id));

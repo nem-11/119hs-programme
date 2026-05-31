@@ -1012,42 +1012,41 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
 
   const legend = (
     <div
+      className="dashboard-completion-legend"
       style={{
-        position: 'absolute',
-        top: 10,
-        right: 10,
-        zIndex: 2,
-        maxWidth: 'min(260px, 70vw)',
-        padding: '10px 12px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '6px 16px',
+        margin: '0 0 10px',
+        padding: '9px 12px',
         borderRadius: 10,
-        background: 'rgba(255,255,255,0.94)',
+        background: 'rgba(46,178,96,0.06)',
         border: `1px solid ${T.hairline}`,
-        boxShadow: '0 4px 18px rgba(26,26,46,0.12)',
-        pointerEvents: 'none',
         WebkitPrintColorAdjust: 'exact',
         printColorAdjust: 'exact',
       }}
     >
-      <div style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.14em', marginBottom: 6 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.14em' }}>
         Completion
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {COMPLETION_BUCKETS.map((b) => (
-          <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span
-              style={{
-                width: 18,
-                height: 18,
-                borderRadius: 4,
-                background: b.fill,
-                border: `2px solid ${b.stroke}`,
-                boxSizing: 'border-box',
-              }}
-            />
-            <span style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{b.label}</span>
-          </div>
-        ))}
-      </div>
+      </span>
+      {COMPLETION_BUCKETS.map((b) => (
+        <span key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: 4,
+              background: b.fill,
+              border: `2px solid ${b.stroke}`,
+              boxSizing: 'border-box',
+              WebkitPrintColorAdjust: 'exact',
+              printColorAdjust: 'exact',
+            }}
+          />
+          <span style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{b.label}</span>
+        </span>
+      ))}
     </div>
   );
 
@@ -1125,6 +1124,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
       <div style={{ fontSize: 10, color: T.faint, marginBottom: 10 }}>
         {drawingLabel} · as of {asOfDate}
       </div>
+      {legend}
       <div style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${T.hairline}`, background: '#ececf1' }}>
         <ZoneDrawingCanvas
           drawing={drawing}
@@ -1137,7 +1137,6 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
             const stat = zoneStats.get(Number(z.id));
             return Boolean(stat && stat.pct != null);
           }}
-          legend={legend}
         />
       </div>
       {printOpen && (
@@ -2632,7 +2631,7 @@ function MainApp({user,onLogout}){
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
-      {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin}/>}
+      {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}

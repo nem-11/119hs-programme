@@ -313,7 +313,9 @@ function dragRectCorner(corner,px,py,g){
   return g;
 }
 
-export default function ZoneSetupPage({tab,canEdit,isAdmin}){
+export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false}){
+  /** Board members get a plain zone reference map — no day-by-day programme overlay. */
+  const dayViewEnabled=!isBoardViewer;
   const typeTab=['groundworks','internals',PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
   const[drawings,setDrawings]=useState([]);
   const[selDraw,setSelDraw]=useState(null);
@@ -1063,7 +1065,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
       <PageHeader
         className="zone-setup-no-print"
         title="Zone drawing"
-        description="Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan · double-click a zone to edit in the panel · Esc cancels drawing"
+        description={isBoardViewer?"All zones for reference · Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan":"Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan · double-click a zone to edit in the panel · Esc cancels drawing"}
         toggles={
           drawData?.image_data ? (
             <>
@@ -1113,7 +1115,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
           <button type="button" onClick={()=>setUploadErr('')} style={{...S.btn,padding:'4px 10px',fontSize:11,flexShrink:0}}>Dismiss</button>
         </div>
       )}
-      {drawData?.image_data&&(
+      {drawData?.image_data&&dayViewEnabled&&(
         <div className="zone-setup-no-print" style={{display:'flex',alignItems:'center',flexWrap:'wrap',gap:8,padding:'8px 12px',borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.06)'}}>
           <span style={{fontSize:10,color:T.muted,fontWeight:700}}>Day on plan</span>
           <button type="button" onClick={()=>shiftZoneVizDate(-1)} style={{...S.btn,padding:'4px 10px',fontSize:11}} aria-label="Previous day">←</button>
@@ -1296,11 +1298,11 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       return a?.name||'';
                     };
                     const prows=programmeByZoneId.get(Number(z.id))||[];
-                    const dayPick=pickProgrammeRowForDay(prows,zoneVizDate);
-                    const dayRing=zoneIdsWithActivityOnDay.has(Number(z.id));
+                    const dayPick=dayViewEnabled?pickProgrammeRowForDay(prows,zoneVizDate):null;
+                    const dayRing=dayViewEnabled&&zoneIdsWithActivityOnDay.has(Number(z.id));
                     const paint=zoneCanvasPaint(z,sel,layerFilterActId,resolveAct,{
                       programmeRowsSorted:prows,
-                      dayHighlightKey:zoneVizDate,
+                      dayHighlightKey:dayViewEnabled?zoneVizDate:null,
                       dayRing,
                     });
                     const {cx,cy}=zoneLabelAnchor(g,z);
@@ -1388,7 +1390,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                       width={Math.abs(rectDraft.w)} height={Math.abs(rectDraft.h)} fill="rgba(66,133,244,0.12)" stroke="rgba(66,133,244,0.85)" strokeWidth={0.35}/>
                   )}
                 </svg>
-                <div
+                {dayViewEnabled&&<div
                   className="zone-setup-on-plate-day-key"
                   style={{
                     position:'absolute',
@@ -1447,7 +1449,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                   <div style={{fontSize:6,color:T.faint,marginTop:3,lineHeight:1.3}}>
                     Zone labels show abbreviations — full names here.
                   </div>
-                </div>
+                </div>}
               </div>
             </>
           ):(
@@ -1472,7 +1474,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
             minHeight:0,
             boxShadow:'inset 1px 0 0 rgba(255,255,255,0.7)',
           }}>
-            <div style={{padding:12,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.04)',flexShrink:0}}>
+            {dayViewEnabled&&<div style={{padding:12,borderBottom:`1px solid ${T.hairline}`,background:'rgba(66,133,244,0.04)',flexShrink:0}}>
               <div style={{fontSize:10,fontWeight:800,color:T.faint,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>
                 This day on drawing
               </div>
@@ -1498,7 +1500,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin}){
                   ))}
                 </ul>
               )}
-            </div>
+            </div>}
             {!showSidebar?(
               <div style={{padding:'16px 14px',display:'flex',flexDirection:'column',gap:8,justifyContent:'flex-start'}}>
                 <span style={{fontSize:11,fontWeight:600,color:T.muted,letterSpacing:'0.02em'}}>Zone details</span>

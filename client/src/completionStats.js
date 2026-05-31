@@ -4,12 +4,6 @@ function normaliseDayKey(dayKey) {
   return String(dayKey || '').trim();
 }
 
-function isOnOrBefore(a, b) {
-  const aa = normaliseDayKey(a);
-  const bb = normaliseDayKey(b);
-  return Boolean(aa && bb && aa <= bb);
-}
-
 function rowDoneAsOf(row, asOfDate, comp) {
   const start = normaliseDayKey(row?.start_date);
   const end = normaliseDayKey(asOfDate);
@@ -25,10 +19,12 @@ export function zoneCompletionsAsOf(date, zones, programmeRows, comp) {
   const zoneIds = new Set(zoneList.map((z) => Number(z.id)).filter(Number.isFinite));
   const byZone = new Map(zoneList.map((z) => [Number(z.id), []]));
 
+  // A zone's denominator is its FULL programme — every activity, regardless of when
+  // it is scheduled. That way 100% means the last activity in the zone is ticked, and
+  // adding new activities (e.g. commissioning) extends the finish line and lowers the %.
   for (const row of programmeRows || []) {
     const zid = Number(row?.zone_id);
     if (!zoneIds.has(zid)) continue;
-    if (!isOnOrBefore(row?.start_date, asOfDate)) continue;
     if (!byZone.has(zid)) byZone.set(zid, []);
     byZone.get(zid).push(row);
   }
@@ -44,7 +40,7 @@ export function zoneCompletionsAsOf(date, zones, programmeRows, comp) {
 
     const done = rows.filter((row) => rowDoneAsOf(row, asOfDate, comp)).length;
     const total = rows.length;
-    // TODO: consider weighted completion by scheduled activity duration.
+    // Unweighted: every activity counts equally toward the zone's finish line.
     out.set(zid, {
       pct: total === 0 ? null : done / total,
       total,

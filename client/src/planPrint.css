@@ -19,7 +19,8 @@ body.plan-print-mode {
     background: #fff !important;
   }
 
-  body.plan-print-mode .plan-no-print {
+  body.plan-print-mode .plan-no-print,
+  body.plan-print-mode .zone-drawing-zoom-controls {
     display: none !important;
   }
 
