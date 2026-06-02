@@ -5,13 +5,14 @@ import PageHeader from './PageHeader';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { parseZoneGeometry, svgPolygonPoints, geomBBox } from './zoneGeom';
 import { isPdfFile, rasterizePdfFirstPageToJpeg } from './pdfDrawing';
-import { MODULE_HANDOVER_TAB } from './constants';
+import { MODULE_HANDOVER_TAB, drawingTabLabel } from './constants';
 import {
   MODULE_STAGES,
   moduleStageMeta,
   normalizeModuleStage,
   moduleCompletionSummary,
 } from './moduleHandover';
+import { autoDetectModules } from './moduleAutoDetect';
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -49,10 +50,21 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [zones, setZones] = useState([]);
   const [selId, setSelId] = useState(null);
   const [tool, setTool] = useState('view'); // 'view' | 'draw'
+  const [drawShape, setDrawShape] = useState('rect'); // 'rect' | 'poly'
   const [rectDraft, setRectDraft] = useState(null);
+  const [polyPts, setPolyPts] = useState([]);
+  const [polyHover, setPolyHover] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [coarse, setCoarse] = useState(false);
+  const [detectBusy, setDetectBusy] = useState(false);
+  const [detectProgress, setDetectProgress] = useState(null);
+  const [detectErr, setDetectErr] = useState('');
+  const [review, setReview] = useState(null); // null | [{x,y,w,h,name,include}]
+  const [importOpen, setImportOpen] = useState(false);
+  const [importSources, setImportSources] = useState([]);
+  const [importSel, setImportSel] = useState(() => new Set());
+  const [importBusy, setImportBusy] = useState(false);
 
   const wrapRef = useRef(null);
   const drawingRef = useRef(false);
@@ -194,6 +206,59 @@ export default function ModuleHandoverPage({ canManage = false }) {
     reloadDrawings();
   }
 
+  async function openImport() {
+    setErr('');
+    setImportSel(new Set());
+    setImportOpen(true);
+    try {
+      const all = await api.getDrawings();
+      const sources = (Array.isArray(all) ? all : []).filter(
+        (d) => String(d.tab) !== MODULE_HANDOVER_TAB && Number(d.width) > 16 && Number(d.height) > 16
+      );
+      setImportSources(sources);
+    } catch (e) {
+      setErr(e?.message || 'Could not load drawings to import');
+      setImportSources([]);
+    }
+  }
+
+  async function runImport() {
+    const ids = [...importSel];
+    if (!ids.length) {
+      setImportOpen(false);
+      return;
+    }
+    setImportBusy(true);
+    setErr('');
+    try {
+      let lastId = '';
+      for (const id of ids) {
+        const full = await api.getDrawing(id);
+        if (!full || !full.image_data) continue;
+        const r = await api.createModuleDrawing(
+          full.name || 'Module plan',
+          full.floor || 'modules',
+          full.image_data,
+          full.width || 0,
+          full.height || 0,
+          full.file_url || null
+        );
+        if (r && r.error) {
+          setErr(String(r.error));
+          break;
+        }
+        if (r && r.id) lastId = String(r.id);
+      }
+      const list = await reloadDrawings();
+      if (lastId && list.some((d) => Number(d.id) === Number(lastId))) setDrawingId(lastId);
+      setImportOpen(false);
+    } catch (e) {
+      setErr(e?.message || 'Import failed');
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   function clientToPct(clientX, clientY) {
     const el = wrapRef.current;
     if (!el) return [0, 0];
@@ -243,14 +308,110 @@ export default function ModuleHandoverPage({ canManage = false }) {
     });
   }, [drawingId, onDrawMove, reloadZones]);
 
+  const commitPoly = useCallback(
+    (pts) => {
+      if (!pts || pts.length < 3) {
+        setPolyPts([]);
+        setPolyHover(null);
+        return;
+      }
+      const name = window.prompt('Module name (e.g. M-101)', '');
+      setPolyPts([]);
+      setPolyHover(null);
+      if (name == null) return;
+      const geometry = { kind: 'poly', points: pts };
+      api.addModuleZone(drawingId, name.trim() || 'Module', '', geometry).then((out) => {
+        if (out && out.error) setErr(String(out.error));
+        else reloadZones(drawingId);
+      });
+    },
+    [drawingId, reloadZones]
+  );
+
+  async function runAutoDetect() {
+    if (!drawing?.image_data || !canManage || detectBusy) return;
+    setDetectErr('');
+    setDetectBusy(true);
+    setDetectProgress({ phase: 'detect', cur: 0, total: 1 });
+    try {
+      const mods = await autoDetectModules(drawing.image_data, {
+        onProgress: (phase, cur, total) => setDetectProgress({ phase, cur, total }),
+      });
+      if (!mods.length) {
+        setDetectErr('No module boxes were detected. Try the manual Box/Polygon tools, or upload a cleaner plan.');
+      } else {
+        setReview(mods.map((m) => ({ ...m, include: true, name: m.name || '' })));
+      }
+    } catch (e) {
+      setDetectErr(e?.message || 'Auto-detect failed (the detection libraries may be blocked). Use the manual tools.');
+    } finally {
+      setDetectBusy(false);
+      setDetectProgress(null);
+    }
+  }
+
+  async function createReviewed() {
+    if (!review) return;
+    const sel = review.filter((r) => r.include);
+    if (!sel.length) {
+      setReview(null);
+      return;
+    }
+    setDetectBusy(true);
+    try {
+      for (let i = 0; i < sel.length; i++) {
+        const r = sel[i];
+        setDetectProgress({ phase: 'create', cur: i, total: sel.length });
+        const geometry = { kind: 'rect', x: r.x, y: r.y, w: r.w, h: r.h };
+        const out = await api.addModuleZone(drawingId, (r.name || '').trim() || `Module ${i + 1}`, '', geometry);
+        if (out && out.error) {
+          setErr(String(out.error));
+          break;
+        }
+      }
+      await reloadZones(drawingId);
+      setReview(null);
+    } finally {
+      setDetectBusy(false);
+      setDetectProgress(null);
+    }
+  }
+
   function onPlateMouseDown(e) {
     if (tool !== 'draw' || !canManage || !drawing?.image_data) return;
     e.preventDefault();
     const [x, y] = clientToPct(e.clientX, e.clientY);
+    if (drawShape === 'poly') {
+      if (polyPts.length >= 3) {
+        const el = wrapRef.current;
+        const r = el?.getBoundingClientRect();
+        if (r) {
+          const [fx, fy] = polyPts[0];
+          const fxClient = r.left + (fx / 100) * r.width;
+          const fyClient = r.top + (fy / 100) * r.height;
+          if (Math.hypot(e.clientX - fxClient, e.clientY - fyClient) <= 12) {
+            commitPoly(polyPts);
+            return;
+          }
+        }
+      }
+      setPolyPts((p) => [...p, [x, y]]);
+      return;
+    }
     drawingRef.current = true;
     setRectDraft({ x, y, w: 0, h: 0 });
     window.addEventListener('mousemove', onDrawMove);
     window.addEventListener('mouseup', onDrawUp);
+  }
+
+  function onPlateMouseMove(e) {
+    if (tool !== 'draw' || drawShape !== 'poly') return;
+    const [x, y] = clientToPct(e.clientX, e.clientY);
+    setPolyHover([x, y]);
+  }
+
+  function onPlateDoubleClick() {
+    if (tool === 'draw' && drawShape === 'poly' && polyPts.length >= 3) commitPoly(polyPts);
   }
 
   async function setStage(stageKey) {
@@ -355,6 +516,8 @@ export default function ModuleHandoverPage({ canManage = false }) {
                   onClick={() => {
                     setTool('view');
                     setRectDraft(null);
+                    setPolyPts([]);
+                    setPolyHover(null);
                   }}
                   style={{ ...S.btn, ...(tool === 'view' ? S.btnAct : {}), padding: '7px 12px', fontSize: 12 }}
                 >
@@ -372,6 +535,48 @@ export default function ModuleHandoverPage({ canManage = false }) {
                     + Add modules
                   </button>
                 )}
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={runAutoDetect}
+                    disabled={detectBusy}
+                    title="Detect module boxes and read their numbers, then review before adding"
+                    style={{ ...S.btn, padding: '7px 12px', fontSize: 12, opacity: detectBusy ? 0.6 : 1 }}
+                  >
+                    {detectBusy
+                      ? detectProgress?.phase === 'ocr'
+                        ? `Reading numbers ${detectProgress.cur}/${detectProgress.total}…`
+                        : detectProgress?.phase === 'create'
+                        ? `Adding ${detectProgress.cur}/${detectProgress.total}…`
+                        : 'Detecting…'
+                      : '✨ Auto-detect modules'}
+                  </button>
+                )}
+                {tool === 'draw' && canManage && (
+                  <div style={{ display: 'inline-flex', gap: 4, marginLeft: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrawShape('rect');
+                        setPolyPts([]);
+                        setPolyHover(null);
+                      }}
+                      style={{ ...S.btn, ...(drawShape === 'rect' ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                    >
+                      ▭ Box
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrawShape('poly');
+                        setRectDraft(null);
+                      }}
+                      style={{ ...S.btn, ...(drawShape === 'poly' ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                    >
+                      ⬡ Polygon
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -383,6 +588,9 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 {busy ? 'Uploading…' : drawing?.image_data ? 'Replace / add drawing' : 'Upload drawing'}
                 <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleUpload} disabled={busy} />
               </label>
+              <button type="button" onClick={openImport} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
+                Import from Internals
+              </button>
               {drawingId && (
                 <>
                   <button type="button" onClick={renameDrawing} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
@@ -406,6 +614,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
           </button>
         </div>
       )}
+      {detectErr && (
+        <div style={{ margin: '10px 0', padding: '8px 12px', background: 'rgba(230,108,0,0.08)', border: '1px solid rgba(230,108,0,0.32)', borderRadius: 8, color: '#9a5b00', fontSize: 13 }}>
+          {detectErr}
+          <button type="button" onClick={() => setDetectErr('')} style={{ ...S.btn, marginLeft: 10, padding: '2px 8px', fontSize: 11 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {!drawing?.image_data ? (
         <div style={{ ...card, padding: 40, textAlign: 'center', color: T.faint, fontSize: 14, marginTop: 12 }}>
@@ -419,6 +635,8 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 <div
                   ref={wrapRef}
                   onMouseDown={onPlateMouseDown}
+                  onMouseMove={onPlateMouseMove}
+                  onDoubleClick={onPlateDoubleClick}
                   style={{ position: 'relative', width: '100%', cursor: 'crosshair', userSelect: 'none' }}
                 >
                   <img
@@ -437,7 +655,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       }
                       return <rect key={z.id} x={g.x} y={g.y} width={g.w} height={g.h} fill={meta.fill} stroke={meta.stroke} strokeWidth={0.7} />;
                     })}
-                    {rectDraft && (
+                    {rectDraft && drawShape === 'rect' && (
                       <rect
                         x={Math.min(rectDraft.x, rectDraft.x + rectDraft.w)}
                         y={Math.min(rectDraft.y, rectDraft.y + rectDraft.h)}
@@ -448,6 +666,29 @@ export default function ModuleHandoverPage({ canManage = false }) {
                         strokeWidth={0.7}
                         strokeDasharray="1.4 1"
                       />
+                    )}
+                    {drawShape === 'poly' && polyPts.length > 0 && (
+                      <>
+                        <polyline
+                          points={[...polyPts, polyHover].filter(Boolean).map((p) => `${p[0]},${p[1]}`).join(' ')}
+                          fill="rgba(66,133,244,0.14)"
+                          stroke="rgba(36,68,140,1)"
+                          strokeWidth={0.7}
+                          strokeDasharray="1.4 1"
+                          strokeLinejoin="round"
+                        />
+                        {polyPts.map((p, i) => (
+                          <circle
+                            key={`${p[0]}-${p[1]}-${i}`}
+                            cx={p[0]}
+                            cy={p[1]}
+                            r={i === 0 ? 1.1 : 0.7}
+                            fill={i === 0 ? 'rgba(36,68,140,1)' : '#fff'}
+                            stroke="rgba(36,68,140,1)"
+                            strokeWidth={0.4}
+                          />
+                        ))}
+                      </>
                     )}
                   </svg>
                 </div>
@@ -468,8 +709,22 @@ export default function ModuleHandoverPage({ canManage = false }) {
               )}
             </div>
             {tool === 'draw' && (
-              <div style={{ marginTop: 8, fontSize: 12, color: T.muted }}>
-                Drag a box around each module, then name it. Switch to “View / set stage” to record handover progress.
+              <div style={{ marginTop: 8, fontSize: 12, color: T.muted, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {drawShape === 'rect' ? (
+                  <span>Drag a box around each module, then name it.</span>
+                ) : (
+                  <span>Click to drop each corner; click the first point (or double-click) to close, then name it.</span>
+                )}
+                {drawShape === 'poly' && polyPts.length > 0 && (
+                  <>
+                    <button type="button" onClick={() => commitPoly(polyPts)} disabled={polyPts.length < 3} style={{ ...S.btn, ...S.btnPrimary, padding: '5px 10px', fontSize: 11, opacity: polyPts.length < 3 ? 0.5 : 1 }}>
+                      Finish module
+                    </button>
+                    <button type="button" onClick={() => { setPolyPts([]); setPolyHover(null); }} style={{ ...S.btn, padding: '5px 10px', fontSize: 11 }}>
+                      Cancel
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {legend}
@@ -558,6 +813,126 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 {tool === 'draw' ? 'Drag on the plan to add a module.' : 'Tap a module on the plan to see its handover stage.'}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,18,28,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ ...card, width: 'min(560px, 96vw)', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.hairline}` }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: T.text }}>Import drawings into Modules</div>
+              <div style={{ fontSize: 12, color: T.muted }}>Copies the plan image (Ground–5th floor etc.) into Module Handover so you can box modules on it.</div>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', padding: 12, minHeight: 80 }}>
+              {!importSources.length ? (
+                <div style={{ fontSize: 13, color: T.muted, padding: 12 }}>No other drawings available to import.</div>
+              ) : (
+                importSources.map((d) => {
+                  const checked = importSel.has(d.id);
+                  return (
+                    <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 6px', borderBottom: `1px solid ${T.hairline}`, cursor: 'pointer', fontSize: 13, color: T.text }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => setImportSel((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(d.id); else next.delete(d.id);
+                          return next;
+                        })}
+                      />
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+                      <span style={{ fontSize: 11, color: T.faint, flex: '0 0 auto' }}>{drawingTabLabel(d.tab)}</span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+            <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.hairline}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" onClick={() => setImportOpen(false)} disabled={importBusy} style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}>
+                Cancel
+              </button>
+              <button type="button" onClick={runImport} disabled={importBusy || !importSel.size} style={{ ...S.btn, ...S.btnPrimary, padding: '8px 16px', fontSize: 13, opacity: importBusy ? 0.6 : 1 }}>
+                {importBusy ? 'Importing…' : `Import ${importSel.size || ''} drawing${importSel.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {review && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,18,28,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ ...card, width: 'min(960px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.hairline}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: T.text }}>Review detected modules</div>
+                <div style={{ fontSize: 12, color: T.muted }}>
+                  {review.filter((r) => r.include).length} of {review.length} selected. Fix any numbers, untick false boxes, then add.
+                </div>
+              </div>
+              <button type="button" onClick={() => setReview(null)} disabled={detectBusy} style={{ ...S.btn, padding: '6px 12px', fontSize: 12 }}>
+                Cancel
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 0, flex: 1, minHeight: 0 }}>
+              <div style={{ flex: '1 1 50%', minWidth: 0, background: '#ececf1', position: 'relative', overflow: 'auto' }}>
+                <div style={{ position: 'relative', width: '100%' }}>
+                  <img alt="Detected modules" src={`data:image/jpeg;base64,${drawing?.image_data}`} style={{ display: 'block', width: '100%', height: 'auto' }} />
+                  <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {review.map((r, i) => (
+                      <g key={`rv-${i}`} opacity={r.include ? 1 : 0.25}>
+                        <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="rgba(46,160,67,0.22)" stroke="rgba(27,120,45,1)" strokeWidth={0.6} />
+                        <text x={r.x + r.w / 2} y={r.y + r.h / 2} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(1.4, Math.min(r.w, r.h) * 0.4)} fontWeight="800" fill="#13371f" stroke="#fff" strokeWidth={0.12} paintOrder="stroke fill">
+                          {r.name || i + 1}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+              </div>
+              <div style={{ flex: '1 1 50%', minWidth: 0, borderLeft: `1px solid ${T.hairline}`, overflow: 'auto', padding: 12 }}>
+                {review.map((r, i) => (
+                  <div key={`rl-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 4px', borderBottom: `1px solid ${T.hairline}` }}>
+                    <input
+                      type="checkbox"
+                      checked={r.include}
+                      onChange={(e) => setReview((rv) => rv.map((x, j) => (j === i ? { ...x, include: e.target.checked } : x)))}
+                    />
+                    <span style={{ fontSize: 11, color: T.faint, width: 22, flex: '0 0 auto' }}>{i + 1}</span>
+                    <input
+                      type="text"
+                      value={r.name}
+                      placeholder="Module number"
+                      onChange={(e) => setReview((rv) => rv.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                      style={{ ...S.input, flex: 1, minWidth: 0, fontSize: 13, padding: '6px 8px' }}
+                    />
+                    <button type="button" onClick={() => setReview((rv) => rv.filter((_, j) => j !== i))} title="Remove" style={{ ...S.btn, padding: '4px 8px', fontSize: 11, color: '#b3261e' }}>
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.hairline}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <button
+                type="button"
+                onClick={() => setReview((rv) => rv.map((x) => ({ ...x, include: true })))}
+                disabled={detectBusy}
+                style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={createReviewed}
+                disabled={detectBusy || !review.some((r) => r.include)}
+                style={{ ...S.btn, ...S.btnPrimary, padding: '8px 16px', fontSize: 13, opacity: detectBusy ? 0.6 : 1 }}
+              >
+                {detectBusy && detectProgress?.phase === 'create'
+                  ? `Adding ${detectProgress.cur}/${detectProgress.total}…`
+                  : `Add ${review.filter((r) => r.include).length} modules`}
+              </button>
+            </div>
           </div>
         </div>
       )}
