@@ -177,81 +177,64 @@
   flex-shrink: 0;
 }
 
-/* Collapsible Plan header — mobile summary bar; desktop unchanged */
+/* Collapsible header — fold controls up/down on every screen size to view items better */
 .page-header--collapsible .page-header__mobile-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.page-header--collapsible .page-header__summary-chips {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.page-header--collapsible .page-header__summary-chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(26, 26, 46, 0.72);
+  background: rgba(26, 26, 46, 0.06);
+  border: 1px solid rgba(26, 26, 46, 0.08);
+  border-radius: 999px;
+  padding: 4px 10px;
+  line-height: 1.2;
+  max-width: min(60vw, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-header--collapsible .page-header__controls-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(36, 68, 140, 0.95);
+  background: rgba(66, 133, 244, 0.1);
+  border: 1px solid rgba(66, 133, 244, 0.28);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.page-header--collapsible .page-header__collapsible-body {
   display: none;
+  margin-top: 0;
 }
 
 .page-header--collapsible .page-header__collapsible-body--open {
   display: block;
+  margin-top: 10px;
 }
 
 @media (max-width: 899px) {
-  .page-header--collapsible .page-header__mobile-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-
-  .page-header--collapsible .page-header__summary-chips {
-    display: flex;
-    flex: 1 1 auto;
-    gap: 6px;
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-
-  .page-header--collapsible .page-header__summary-chip {
-    font-size: 11px;
-    font-weight: 600;
-    color: rgba(26, 26, 46, 0.72);
-    background: rgba(26, 26, 46, 0.06);
-    border: 1px solid rgba(26, 26, 46, 0.08);
-    border-radius: 999px;
-    padding: 4px 10px;
-    line-height: 1.2;
-    max-width: min(60vw, 220px);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .page-header--collapsible .page-header__controls-toggle {
-    flex: 0 0 auto;
-    font-size: 11px;
-    font-weight: 700;
-    color: rgba(36, 68, 140, 0.95);
-    background: rgba(66, 133, 244, 0.1);
-    border: 1px solid rgba(66, 133, 244, 0.28);
-    border-radius: 8px;
-    padding: 6px 12px;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  .page-header--collapsible .page-header__collapsible-body {
-    display: none;
-    margin-top: 0;
-  }
-
-  .page-header--collapsible .page-header__collapsible-body--open {
-    display: block;
-    margin-top: 10px;
-  }
-
   .page-header--collapsible .page-header__description {
     display: none;
-  }
-}
-
-@media (min-width: 900px) {
-  .page-header--collapsible .page-header__mobile-bar {
-    display: none;
-  }
-
-  .page-header--collapsible .page-header__collapsible-body {
-    display: block;
   }
 }

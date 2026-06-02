@@ -45,7 +45,7 @@ export default function PageHeader({
         <>
           {hasCollapsibleControls && (
             <div className="page-header__mobile-bar">
-              {summaryItems.length > 0 && (
+              {!controlsOpen && summaryItems.length > 0 && (
                 <div className="page-header__summary-chips" aria-label="Current plan filters">
                   {summaryItems.map((chip, i) => (
                     <span key={`${String(chip)}-${i}`} className="page-header__summary-chip">
@@ -60,7 +60,7 @@ export default function PageHeader({
                 aria-expanded={controlsOpen}
                 onClick={() => setControlsOpen((v) => !v)}
               >
-                {controlsOpen ? 'Hide controls' : 'Show controls'}
+                {controlsOpen ? 'Hide controls ▲' : 'Show controls ▾'}
               </button>
             </div>
           )}

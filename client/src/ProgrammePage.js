@@ -751,6 +751,11 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
       {isAdmin&&<ProgrammeNlCommand onApplied={onScheduleChanged}/>}
       {projectProgrammePanel}
       <PageHeader
+        collapsible
+        collapsibleSummary={[
+          drawingTabLabel(tab),
+          tabDrawings.find((d) => d.id === selDraw)?.name || (tabDrawings.length ? 'Select drawing' : 'No drawing'),
+        ]}
         title={tab === PROJECT_PROGRAMME_TAB ? 'Project programme' : 'Programme'}
         description={hasFloorPlan ? 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.' : zoneSetupAvailable ? 'Add a plan on Zones to use this screen.' : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}
         filters={
