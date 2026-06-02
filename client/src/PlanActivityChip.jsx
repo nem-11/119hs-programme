@@ -94,7 +94,6 @@ export default function PlanActivityChip({
       draggable={isAdmin && !done}
       onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
       onDoubleClick={(e) => {
-        if (done) return;
         e.preventDefault();
         clearClickTimer();
         onOpenEdit({
@@ -106,7 +105,7 @@ export default function PlanActivityChip({
         });
       }}
       onTouchStart={() => {
-        if (done || !coarsePointer) return;
+        if (!coarsePointer) return;
         longPressTriggeredRef.current = false;
         clearLongPressTimer();
         longPressTimerRef.current = setTimeout(() => {
@@ -131,7 +130,7 @@ export default function PlanActivityChip({
         gap: 4,
         WebkitPrintColorAdjust: 'exact',
         printColorAdjust: 'exact',
-        cursor: coarsePointer ? 'pointer' : isAdmin && !done ? 'grab' : 'default',
+        cursor: coarsePointer ? 'pointer' : isAdmin ? (done ? 'pointer' : 'grab') : 'default',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}
@@ -162,7 +161,7 @@ export default function PlanActivityChip({
         }, CLICK_DELAY_MS);
       }}
     >
-      {done && dk === String(it.start_date || '').trim() && (
+      {done && (
         <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
       )}
       {hasDependency && (
