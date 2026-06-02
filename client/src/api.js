@@ -103,6 +103,14 @@ export const deleteZone=(id)=>api('DELETE',`/api/zones/${id}`);
 export const addZoneActivity=(zoneId,payload)=>api('POST',`/api/zones/${zoneId}/activities`,payload);
 export const deleteZoneActivity=(zoneId,activityId)=>api('DELETE',`/api/zones/${zoneId}/activities/${activityId}`);
 export const putZoneActivities=(zoneId,activities)=>api('PUT',`/api/zones/${zoneId}/activities`,{activities});
+// Module Handover — tab-locked (admin + site set up, board views)
+export const createModuleDrawing=(name,floor,image_data,width,height,file_url)=>api('POST','/api/module-handover/drawings',{name,floor:floor||'modules',image_data,width,height,file_url:file_url||null});
+export const renameModuleDrawing=(id,name)=>api('PATCH',`/api/module-handover/drawings/${id}`,{name});
+export const deleteModuleDrawing=(id)=>api('DELETE',`/api/module-handover/drawings/${id}`);
+export const addModuleZone=(drawing_id,name,tower,geometry)=>api('POST','/api/module-handover/zones',{drawing_id,name,tower,geometry});
+export const updateModuleZone=(id,patch)=>api('PUT',`/api/module-handover/zones/${id}`,patch);
+export const deleteModuleZone=(id)=>api('DELETE',`/api/module-handover/zones/${id}`);
+export const setModuleStage=(id,stage)=>api('PATCH',`/api/module-handover/zones/${id}/stage`,{stage});
 export const getPlanProgramme=()=>api('GET','/api/plan/programme');
 export const getPlanProgrammeFullExport=()=>api('GET','/api/plan/programme?full=1');
 export const replacePlanZoneItems=(zoneId,rows)=>api('PUT',`/api/plan/admin/zone/${zoneId}/items`,{rows});

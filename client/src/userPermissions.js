@@ -30,6 +30,11 @@ export function canTick(role) {
   return isAdmin(role) || isSiteEditor(role);
 }
 
+/** Module Handover setup (upload drawing, draw modules, set stages) — admin + site. Board views only. */
+export function canManageModules(role) {
+  return isAdmin(role) || isSiteEditor(role);
+}
+
 export function bottomNavItemsForRole(role) {
   const dash = { id: 'dashboard', label: 'Dash', icon: '▣' };
   const upd = { id: 'update', label: 'Update', icon: '✓' };
@@ -39,14 +44,15 @@ export function bottomNavItemsForRole(role) {
   const prog = { id: 'programme', label: 'Programme', icon: '◎' };
   const tpl = { id: 'templates', label: 'Templates', icon: '⧉' };
   const sett = { id: 'settings', label: 'Settings', icon: '⚙' };
+  const mod = { id: 'modhandover', label: 'Modules', icon: '⬚' };
 
   if (isBoardViewer(role)) {
-    return [dash, plan, zones];
+    return [dash, plan, zones, mod];
   }
 
   /** Site: view Programme (incl. Project programme XML list); structural edit remains admin-only in ProgrammePage. */
   if (isSiteEditor(role)) {
-    return [dash, upd, ahead, plan, zones, prog];
+    return [dash, upd, ahead, plan, zones, prog, mod];
   }
 
   if (isGwSubbie(role) || isIntSubbie(role)) {
@@ -56,7 +62,7 @@ export function bottomNavItemsForRole(role) {
   const core = [dash, upd, ahead, plan];
   const zp = [zones, prog];
   const adm = isAdmin(role) ? [tpl, sett] : [];
-  return [...core, ...zp, ...adm];
+  return [...core, ...zp, mod, ...adm];
 }
 
 export function allowedPageIdsForRole(role) {

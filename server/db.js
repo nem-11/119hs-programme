@@ -187,6 +187,29 @@ function migrateUserTabsProjectProgramme() {
   save();
 }
 
+/** Roles that get the Module Handover tab: admin + site (setup), board (view). */
+function roleGetsModuleHandoverTab(role) {
+  return role === 'admin' || role === 'site_editor' || role === 'editor' || role === 'board_viewer';
+}
+
+/** Add module_handover tab to admin/site/board so they see the Module Handover page. */
+function migrateUserTabsModuleHandover() {
+  const users = all('SELECT id, tabs, role FROM users');
+  const tab = 'module_handover';
+  for (const u of users) {
+    if (!roleGetsModuleHandoverTab(u.role)) continue;
+    let t = [];
+    try {
+      t = JSON.parse(u.tabs || '[]');
+    } catch (_) {}
+    if (!Array.isArray(t)) t = [];
+    if (t.includes(tab)) continue;
+    t.push(tab);
+    run('UPDATE users SET tabs=? WHERE id=?', [JSON.stringify(t), u.id]);
+  }
+  save();
+}
+
 /** Sync role + tabs for standard programme accounts from defaultUsers.js (live RBAC matrix). */
 function migrateDefaultUserRoles() {
   const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
@@ -450,6 +473,10 @@ async function getDb() {
     db.run('ALTER TABLE zones ADD COLUMN updated_at TEXT');
     save();
   } catch (_) {}
+  try {
+    db.run('ALTER TABLE zones ADD COLUMN handover_stage TEXT');
+    save();
+  } catch (_) {}
 
   seedActivities();
   seedProjectProgrammeActivities();
@@ -468,6 +495,7 @@ async function getDb() {
   ensureDefaultTemplates();
   migrateDefaultUserRoles();
   migrateUserTabsProjectProgramme();
+  migrateUserTabsModuleHandover();
   save();
   const danglingCompletions = countCompletionsDanglingZoneRef();
   if (danglingCompletions > 0) {
@@ -1150,6 +1178,14 @@ module.exports = {
       ]
     );
     return true;
+  },
+  /** Module Handover stage for a module zone (free-text stage key; '' clears to default). */
+  setZoneHandoverStage: (id, stage) => {
+    const cur = get('SELECT id FROM zones WHERE id=?', [id]);
+    if (!cur) return { error: 'not_found' };
+    const s = stage == null ? null : String(stage).trim() || null;
+    run('UPDATE zones SET handover_stage=?, updated_at=? WHERE id=?', [s, new Date().toISOString(), id]);
+    return { ok: true };
   },
   deleteZone: (id) => {
     const nid = Number(id);

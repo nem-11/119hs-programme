@@ -2,7 +2,7 @@ import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'rea
 import * as api from './api';
 import './loginLanding.css';
 import './dashboardCompletionPrint.css';
-import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
+import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,MODULE_HANDOVER_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
 import {
   bottomNavItemsForRole,
   allowedPageIdsForRole,
@@ -11,6 +11,7 @@ import {
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
   isSiteEditor as roleIsSiteEditor,
+  canManageModules as roleCanManageModules,
 } from './userPermissions';
 import {T,S,shadowCard,grad} from './uiTheme';
 import PageHeader from './PageHeader';
@@ -18,9 +19,11 @@ import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import { useRefreshOnFocus } from './useRefreshOnFocus';
 import PlanPage from './PlanPage';
+import ModuleHandoverPage from './ModuleHandoverPage';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
 import { zoneCompletionsAsOf } from './completionStats';
+import { MODULE_STAGES, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey, isProgrammeRowDone } from './planUtils';
@@ -1234,6 +1237,96 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   );
 }
 
+/** Dashboard — Module Completion: read-only picture of module handover stages on the plan. */
+function DashboardModuleSection(){
+  const [drawings,setDrawings]=useState([]);
+  const [drawingId,setDrawingId]=useState('');
+  const [drawing,setDrawing]=useState(null);
+  const [zones,setZones]=useState([]);
+  const [coarse,setCoarse]=useState(false);
+
+  useEffect(()=>{
+    const mq=window.matchMedia('(pointer: coarse)');
+    const fn=()=>setCoarse(!!mq.matches);
+    fn();mq.addEventListener('change',fn);
+    return()=>mq.removeEventListener('change',fn);
+  },[]);
+
+  useEffect(()=>{
+    let cancelled=false;
+    api.getDrawings().then((d)=>{
+      if(cancelled)return;
+      const list=(Array.isArray(d)?d:[]).filter((x)=>String(x.tab)===MODULE_HANDOVER_TAB);
+      setDrawings(list);
+    }).catch(()=>{if(!cancelled)setDrawings([]);});
+    return()=>{cancelled=true;};
+  },[]);
+
+  useEffect(()=>{
+    setDrawingId((prev)=>{
+      if(prev&&drawings.some((d)=>Number(d.id)===Number(prev)))return prev;
+      return drawings[0]?.id?String(drawings[0].id):'';
+    });
+  },[drawings]);
+
+  useEffect(()=>{
+    if(!drawingId){setDrawing(null);setZones([]);return undefined;}
+    let cancelled=false;
+    Promise.all([api.getDrawing(drawingId),api.getZonesForDrawing(drawingId)]).then(([d,z])=>{
+      if(cancelled)return;
+      setDrawing(d||null);
+      setZones(Array.isArray(z)?z:[]);
+    }).catch(()=>{if(!cancelled){setDrawing(null);setZones([]);}});
+    return()=>{cancelled=true;};
+  },[drawingId]);
+
+  const summary=useMemo(()=>moduleCompletionSummary(zones),[zones]);
+
+  if(!drawings.length)return null;
+
+  const legend=(
+    <div style={{display:'flex',flexWrap:'wrap',gap:10,padding:'10px 12px',background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginTop:10}}>
+      <span style={{fontSize:11,fontWeight:800,color:T.muted,textTransform:'uppercase',letterSpacing:'0.06em'}}>Stages</span>
+      {MODULE_STAGES.map((s)=>(
+        <span key={s.key} style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:12,color:T.text,fontWeight:600}}>
+          <span style={{width:14,height:14,borderRadius:3,background:s.swatch,border:`1px solid ${s.stroke}`}}/>
+          {s.label} <span style={{color:T.muted}}>({summary.byStage[s.key]||0})</span>
+        </span>
+      ))}
+    </div>
+  );
+
+  return(
+    <section style={{padding:18,background:grad.cardSurface,borderRadius:16,border:'1px solid rgba(26,26,46,0.06)',boxShadow:shadowCard,marginTop:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:800,color:T.text}}>Module completion</div>
+          <div style={{fontSize:13,color:T.muted}}>{summary.handed} of {summary.total} modules handed over · {summary.pct}%</div>
+        </div>
+        {drawings.length>1&&(
+          <select value={drawingId} onChange={(e)=>setDrawingId(e.target.value)} style={{...S.input,padding:'7px 10px',fontSize:13,minWidth:170}}>
+            {drawings.map((d)=>(<option key={d.id} value={String(d.id)}>{d.name}</option>))}
+          </select>
+        )}
+      </div>
+      <div style={{borderRadius:12,overflow:'hidden',border:`1px solid ${T.hairline}`}}>
+        <ZoneDrawingCanvas
+          drawing={drawing}
+          zones={zones}
+          enableZoomPan
+          coarsePointer={coarse}
+          minHeight="min(60vh, 520px)"
+          styleForZone={(z)=>{const m=moduleStageMeta(z.handover_stage);return{fill:m.fill,stroke:m.stroke,strokeW:0.85};}}
+          labelForZone={(z)=>String(z.name||'').trim()}
+          labelActiveForZone={()=>true}
+          emptyMessage="No module drawing yet."
+        />
+      </div>
+      {legend}
+    </section>
+  );
+}
+
 function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataErr}){
   const today=new Date();
   const[metricPlanRows,setMetricPlanRows]=useState([]);
@@ -1798,6 +1891,8 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         planRows={metricPlanRows}
         comp={comp}
       />
+
+      <DashboardModuleSection />
     </div>
   </div>;
 }
@@ -2675,6 +2770,7 @@ function MainApp({user,onLogout}){
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)}/>}
+      {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}

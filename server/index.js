@@ -366,6 +366,73 @@ app.delete('/api/zones/:id', auth, programmeEditor, (req, res) => {
     res.status(500).json({ error: e.message || 'Zone delete failed' });
   }
 });
+/* ---- Module Handover (tab-locked to 'module_handover'; admin + site set up, board views) ---- */
+const MODULE_HANDOVER_TAB = 'module_handover';
+function moduleHandoverEditor(req, res, next) {
+  if (perm.isAdminRole(req.user.role) || perm.isSiteEditorRole(req.user.role)) return next();
+  return res.status(403).json({ error: 'Module Handover edit access required' });
+}
+function moduleDrawingOr404(id, res) {
+  const d = db.getDrawing(id);
+  if (!d || String(d.tab) !== MODULE_HANDOVER_TAB) {
+    res.status(404).json({ error: 'Not a Module Handover drawing' });
+    return null;
+  }
+  return d;
+}
+function moduleZoneOr404(id, res) {
+  const row = db.getZoneDrawingTab(id);
+  if (!row || String(row.tab) !== MODULE_HANDOVER_TAB) {
+    res.status(404).json({ error: 'Not a Module Handover module' });
+    return null;
+  }
+  return row;
+}
+app.post('/api/module-handover/drawings', auth, moduleHandoverEditor, (req, res) => {
+  const { name, floor, image_data, width, height, file_url } = req.body || {};
+  if (!image_data) return res.status(400).json({ error: 'image_data required' });
+  const r = db.addDrawing(name || 'Modules', MODULE_HANDOVER_TAB, floor || 'modules', image_data, width || 0, height || 0, file_url || null);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.patch('/api/module-handover/drawings/:id', auth, moduleHandoverEditor, (req, res) => {
+  if (!moduleDrawingOr404(req.params.id, res)) return;
+  const out = db.renameDrawing(req.params.id, req.body?.name);
+  if (out?.error === 'name_required') return res.status(400).json({ error: 'name required' });
+  if (out?.error) return res.status(400).json({ error: String(out.error) });
+  res.json({ ok: true });
+});
+app.delete('/api/module-handover/drawings/:id', auth, moduleHandoverEditor, (req, res) => {
+  if (!moduleDrawingOr404(req.params.id, res)) return;
+  db.deleteDrawing(req.params.id);
+  res.json({ ok: true });
+});
+app.post('/api/module-handover/zones', auth, moduleHandoverEditor, (req, res) => {
+  const { drawing_id, name, tower, geometry, x, y, w, h } = req.body || {};
+  if (!moduleDrawingOr404(drawing_id, res)) return;
+  let geom = geometry;
+  if (!geom && x != null && y != null && w != null && h != null) geom = { kind: 'rect', x, y, w, h };
+  if (!geom) return res.status(400).json({ error: 'geometry required' });
+  const r = db.addZone(drawing_id, name || 'Module', tower || '', geom, null);
+  res.json({ ok: true, id: r.lastInsertRowid });
+});
+app.put('/api/module-handover/zones/:id', auth, moduleHandoverEditor, (req, res) => {
+  if (!moduleZoneOr404(req.params.id, res)) return;
+  const ok = db.updateZone(req.params.id, req.body || {});
+  if (!ok) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+app.delete('/api/module-handover/zones/:id', auth, moduleHandoverEditor, (req, res) => {
+  if (!moduleZoneOr404(req.params.id, res)) return;
+  db.deleteZone(req.params.id);
+  res.json({ ok: true });
+});
+app.patch('/api/module-handover/zones/:id/stage', auth, moduleHandoverEditor, (req, res) => {
+  if (!moduleZoneOr404(req.params.id, res)) return;
+  const out = db.setZoneHandoverStage(req.params.id, req.body?.stage);
+  if (out?.error === 'not_found') return res.status(404).json({ error: 'Not found' });
+  if (out?.error) return res.status(400).json({ error: String(out.error) });
+  res.json({ ok: true });
+});
 app.post('/api/zones/:zoneId/schedule-from-target', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const {

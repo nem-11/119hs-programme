@@ -69,6 +69,9 @@ export const INT_SEQUENCE=["Riser Stitching","Corridor Ceiling Stitch","Modular 
 /** Drawing tab for programme lines not tied to GW/INT floor drawings (targets, packages, enabling works). */
 export const PROJECT_PROGRAMME_TAB = 'project_programme';
 
+/** Drawing tab for the Module Handover view (modules-as-zones with a handover stage, no programme). */
+export const MODULE_HANDOVER_TAB = 'module_handover';
+
 /** Header pill order; filtered by each user’s allowed tabs. */
 export const MAIN_HEADER_TAB_ORDER = ['groundworks', 'internals', PROJECT_PROGRAMME_TAB];
 
@@ -76,6 +79,7 @@ export function drawingTabLabel(tab) {
   if (tab === 'groundworks') return 'Groundworks';
   if (tab === 'internals') return 'Internals';
   if (tab === PROJECT_PROGRAMME_TAB) return 'Project programme';
+  if (tab === MODULE_HANDOVER_TAB) return 'Module Handover';
   const s = String(tab || '').replace(/_/g, ' ');
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(tab);
 }

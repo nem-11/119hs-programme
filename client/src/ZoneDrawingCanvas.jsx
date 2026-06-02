@@ -37,6 +37,7 @@ export default function ZoneDrawingCanvas({
   minHeight = 420,
   coarsePointer = false,
   onZoneClick,
+  allowZoneClick = false,
   emptyMessage = 'No drawing selected.',
   className = '',
   enableZoomPan = false,
@@ -163,7 +164,7 @@ export default function ZoneDrawingCanvas({
         const labelLines = String(shortLabel || '').split('\n').filter(Boolean).slice(0, 2);
         const showText = labelLines.length > 0 && minDim >= 1.6;
         const labelActive = labelActiveForZone?.(z) ?? false;
-        const clickable = coarsePointer && typeof onZoneClick === 'function';
+        const clickable = (allowZoneClick || coarsePointer) && typeof onZoneClick === 'function';
         const shape =
           g.kind === 'poly' ? (
             <polygon
