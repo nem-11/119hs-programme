@@ -738,15 +738,11 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
         }
       />
       <div style={{flex:1,display:'flex',flexDirection:'row',minHeight:0}}>
-        <div style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',minHeight:0}}
-          ref={wrapRef}
-          onClick={onCanvasClick}
-        >
+        <div style={{flex:1,minWidth:0,position:'relative',background:'#e8e8ec',minHeight:0,overflow:'auto'}}>
           {drawData?.image_data?(
-            <>
-              <div style={{position:'absolute',inset:0}}>
-                <img alt="Plan" draggable={false} src={`data:image/jpeg;base64,${drawData.image_data}`} style={{width:'100%',height:'100%',objectFit:'fill',display:'block',userSelect:'none',pointerEvents:'none'}}/>
-                <svg style={{position:'absolute',left:0,top:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
+            <div ref={wrapRef} onClick={onCanvasClick} style={{position:'relative',width:'100%'}}>
+                <img alt="Plan" draggable={false} src={`data:image/jpeg;base64,${drawData.image_data}`} style={{display:'block',width:'100%',height:'auto',userSelect:'none',pointerEvents:'none'}}/>
+                <svg style={{position:'absolute',left:0,top:0,right:0,bottom:0,width:'100%',height:'100%',pointerEvents:'none'}} viewBox="0 0 100 100" preserveAspectRatio="none">
                 {zonesSorted.map(z=>{
                   const g=parseZoneGeometry(z),sel=z.id===selectedId;
                   const stackNm=primaryZoneActivityName(z,activityName);
@@ -775,8 +771,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
                   </g>;
                 })}
               </svg>
-              </div>
-            </>
+            </div>
           ):canvasNoPlan}
         </div>
         <div style={{width:'min(440px,46vw)',minWidth:280,maxWidth:'100%',flexShrink:0,borderLeft:`1px solid ${T.hairline}`,background:T.surface,overflowY:'auto',padding:12}}>

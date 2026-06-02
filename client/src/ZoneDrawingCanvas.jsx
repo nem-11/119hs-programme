@@ -140,7 +140,7 @@ export default function ZoneDrawingCanvas({
 
   const svgOverlay = (
     <svg
-      style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: '100%' }}
+      style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >
@@ -230,13 +230,19 @@ export default function ZoneDrawingCanvas({
 
   if (!enableZoomPan) {
     return (
-      <div className={className} style={{ position: 'relative', minHeight, background: '#ececf1' }}>
-        <img
-          alt="Zone drawing"
-          src={`data:image/jpeg;base64,${imageData}`}
-          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-        />
-        {svgOverlay}
+      <div
+        className={className}
+        style={{ position: 'relative', width: '100%', minHeight, background: '#ececf1' }}
+      >
+        {/* Inner box is sized by the image itself so the SVG overlay lines up exactly. */}
+        <div style={{ position: 'relative', width: '100%' }}>
+          <img
+            alt="Zone drawing"
+            src={`data:image/jpeg;base64,${imageData}`}
+            style={{ display: 'block', width: '100%', height: 'auto' }}
+          />
+          {svgOverlay}
+        </div>
         {legend}
       </div>
     );
@@ -250,7 +256,8 @@ export default function ZoneDrawingCanvas({
       className={className}
       style={{
         position: 'relative',
-        height: minHeight,
+        width: '100%',
+        minHeight,
         overflow: 'hidden',
         background: '#ececf1',
         cursor: panning ? 'grabbing' : 'grab',
@@ -308,13 +315,12 @@ export default function ZoneDrawingCanvas({
         touchStart.current = null;
       }}
     >
+      {/* Plate stays in normal flow so the viewport tracks the image height; the
+          transform (zoom/pan) does not change its layout box, so overflow clips cleanly. */}
       <div
         style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
+          position: 'relative',
           width: '100%',
-          height: '100%',
           transform: `translate(${tx}px,${ty}px) scale(${scale})`,
           transformOrigin: '0 0',
           willChange: 'transform',
@@ -324,7 +330,7 @@ export default function ZoneDrawingCanvas({
           alt="Zone drawing"
           draggable={false}
           src={`data:image/jpeg;base64,${imageData}`}
-          style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', userSelect: 'none', pointerEvents: 'none' }}
+          style={{ display: 'block', width: '100%', height: 'auto', userSelect: 'none', pointerEvents: 'none' }}
         />
         {svgOverlay}
       </div>
