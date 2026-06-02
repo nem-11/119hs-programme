@@ -23,7 +23,7 @@ import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
 import { zoneCompletionsAsOf } from './completionStats';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
-import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey } from './planUtils';
+import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey, isProgrammeRowDone } from './planUtils';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
@@ -293,6 +293,34 @@ function overallProjectCompletion(gw, int_s, project_s, comp) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   return { total, done, pct, gw: g, int: i, project: p };
 }
+
+/** Activity-level completion from the Plan programme: one unit per scheduled activity,
+ *  done when ticked on any day (or status done). Matches the Plan tick model. */
+function activityCompletionForTab(planRows, comp, drawingTab) {
+  let total = 0,
+    done = 0;
+  for (const r of planRows || []) {
+    if (!r || String(r.drawing_tab || '') !== drawingTab) continue;
+    const tw = String(r.tower || '').trim();
+    const zn = String(r.zone_name || '').trim();
+    const act = String(r.activity_name || '').trim();
+    if (!tw || !zn || !act) continue;
+    if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
+    total++;
+    if (isProgrammeRowDone(r, comp)) done++;
+  }
+  return { total, done };
+}
+
+function overallActivityCompletion(planRows, comp) {
+  const g = activityCompletionForTab(planRows, comp, 'groundworks');
+  const i = activityCompletionForTab(planRows, comp, 'internals');
+  const p = activityCompletionForTab(planRows, comp, PROJECT_PROGRAMME_TAB);
+  const total = g.total + i.total + p.total;
+  const done = g.done + i.done + p.done;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct, gw: g, int: i, project: p };
+}
 /** Human-readable zone line for Update screen section headers (field context). */
 function zoneSubtitleForSection(sec,seq,tab){
   if(sec.pfx.includes('|')){
@@ -334,7 +362,7 @@ function CompletionRing({pct,done,total}){
       <div style={{fontSize:11,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:6}}>Overall progress</div>
       <div style={{fontSize:17,fontWeight:700,color:T.text,marginBottom:8,letterSpacing:'-0.02em',lineHeight:1.25}}>Programme completion</div>
       <div style={{fontSize:13,color:T.muted,lineHeight:1.55,maxWidth:340}}>
-        {total>0?`${done} of ${total} scheduled activity slots are ticked off across Groundworks, Internals, and Project programme where scheduled (matches Update & Plan).`:'Once activities are scheduled on site days, overall completion appears here.'}
+        {total>0?`${done} of ${total} scheduled activities are ticked off across Groundworks, Internals, and Project programme (matches Plan).`:'Once activities are scheduled on site days, overall completion appears here.'}
       </div>
       {total===0&&<div style={{fontSize:12,color:T.faint,marginTop:10,lineHeight:1.45}}>Use <strong style={{color:T.muted,fontWeight:600}}>Update</strong> after programme data is in place.</div>}
       {total>0&&<div style={{marginTop:14,height:4,borderRadius:4,background:'rgba(26,26,46,0.06)',overflow:'hidden',maxWidth:280}}>
@@ -1213,6 +1241,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   const[planRows,setPlanRows]=useState([]);
   const[mLoadErr,setMLoadErr]=useState('');
   const[mBusy,setMBusy]=useState(false);
+  const[refreshing,setRefreshing]=useState(false);
   const[manualDate,setManualDate]=useState(()=>dateKey(today));
   const[manualLabel,setManualLabel]=useState('');
   const[manualStatus,setManualStatus]=useState('planned');
@@ -1254,6 +1283,20 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     void onActivate?.({silent:true});
     void refreshMilestones({silent:true});
     void refreshPlanMetrics({silent:true});
+  },[onActivate,refreshMilestones,refreshPlanMetrics]);
+
+  /** Manual Refresh button — pull every dashboard data source, not just the parent live data. */
+  const manualRefresh=useCallback(async()=>{
+    setRefreshing(true);
+    try{
+      await Promise.all([
+        Promise.resolve(onActivate?.()),
+        refreshMilestones(),
+        refreshPlanMetrics(),
+      ]);
+    }finally{
+      setRefreshing(false);
+    }
   },[onActivate,refreshMilestones,refreshPlanMetrics]);
 
   useRefreshOnFocus(silentRefresh);
@@ -1345,8 +1388,8 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     }finally{setMBusy(false);}
   }
   const ov=useMemo(
-    ()=>overallProjectCompletionMerged(gw,int_s,project_s,comp,metricPlanRows),
-    [gw,int_s,project_s,comp,metricPlanRows]
+    ()=>overallActivityCompletion(metricPlanRows,comp),
+    [metricPlanRows,comp]
   );
   const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
   const intRem=Math.max(0,ov.int.total-ov.int.done);
@@ -1364,7 +1407,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
       if(!endK)continue;
       const endOrd=milestoneDayOrd(endK);
       if(endOrd==null)continue;
-      const complete=programmeItemAllSlotsTicked(r,comp);
+      const complete=isProgrammeRowDone(r,comp);
       const daysUntil=endOrd-todayOrd;
       let severity=null;
       let kind='';
@@ -1409,9 +1452,9 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   },[metricPlanRows,comp]);
 
   const metrics=[
-    {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW day-slots ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
-    {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT day-slots ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
-    {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (scheduled slots)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
+    {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
+    {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
+    {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (activities)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
   ];
   return<div className="dashboard-page-root" style={{
     flex:1,
@@ -1433,8 +1476,8 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
             <div style={{fontSize:9,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.12em',marginBottom:4}}>Today</div>
             <div style={{fontSize:13,fontWeight:700,color:T.text,lineHeight:1.35}}>{formatDate(today)}</div>
           </div>
-          <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'8px 14px',fontSize:12}}>
-            Refresh
+          <button type="button" disabled={refreshing} onClick={()=>void manualRefresh()} style={{...S.btn,padding:'8px 14px',fontSize:12,opacity:refreshing?0.6:1}}>
+            {refreshing?'Refreshing…':'Refresh'}
           </button>
         </>
       }
@@ -1454,7 +1497,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
           <strong style={{display:'block',marginBottom:4}}>Could not refresh live programme data</strong>
           {liveDataErr}
           <div style={{marginTop:8}}>
-            <button type="button" onClick={()=>void onActivate?.()} style={{...S.btn,padding:'6px 12px',fontSize:11}}>
+            <button type="button" disabled={refreshing} onClick={()=>void manualRefresh()} style={{...S.btn,padding:'6px 12px',fontSize:11}}>
               Retry
             </button>
           </div>

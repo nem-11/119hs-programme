@@ -218,3 +218,39 @@ export function isProgrammeItemDoneOnDay(row, dayKey, comp) {
   if (!ck || !dk) return false;
   return !!comp?.[dk]?.[ck];
 }
+
+/**
+ * Set of completion keys that are ticked on ANY day. Completions are stored per
+ * (day, key), but ticks are activity-level ("activities carry the ticks"), so for
+ * display an activity is done if it has a tick on any day in the completions map.
+ */
+export function completionDoneKeySet(comp) {
+  const s = new Set();
+  if (!comp || typeof comp !== 'object') return s;
+  for (const dk of Object.keys(comp)) {
+    const day = comp[dk];
+    if (!day || typeof day !== 'object') continue;
+    for (const ck of Object.keys(day)) {
+      if (day[ck]) s.add(ck);
+    }
+  }
+  return s;
+}
+
+/**
+ * Activity-level done: status done, or a tick exists on any day for this row's key.
+ * Pass a precomputed key set from completionDoneKeySet(comp) for efficiency; otherwise
+ * the completions map is scanned.
+ */
+export function isProgrammeRowDone(row, comp, doneKeys) {
+  if (!row) return false;
+  if (String(row.status || '').toLowerCase() === 'done') return true;
+  const ck = completionKeyFromProgrammeRow(row);
+  if (!ck) return false;
+  if (doneKeys instanceof Set) return doneKeys.has(ck);
+  if (!comp || typeof comp !== 'object') return false;
+  for (const dk of Object.keys(comp)) {
+    if (comp[dk]?.[ck]) return true;
+  }
+  return false;
+}

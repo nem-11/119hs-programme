@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as api from './api';
 import { T, S } from './uiTheme';
 import { formatShort } from './constants';
-import { completionKeyFromProgrammeRow, isProgrammeItemDoneOnDay } from './planUtils';
+import { completionKeyFromProgrammeRow, isProgrammeRowDone } from './planUtils';
 
 function formatPlanDate(key) {
   const k = String(key || '').trim();
@@ -196,7 +196,7 @@ export default function ActivityChipEditModal({
   const [compBusy, setCompBusy] = useState(false);
 
   const itemId = row ? Number(row.id) : null;
-  const isComplete = isProgrammeItemDoneOnDay(row, completionDayKey, comp);
+  const isComplete = isProgrammeRowDone(row, comp);
 
   useEffect(() => {
     if (!open) return;
@@ -331,11 +331,26 @@ export default function ActivityChipEditModal({
   async function toggleComplete() {
     const ck = completionKeyFromProgrammeRow(row);
     const dk = String(completionDayKey || '').trim();
-    if (!ck || !dk || !canTick) return;
+    if (!ck || !canTick) return;
     setCompBusy(true);
     setErr('');
     try {
-      await api.toggleCompletion(dk, ck, userName || '');
+      if (isComplete) {
+        // Activity-level untick: clear every day that carries a tick for this activity.
+        const days = comp && typeof comp === 'object'
+          ? Object.keys(comp).filter((d) => comp[d] && comp[d][ck])
+          : [];
+        if (days.length) {
+          for (const d of days) {
+            await api.toggleCompletion(d, ck, userName || '');
+          }
+        } else if (dk) {
+          await api.toggleCompletion(dk, ck, userName || '');
+        }
+      } else {
+        if (!dk) return;
+        await api.toggleCompletion(dk, ck, userName || '');
+      }
       if (onCompletionChange) await onCompletionChange();
     } catch (e) {
       setErr(e?.message || 'Could not update completion');
