@@ -28,7 +28,7 @@ import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
 import PlanAddActivityModal from './PlanAddActivityModal';
 import PlanActivityChip from './PlanActivityChip';
-import { clearPrintPageSize, setPrintPageSize } from './printPage';
+import { clearPrintPageSize, setPrintPageSize, PAPER_DIMS_MM } from './printPage';
 
 /**
  * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
@@ -91,16 +91,46 @@ function planZoneDrawingStyles(zoneIndex, { done, active }) {
   return { fill, stroke, strokeW: 1.05 };
 }
 
-const PDF_ROWS_PER_PAGE_PRESETS = [15, 20, 25, 30];
+const PDF_PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
+
+/* Layout constants (mm) used to estimate how much fits on a sheet and stay readable. */
+const PRINT_MARGIN_MM = 10; // matches @page margin in printPage.js
+const PRINT_HEADER_RESERVE_MM = 26; // title block + compact legend strip
+const PRINT_ZONE_COL_MM = 34; // sticky zone-label column
+const PRINT_HEAD_ROW_MM = 11; // table header (date) row
+const PRINT_MIN_DAY_COL_MM = 11; // keep each day column readable
+const PRINT_MIN_ROW_MM = 8; // keep each zone row readable
+
+/**
+ * Estimate how many rows (zones) and columns (days) fit on one sheet while
+ * staying legible. Larger paper => more capacity, so the grid never has to be
+ * shrunk into an unreadable cascade. Portrait swaps the long/short side.
+ */
+function paperCapacity(paper, orientation) {
+  const dims = PAPER_DIMS_MM[String(paper || 'A3').toUpperCase()] || PAPER_DIMS_MM.A3;
+  const [shortSide, longSide] = dims;
+  const portrait = String(orientation || 'landscape').toLowerCase() === 'portrait';
+  const widthMm = portrait ? shortSide : longSide;
+  const heightMm = portrait ? longSide : shortSide;
+  const usableW = widthMm - 2 * PRINT_MARGIN_MM - PRINT_ZONE_COL_MM;
+  const usableH = heightMm - 2 * PRINT_MARGIN_MM - PRINT_HEADER_RESERVE_MM - PRINT_HEAD_ROW_MM;
+  const cols = Math.max(1, Math.floor(usableW / PRINT_MIN_DAY_COL_MM));
+  const rows = Math.max(1, Math.floor(usableH / PRINT_MIN_ROW_MM));
+  return { rows, cols };
+}
+
+function sanitizePerPage(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.min(400, Math.round(n)));
+}
 
 function sanitizeRowsPerPage(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 25;
-  return Math.max(1, Math.min(100, Math.round(n)));
+  return sanitizePerPage(value, 25);
 }
 
 function chunkArray(items, size) {
-  const n = sanitizeRowsPerPage(size);
+  const n = Math.max(1, Math.round(Number(size) || 1));
   const chunks = [];
   for (let i = 0; i < items.length; i += n) {
     chunks.push(items.slice(i, i + n));
@@ -174,8 +204,9 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     showWeekends: true,
     paper: 'A3',
     orientation: 'landscape',
+    fit_to_paper: true,
     rows_per_page: 25,
-    rows_per_page_custom: false,
+    cols_per_page: 20,
   });
 
   /** Active during print preview + print dialog */
@@ -741,29 +772,29 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     });
   }
 
-  function handlePrintClick() {
-    runPrint({
+  function printLayoutFromOpts(extra) {
+    const cap = paperCapacity(pdfOpts.paper, pdfOpts.orientation);
+    const rowsPerPage = pdfOpts.fit_to_paper ? cap.rows : sanitizePerPage(pdfOpts.rows_per_page, cap.rows);
+    const colsPerPage = pdfOpts.fit_to_paper ? cap.cols : sanitizePerPage(pdfOpts.cols_per_page, cap.cols);
+    return {
       showWeekends: pdfOpts.showWeekends,
       legend: pdfOpts.legend,
       header: pdfOpts.header,
-      emptyZones: false,
       paper: pdfOpts.paper,
       orientation: pdfOpts.orientation,
-      rowsPerPage: pdfOpts.rows_per_page,
-    });
+      rowsPerPage,
+      colsPerPage,
+      ...extra,
+    };
+  }
+
+  function handlePrintClick() {
+    runPrint(printLayoutFromOpts({ emptyZones: false }));
   }
 
   function confirmPdfExport() {
     setPdfOpen(false);
-    runPrint({
-      showWeekends: pdfOpts.showWeekends,
-      legend: pdfOpts.legend,
-      header: pdfOpts.header,
-      emptyZones: pdfOpts.allZones,
-      paper: pdfOpts.paper,
-      orientation: pdfOpts.orientation,
-      rowsPerPage: pdfOpts.rows_per_page,
-    });
+    runPrint(printLayoutFromOpts({ emptyZones: pdfOpts.allZones }));
   }
 
   async function exportAdminCsv() {
@@ -810,12 +841,26 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
   const printHeaderVisible = printLayout && printLayout.header;
   const legendVisible = printLayout == null || printLayout.legend;
-  const activeRowsPerPage = sanitizeRowsPerPage(printLayout?.rowsPerPage ?? pdfOpts.rows_per_page);
-  const printZoneBlockPages = useMemo(() => {
-    if (!printLayout) return [zoneBlocks];
-    return chunkArray(zoneBlocks, activeRowsPerPage);
-  }, [zoneBlocks, printLayout, activeRowsPerPage]);
-  const rowsPerPageIsCustom = !!pdfOpts.rows_per_page_custom;
+  const autoCapacity = paperCapacity(pdfOpts.paper, pdfOpts.orientation);
+  const activeRowsPerPage = sanitizePerPage(printLayout?.rowsPerPage ?? pdfOpts.rows_per_page, autoCapacity.rows);
+  const activeColsPerPage = sanitizePerPage(printLayout?.colsPerPage ?? pdfOpts.cols_per_page, autoCapacity.cols);
+  /**
+   * Each printed sheet is a (row-chunk × column-chunk) tile so neither zones
+   * nor day columns ever overflow a page. On screen (no printLayout) the whole
+   * grid stays as a single scrollable table.
+   */
+  const printPages = useMemo(() => {
+    if (!printLayout) return [{ rows: zoneBlocks, cols: dayColumns }];
+    const rowChunks = chunkArray(zoneBlocks, activeRowsPerPage);
+    const colChunks = chunkArray(dayColumns, activeColsPerPage);
+    const pages = [];
+    for (const rows of rowChunks) {
+      for (const cols of colChunks) {
+        pages.push({ rows, cols });
+      }
+    }
+    return pages.length ? pages : [{ rows: zoneBlocks, cols: dayColumns }];
+  }, [zoneBlocks, dayColumns, printLayout, activeRowsPerPage, activeColsPerPage]);
   const clash = useMemo(() => detectClash(rows), [rows]);
 
   const headerSummaryChips = useMemo(() => {
@@ -1137,7 +1182,9 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         )}
         {viewMode === 'grid' && zoneBlocks.length > 0 && (
           <>
-            {printZoneBlockPages.map((pageRows, pageIndex, pages) => {
+            {printPages.map((page, pageIndex, pages) => {
+              const pageRows = page.rows;
+              const pageCols = page.cols;
               const isLastPrintPage = pageIndex === pages.length - 1;
               return (
                 <div
@@ -1177,7 +1224,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                         >
                           Zone
                         </th>
-                        {dayColumns.map((dk) => {
+                        {pageCols.map((dk) => {
                           const d = new Date(dk + 'T12:00:00');
                           const colGrey = isNonWorkingPlanDayKey(dk);
                           const isToday = dk === todayKey && !isNonWorkingPlanDayKey(dk);
@@ -1275,7 +1322,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                               )}
                             </div>
                           </td>
-                          {dayColumns.map((dk) => {
+                          {pageCols.map((dk) => {
                             const hits = z.cells[dk] || [];
                             const colGrey = isNonWorkingPlanDayKey(dk);
                             return (
@@ -1565,13 +1612,13 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Paper</div>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {['A3', 'A4'].map((paper) => (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {PDF_PAPER_SIZES.map((paper) => (
                     <button
                       key={paper}
                       type="button"
                       onClick={() => setPdfOpts((o) => ({ ...o, paper }))}
-                      style={{ ...S.btn, ...(pdfOpts.paper === paper ? S.btnAct : {}), flex: 1, padding: '7px 10px', fontSize: 12 }}
+                      style={{ ...S.btn, ...(pdfOpts.paper === paper ? S.btnAct : {}), flex: '1 0 auto', minWidth: 40, padding: '7px 10px', fontSize: 12 }}
                     >
                       {paper}
                     </button>
@@ -1598,36 +1645,49 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </div>
             </div>
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Rows per page</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {PDF_ROWS_PER_PAGE_PRESETS.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setPdfOpts((o) => ({ ...o, rows_per_page: n, rows_per_page_custom: false }))}
-                    style={{ ...S.btn, ...(!rowsPerPageIsCustom && sanitizeRowsPerPage(pdfOpts.rows_per_page) === n ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
-                  >
-                    {n}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setPdfOpts((o) => ({ ...o, rows_per_page: sanitizeRowsPerPage(o.rows_per_page), rows_per_page_custom: true }))}
-                  style={{ ...S.btn, ...(rowsPerPageIsCustom ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
-                >
-                  Custom
-                </button>
-              </div>
-              {rowsPerPageIsCustom && (
+              <div style={{ fontSize: 11, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Grid per page</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: T.text, cursor: 'pointer' }}>
                 <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={sanitizeRowsPerPage(pdfOpts.rows_per_page)}
-                  onChange={(e) => setPdfOpts((o) => ({ ...o, rows_per_page: sanitizeRowsPerPage(e.target.value) }))}
-                  style={{ ...S.input, display: 'block', marginTop: 6, width: 120, fontSize: 12, padding: '6px 10px' }}
-                  aria-label="Custom rows per page"
+                  type="checkbox"
+                  checked={pdfOpts.fit_to_paper}
+                  onChange={(e) => setPdfOpts((o) => ({ ...o, fit_to_paper: e.target.checked }))}
                 />
+                <span>Auto-fit to paper (keep rows &amp; columns readable)</span>
+              </label>
+              {pdfOpts.fit_to_paper ? (
+                <p style={{ fontSize: 11, color: T.faint, margin: '6px 0 0', lineHeight: 1.4 }}>
+                  {pdfOpts.paper} {pdfOpts.orientation} fits about{' '}
+                  <strong style={{ color: T.muted }}>{autoCapacity.rows} rows</strong> ×{' '}
+                  <strong style={{ color: T.muted }}>{autoCapacity.cols} day columns</strong> per sheet. Larger
+                  paper fits more, so the grid is never squashed.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: T.muted }}>
+                    Rows per page
+                    <input
+                      type="number"
+                      min="1"
+                      max="400"
+                      value={sanitizePerPage(pdfOpts.rows_per_page, autoCapacity.rows)}
+                      onChange={(e) => setPdfOpts((o) => ({ ...o, rows_per_page: sanitizePerPage(e.target.value, autoCapacity.rows) }))}
+                      style={{ ...S.input, display: 'block', marginTop: 4, width: 110, fontSize: 12, padding: '6px 10px' }}
+                      aria-label="Rows per page"
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: T.muted }}>
+                    Columns per page
+                    <input
+                      type="number"
+                      min="1"
+                      max="400"
+                      value={sanitizePerPage(pdfOpts.cols_per_page, autoCapacity.cols)}
+                      onChange={(e) => setPdfOpts((o) => ({ ...o, cols_per_page: sanitizePerPage(e.target.value, autoCapacity.cols) }))}
+                      style={{ ...S.input, display: 'block', marginTop: 4, width: 110, fontSize: 12, padding: '6px 10px' }}
+                      aria-label="Columns per page"
+                    />
+                  </label>
+                </div>
               )}
             </div>
             <p style={{ fontSize: 10, color: T.faint, margin: '0 0 14px', lineHeight: 1.4 }}>
