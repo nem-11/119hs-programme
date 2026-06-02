@@ -571,9 +571,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   function toggleTower(tw) {
     setTowerWhitelist((prev) => {
       const full = new Set(towersInView);
-      const cur = prev === null ? full : new Set(prev);
+      // Always work on a fresh copy — when prev === null (all towers) we must not
+      // mutate `full`, otherwise the size check below always matches and resets to all.
+      const cur = new Set(prev === null ? full : prev);
       if (cur.has(tw)) cur.delete(tw);
       else cur.add(tw);
+      if (cur.size === 0) return null;
       if (cur.size === full.size) return null;
       return cur;
     });
