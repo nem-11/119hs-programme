@@ -901,6 +901,14 @@ module.exports = {
   updateDrawingFileUrl: (id, fileUrl) => {
     run('UPDATE drawings SET file_url=? WHERE id=?', [fileUrl || null, id]);
   },
+  renameDrawing: (id, name) => {
+    const nm = String(name || '').trim();
+    if (!nm) return { error: 'name_required' };
+    const d = get('SELECT id FROM drawings WHERE id=?', [id]);
+    if (!d) return { error: 'not_found' };
+    run('UPDATE drawings SET name=? WHERE id=?', [nm, id]);
+    return { ok: true };
+  },
   deleteDrawing: (id) => {
     const zs = all('SELECT id, tower, name FROM zones WHERE drawing_id=?', [id]);
     zs.forEach((z) => {

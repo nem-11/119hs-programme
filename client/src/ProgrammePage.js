@@ -193,6 +193,30 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   },[tab]);
 
   useEffect(()=>{reloadDrawings()},[reloadDrawings]);
+
+  async function renameSelectedDrawing(){
+    if(!selDraw)return;
+    const cur=tabDrawings.find(d=>d.id===selDraw);
+    const next=window.prompt('Rename drawing',cur?.name||'');
+    if(next==null)return;
+    const trimmed=String(next).trim();
+    if(!trimmed||trimmed===cur?.name)return;
+    const res=await api.renameDrawing(selDraw,trimmed);
+    if(res&&res.error){window.alert(res.error||'Could not rename drawing');return}
+    reloadDrawings();
+  }
+
+  async function deleteSelectedDrawing(){
+    if(!selDraw)return;
+    const cur=tabDrawings.find(d=>d.id===selDraw);
+    if(!window.confirm(`Delete drawing "${cur?.name||''}"?\n\nThis also removes its zones and any programme rows on those zones. This cannot be undone.`))return;
+    const res=await api.deleteDrawing(selDraw);
+    if(res&&res.error){window.alert(res.error||'Could not delete drawing');return}
+    setSelDraw(null);
+    reloadDrawings();
+    if(onScheduleChanged)onScheduleChanged();
+  }
+
   useEffect(()=>{api.getActivities().then(a=>setActivities(a||[]))},[]);
   useEffect(()=>{api.getTemplates().then(t=>setTemplates(t||[]))},[]);
 
@@ -734,6 +758,20 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
             <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
               {tabDrawings.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
+          ) : null
+        }
+        actions={
+          selDraw && canEdit ? (
+            <>
+              <button type="button" onClick={renameSelectedDrawing} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }} title="Rename this drawing">
+                Rename
+              </button>
+              {isAdmin && (
+                <button type="button" onClick={deleteSelectedDrawing} style={{ ...S.btn, ...S.btnDanger, padding: '6px 10px', fontSize: 11 }} title="Delete this drawing, its zones and programme rows">
+                  Delete drawing
+                </button>
+              )}
+            </>
           ) : null
         }
       />

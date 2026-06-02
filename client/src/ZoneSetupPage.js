@@ -957,6 +957,18 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
     setSelectedId(null);setSelDraw(null);reloadDrawings();
   }
 
+  async function renameDrawing(){
+    if(!canEdit||!selDraw)return;
+    const cur=drawings.find(d=>d.id===selDraw);
+    const next=window.prompt('Rename drawing',cur?.name||'');
+    if(next==null)return;
+    const trimmed=String(next).trim();
+    if(!trimmed||trimmed===cur?.name)return;
+    const res=await api.renameDrawing(selDraw,trimmed);
+    if(res&&res.error){window.alert(res.error||'Could not rename drawing');return}
+    reloadDrawings();
+  }
+
   async function commitPolygonZone(){
     if(polyPts.length<3)return;
     const geometry={kind:'poly',points:polyPts.map(p=>[p[0],p[1]])};
@@ -1097,6 +1109,9 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
                 Upload plan
                 <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/*,application/pdf,.pdf" onChange={handleUpload} style={{ display: 'none' }} />
               </label>
+            )}
+            {canEdit && selDraw && (
+              <button type="button" onClick={renameDrawing} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }} title="Rename this drawing">Rename</button>
             )}
             {isAdmin && selDraw && (
               <button type="button" onClick={removeDrawing} style={{ ...S.btn, ...S.btnDanger, padding: '6px 10px', fontSize: 11 }}>Delete drawing</button>

@@ -91,6 +91,7 @@ export const deleteUser=(id)=>api('DELETE',`/api/users/${id}`);
 export const getDrawings=()=>api('GET','/api/drawings');
 export const getDrawing=(id)=>api('GET',`/api/drawings/${id}`);
 export const uploadDrawing=(name,tab,floor,image_data,width,height,file_url)=>api('POST','/api/drawings',{name,tab,floor,image_data,width,height,file_url:file_url||null});
+export const renameDrawing=(id,name)=>api('PATCH',`/api/drawings/${id}`,{name});
 export const deleteDrawing=(id)=>api('DELETE',`/api/drawings/${id}`);
 export const getZonesForDrawing=(id)=>api('GET',`/api/zones/${id}`);
 export const addZone=(drawing_id,name,tower,geometry,activities)=>api('POST','/api/zones',{drawing_id,name,tower,geometry,activities:activities&&activities.length?activities:undefined});

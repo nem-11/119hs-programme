@@ -287,6 +287,15 @@ app.post('/api/drawings', auth, programmeEditor, (req, res) => {
   const r = db.addDrawing(name, tab, floor, image_data, width || 0, height || 0, file_url || null);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
+app.patch('/api/drawings/:id', auth, programmeEditor, (req, res) => {
+  const chk = perm.assertDrawingTabAllowed(db, req.user, req.params.id);
+  if (!chk.ok) return res.status(403).json({ error: 'Drawing not permitted' });
+  const out = db.renameDrawing(req.params.id, req.body?.name);
+  if (out?.error === 'not_found') return res.status(404).json({ error: 'Not found' });
+  if (out?.error === 'name_required') return res.status(400).json({ error: 'name required' });
+  if (out?.error) return res.status(400).json({ error: String(out.error) });
+  res.json({ ok: true });
+});
 app.delete('/api/drawings/:id', auth, admin, (req, res) => {
   db.deleteDrawing(req.params.id);
   res.json({ ok: true });
