@@ -2019,26 +2019,25 @@ module.exports = {
 
     const anchorRow = rows.find((r) => r && Number(r.idx) === k) || rows[k];
     if (!anchorRow || !anchorRow.start_date) {
+      console.error('[119HS] anchor metadata skipped for zone', zid, '- no dated anchor row at stage', k);
       return {
         ...buildSuccessPayload(),
         anchor_metadata_warning: anchorMetadataWarning,
       };
     }
 
-    const storedStageIdx =
-      zoneMetaOpt?.programme_stage_idx != null && zoneMetaOpt.programme_stage_idx !== ''
-        ? Number(zoneMetaOpt.programme_stage_idx)
-        : k;
-    const storedAnchorDate =
-      zoneMetaOpt?.programme_anchor_date != null &&
-      String(zoneMetaOpt.programme_anchor_date).trim()
-        ? pw.normalizeScheduleStartKey(String(zoneMetaOpt.programme_anchor_date).trim())
-        : anchorRow.start_date;
-    const storedAnchorActId =
-      zoneMetaOpt?.programme_anchor_activity_id != null &&
-      zoneMetaOpt.programme_anchor_activity_id !== ''
-        ? Number(zoneMetaOpt.programme_anchor_activity_id)
-        : Number(anchorActivityId);
+    // Coerce every bound value to a concrete type — sql.js throws if any param is
+    // undefined/NaN, which previously surfaced as a spurious "anchor metadata" warning.
+    const smi = Number(zoneMetaOpt?.programme_stage_idx);
+    const storedStageIdx = Number.isFinite(smi) ? smi : k;
+    let storedAnchorDate = anchorRow.start_date;
+    if (zoneMetaOpt?.programme_anchor_date != null && String(zoneMetaOpt.programme_anchor_date).trim()) {
+      const norm = pw.normalizeScheduleStartKey(String(zoneMetaOpt.programme_anchor_date).trim());
+      if (norm) storedAnchorDate = norm;
+    }
+    const ami = Number(zoneMetaOpt?.programme_anchor_activity_id);
+    const aaid = Number(anchorActivityId);
+    const storedAnchorActId = Number.isFinite(ami) ? ami : Number.isFinite(aaid) ? aaid : null;
 
     try {
       const now = new Date().toISOString();
@@ -2047,7 +2046,8 @@ module.exports = {
         [tid, storedStageIdx, storedAnchorDate, storedAnchorActId, now, zid]
       );
       save();
-    } catch (_) {
+    } catch (e) {
+      console.error('[119HS] anchor metadata update failed for zone', zid, '-', e && e.message ? e.message : e);
       return {
         ...buildSuccessPayload(),
         anchor_metadata_warning: anchorMetadataWarning,
