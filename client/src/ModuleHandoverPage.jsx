@@ -752,19 +752,25 @@ export default function ModuleHandoverPage({ canManage = false }) {
     else reloadZones(drawingId);
   }
 
-  async function deleteModule() {
-    if (!selected || !canManage) return;
-    if (!window.confirm(`Delete module "${selected.name}"?`)) return;
-    const out = await api.deleteModuleZone(Number(selected.id));
+  async function deleteModuleById(zone) {
+    if (!zone || !canManage) return;
+    if (!window.confirm(`Delete module "${zone.name}"?`)) return;
+    const out = await api.deleteModuleZone(Number(zone.id));
     if (out && out.error) setErr(String(out.error));
     else {
-      setSelId(null);
-      setEditId(null);
-      setEditGeom(null);
-      editGeomRef.current = null;
-      editIdRef.current = null;
+      if (Number(selId) === Number(zone.id)) setSelId(null);
+      if (Number(editId) === Number(zone.id)) {
+        setEditId(null);
+        setEditGeom(null);
+        editGeomRef.current = null;
+        editIdRef.current = null;
+      }
       reloadZones(drawingId);
     }
+  }
+
+  function deleteModule() {
+    return deleteModuleById(selected);
   }
 
   const styleForZone = useCallback(
@@ -1198,6 +1204,71 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 ))}
               </div>
             </div>
+
+            {zones.length > 0 && (
+              <div style={{ ...card, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                  Modules ({zones.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflow: 'auto' }}>
+                  {[...zones]
+                    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }))
+                    .map((z) => {
+                      const meta = moduleStageMeta(z.handover_stage);
+                      const isSel = Number(z.id) === Number(selected?.id);
+                      return (
+                        <div
+                          key={z.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '5px 8px',
+                            borderRadius: 7,
+                            background: isSel ? 'rgba(36,68,140,0.08)' : 'transparent',
+                            border: `1px solid ${isSel ? 'rgba(36,68,140,0.35)' : 'transparent'}`,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelId(Number(z.id));
+                              if (editMode) setEditId(Number(z.id));
+                            }}
+                            style={{
+                              flex: 1,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              background: 'transparent',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              fontSize: 13,
+                              color: T.text,
+                              fontWeight: isSel ? 800 : 600,
+                            }}
+                          >
+                            <span style={{ width: 11, height: 11, borderRadius: 3, background: meta.swatch || meta.fill, border: `1px solid ${meta.stroke}`, flex: '0 0 auto' }} />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.name}</span>
+                          </button>
+                          {canManage && (
+                            <button
+                              type="button"
+                              title={`Delete module "${z.name}"`}
+                              onClick={() => deleteModuleById(z)}
+                              style={{ ...S.btn, padding: '2px 8px', fontSize: 12, color: '#b3261e', flex: '0 0 auto' }}
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
 
             {selected ? (
               <div style={{ ...card, padding: 14 }}>
