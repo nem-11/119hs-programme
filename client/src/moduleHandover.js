@@ -21,7 +21,7 @@ export const MODULE_STAGES = [
   },
   {
     key: 'snagging_wip',
-    label: 'Snagging in progress',
+    label: 'Works in progress',
     swatch: 'rgb(251, 140, 0)',
     fill: 'rgba(251, 140, 0, 0.44)',
     stroke: 'rgba(230, 108, 0, 0.92)',

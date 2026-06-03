@@ -82,8 +82,15 @@ function completionKeyAllowedForUser(db, user, dateStr, key) {
   return false;
 }
 
+/** Tabs used for drawing/zone/schedule scope — board always includes module handover (dashboard + Modules page). */
+function effectiveUserTabs(user) {
+  const tabs = new Set(Array.isArray(user?.tabs) ? user.tabs.filter(Boolean) : []);
+  if (isBoardViewer(user?.role)) tabs.add('module_handover');
+  return tabs;
+}
+
 function userTabsSet(user) {
-  return new Set(user.tabs || []);
+  return effectiveUserTabs(user);
 }
 
 function assertDrawingTabAllowed(db, user, drawingId) {

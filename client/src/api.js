@@ -71,6 +71,7 @@ export async function uploadSitePhoto(file){
 }
 export function logout(){localStorage.removeItem('119hs-token');localStorage.removeItem('119hs-user')}
 export function getStoredUser(){const t=getToken(),u=localStorage.getItem('119hs-user');return t&&u?JSON.parse(u):null}
+export const getMe=()=>api('GET','/api/me');
 export const getActivities=()=>api('GET','/api/activities');
 export const createActivity=(name,type)=>api('POST','/api/activities',{name,type});
 export const renameActivity=(id,name)=>api('PUT',`/api/activities/${id}`,{name});

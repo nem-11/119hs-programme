@@ -1297,7 +1297,14 @@ function DashboardModuleSection(){
   const summary=useMemo(()=>moduleCompletionSummary(zones),[zones]);
   const totalSummary=useMemo(()=>moduleCompletionSummary(allZones),[allZones]);
 
-  if(!drawings.length)return null;
+  if(!drawings.length){
+    return(
+      <section style={{padding:18,background:grad.cardSurface,borderRadius:16,border:'1px solid rgba(26,26,46,0.06)',boxShadow:shadowCard,marginTop:16}}>
+        <div style={{fontSize:16,fontWeight:800,color:T.text,marginBottom:6}}>Module completion</div>
+        <div style={{fontSize:13,color:T.muted}}>No module floor plans are set up yet. Drawings added in the Modules tab will appear here.</div>
+      </section>
+    );
+  }
 
   const legend=(
     <div style={{display:'flex',flexWrap:'wrap',gap:10,padding:'10px 12px',background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginTop:10}}>
@@ -2697,9 +2704,19 @@ function LAPage({ planRows, comp, date, tab, onRefreshLiveData }) {
   </div>;
 }
 
-function MainApp({user,onLogout}){
+function MainApp({user,onLogout,onUserUpdate}){
   const[gw,setGw]=useState({});const[int_s,setInt]=useState({});const[project_s,setProjectSched]=useState({});const[comp,setComp]=useState({});const[planRows,setPlanRows]=useState([]);const[loading,setLoading]=useState(true);
   const[liveDataErr,setLiveDataErr]=useState('');
+
+  useEffect(()=>{
+    let cancelled=false;
+    api.getMe().then((d)=>{
+      if(cancelled||!d?.user||d.error)return;
+      localStorage.setItem('119hs-user',JSON.stringify(d.user));
+      onUserUpdate?.(d.user);
+    }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[]);
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
   const[selectedScopeTabs,setSelectedScopeTabs]=useState(()=>{
     const base=Array.isArray(user.tabs)&&user.tabs.length?[...user.tabs].filter(Boolean):['groundworks','internals'];
@@ -2806,6 +2823,6 @@ function MainApp({user,onLogout}){
 export default function App(){
   const[user,setUser]=useState(()=>api.getStoredUser());
   return<AppErrorBoundary>
-    {!user?<LoginPage onLogin={setUser}/>:<MainApp user={user} onLogout={()=>{api.logout();setUser(null)}}/>}
+    {!user?<LoginPage onLogin={setUser}/>:<MainApp user={user} onUserUpdate={setUser} onLogout={()=>{api.logout();setUser(null)}}/>}
   </AppErrorBoundary>;
 }

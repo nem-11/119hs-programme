@@ -83,7 +83,23 @@ function auth(req, res, next) {
   const t = req.headers.authorization?.split(' ')[1];
   if (!t) return res.status(401).json({ error: 'No token' });
   try {
-    req.user = jwt.verify(t, SECRET);
+    const payload = jwt.verify(t, SECRET);
+    const row = db.getUser(payload.username);
+    if (row) {
+      let tabs = [];
+      try {
+        tabs = JSON.parse(row.tabs || '[]');
+      } catch (_) {}
+      req.user = {
+        id: row.id,
+        username: row.username,
+        name: row.name,
+        role: row.role,
+        tabs: Array.isArray(tabs) ? tabs : [],
+      };
+    } else {
+      req.user = payload;
+    }
     next();
   } catch (e) {
     res.status(401).json({ error: 'Invalid token' });
@@ -121,14 +137,32 @@ app.post('/api/login', (req, res) => {
   if (!u) return res.status(401).json({ error: 'Invalid' });
   const bcrypt = require('bcryptjs');
   if (!bcrypt.compareSync(password, u.password_hash)) return res.status(401).json({ error: 'Invalid' });
+  let tabs = [];
+  try {
+    tabs = JSON.parse(u.tabs || '[]');
+  } catch (_) {}
+  if (!Array.isArray(tabs)) tabs = [];
   const token = jwt.sign(
-    { id: u.id, username: u.username, name: u.name, role: u.role, tabs: JSON.parse(u.tabs) },
+    { id: u.id, username: u.username, name: u.name, role: u.role, tabs },
     SECRET,
     { expiresIn: '7d' }
   );
   res.json({
     token,
-    user: { id: u.id, username: u.username, name: u.name, role: u.role, tabs: JSON.parse(u.tabs) },
+    user: { id: u.id, username: u.username, name: u.name, role: u.role, tabs },
+  });
+});
+
+/** Fresh role/tabs from DB (JWT may be stale after migrations). */
+app.get('/api/me', auth, (req, res) => {
+  res.json({
+    user: {
+      id: req.user.id,
+      username: req.user.username,
+      name: req.user.name,
+      role: req.user.role,
+      tabs: req.user.tabs || [],
+    },
   });
 });
 
