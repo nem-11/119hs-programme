@@ -42,6 +42,27 @@ async function rasterizeImageFile(file) {
   return { width: c.width, height: c.height, b64 };
 }
 
+const DRAW_MIN_SCALE = 0.5;
+const DRAW_MAX_SCALE = 8;
+const clampDrawScale = (s) => Math.min(DRAW_MAX_SCALE, Math.max(DRAW_MIN_SCALE, s));
+
+const drawZoomBtn = {
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  border: '1px solid rgba(26,26,46,0.18)',
+  background: 'rgba(255,255,255,0.96)',
+  color: '#1a1a2e',
+  fontSize: 17,
+  fontWeight: 700,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxShadow: '0 2px 8px rgba(26,26,46,0.14)',
+  lineHeight: 1,
+};
+
 /** Module Handover — modules drawn as zones on a plan, each carrying a single handover stage. */
 export default function ModuleHandoverPage({ canManage = false }) {
   const [drawings, setDrawings] = useState([]);
@@ -65,8 +86,18 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [importSources, setImportSources] = useState([]);
   const [importSel, setImportSel] = useState(() => new Set());
   const [importBusy, setImportBusy] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyTargetId, setCopyTargetId] = useState('');
+  const [copyOffset, setCopyOffset] = useState(100);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyProgress, setCopyProgress] = useState(null);
+  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  const [panning, setPanning] = useState(false);
+  const [panMode, setPanMode] = useState(false);
 
   const wrapRef = useRef(null);
+  const viewportRef = useRef(null);
+  const panDragRef = useRef(null);
   const drawingRef = useRef(false);
   const card = { background: '#fff', borderRadius: 12, border: '1px solid rgba(26,26,46,0.06)', boxShadow: shadowCard };
 
@@ -259,6 +290,60 @@ export default function ModuleHandoverPage({ canManage = false }) {
     }
   }
 
+  const otherDrawings = useMemo(
+    () => drawings.filter((d) => Number(d.id) !== Number(drawingId)),
+    [drawings, drawingId]
+  );
+
+  function openCopy() {
+    setErr('');
+    setCopyTargetId(otherDrawings[0]?.id ? String(otherDrawings[0].id) : '');
+    setCopyOffset(100);
+    setCopyOpen(true);
+  }
+
+  /** Shift the first run of digits in a module name (e.g. "119" + 100 → "219", "M-101" → "M-201"). */
+  function renumberName(name, offset) {
+    const s = String(name || '');
+    if (!offset) return s;
+    const m = s.match(/\d+/);
+    if (!m) return s;
+    const next = parseInt(m[0], 10) + Number(offset);
+    return s.slice(0, m.index) + next + s.slice(m.index + m[0].length);
+  }
+
+  async function runCopy() {
+    const targetId = copyTargetId;
+    if (!targetId || !zones.length) {
+      setCopyOpen(false);
+      return;
+    }
+    setCopyBusy(true);
+    setErr('');
+    try {
+      const off = Number(copyOffset) || 0;
+      for (let i = 0; i < zones.length; i++) {
+        setCopyProgress({ cur: i, total: zones.length });
+        const z = zones[i];
+        const g = parseZoneGeometry(z);
+        if (!g) continue;
+        const newName = renumberName(z.name, off).trim() || 'Module';
+        const out = await api.addModuleZone(targetId, newName, '', g);
+        if (out && out.error) {
+          setErr(String(out.error));
+          break;
+        }
+      }
+      setCopyOpen(false);
+      setDrawingId(String(targetId));
+    } catch (e) {
+      setErr(e?.message || 'Copy failed');
+    } finally {
+      setCopyBusy(false);
+      setCopyProgress(null);
+    }
+  }
+
   function clientToPct(clientX, clientY) {
     const el = wrapRef.current;
     if (!el) return [0, 0];
@@ -267,6 +352,71 @@ export default function ModuleHandoverPage({ canManage = false }) {
     const y = ((clientY - r.top) / Math.max(r.height, 1)) * 100;
     return [Math.max(0, Math.min(100, x)), Math.max(0, Math.min(100, y))];
   }
+
+  // Reset zoom/pan whenever the drawing changes or we switch view/draw tools.
+  useEffect(() => {
+    setView({ scale: 1, tx: 0, ty: 0 });
+    setPanMode(false);
+  }, [drawingId, tool]);
+
+  // Scroll-to-zoom on the draw canvas (active listener so we can preventDefault).
+  useEffect(() => {
+    if (tool !== 'draw') return undefined;
+    const vp = viewportRef.current;
+    if (!vp || !drawing?.image_data) return undefined;
+    const handler = (e) => {
+      e.preventDefault();
+      const vr = vp.getBoundingClientRect();
+      const mx = e.clientX - vr.left;
+      const my = e.clientY - vr.top;
+      const delta = e.deltaY > 0 ? -0.12 : 0.12;
+      setView((v) => {
+        const next = clampDrawScale(v.scale + delta);
+        const cx = (mx - v.tx) / v.scale;
+        const cy = (my - v.ty) / v.scale;
+        return { scale: next, tx: mx - cx * next, ty: my - cy * next };
+      });
+    };
+    vp.addEventListener('wheel', handler, { passive: false });
+    return () => vp.removeEventListener('wheel', handler);
+  }, [tool, drawing]);
+
+  const zoomDraw = useCallback((delta) => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const vr = vp.getBoundingClientRect();
+    const mx = vr.width / 2;
+    const my = vr.height / 2;
+    setView((v) => {
+      const next = clampDrawScale(v.scale + delta);
+      const cx = (mx - v.tx) / v.scale;
+      const cy = (my - v.ty) / v.scale;
+      return { scale: next, tx: mx - cx * next, ty: my - cy * next };
+    });
+  }, []);
+
+  const resetDrawView = useCallback(() => setView({ scale: 1, tx: 0, ty: 0 }), []);
+
+  const onPanMouseDown = useCallback((e) => {
+    panDragRef.current = { lastX: e.clientX, lastY: e.clientY };
+    setPanning(true);
+    const onMove = (ev) => {
+      if (!panDragRef.current) return;
+      const dx = ev.clientX - panDragRef.current.lastX;
+      const dy = ev.clientY - panDragRef.current.lastY;
+      panDragRef.current.lastX = ev.clientX;
+      panDragRef.current.lastY = ev.clientY;
+      setView((v) => ({ ...v, tx: v.tx + dx, ty: v.ty + dy }));
+    };
+    const onUp = () => {
+      panDragRef.current = null;
+      setPanning(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   const onDrawMove = useCallback((ev) => {
     if (!drawingRef.current) return;
@@ -379,6 +529,13 @@ export default function ModuleHandoverPage({ canManage = false }) {
 
   function onPlateMouseDown(e) {
     if (tool !== 'draw' || !canManage || !drawing?.image_data) return;
+    // Pan instead of draw when Pan mode is on or the middle mouse button is used.
+    if (panMode || e.button === 1) {
+      e.preventDefault();
+      onPanMouseDown(e);
+      return;
+    }
+    if (e.button !== 0) return;
     e.preventDefault();
     const [x, y] = clientToPct(e.clientX, e.clientY);
     if (drawShape === 'poly') {
@@ -405,7 +562,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
   }
 
   function onPlateMouseMove(e) {
-    if (tool !== 'draw' || drawShape !== 'poly') return;
+    if (tool !== 'draw' || drawShape !== 'poly' || panMode) return;
     const [x, y] = clientToPct(e.clientX, e.clientY);
     setPolyHover([x, y]);
   }
@@ -558,10 +715,11 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       type="button"
                       onClick={() => {
                         setDrawShape('rect');
+                        setPanMode(false);
                         setPolyPts([]);
                         setPolyHover(null);
                       }}
-                      style={{ ...S.btn, ...(drawShape === 'rect' ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                      style={{ ...S.btn, ...(drawShape === 'rect' && !panMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
                     >
                       ▭ Box
                     </button>
@@ -569,11 +727,25 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       type="button"
                       onClick={() => {
                         setDrawShape('poly');
+                        setPanMode(false);
                         setRectDraft(null);
                       }}
-                      style={{ ...S.btn, ...(drawShape === 'poly' ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                      style={{ ...S.btn, ...(drawShape === 'poly' && !panMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
                     >
                       ⬡ Polygon
+                    </button>
+                    <button
+                      type="button"
+                      title="Drag to move around the plan (scroll or +/− to zoom)"
+                      onClick={() => {
+                        setPanMode((p) => !p);
+                        setRectDraft(null);
+                        setPolyPts([]);
+                        setPolyHover(null);
+                      }}
+                      style={{ ...S.btn, ...(panMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                    >
+                      ✋ Pan
                     </button>
                   </div>
                 )}
@@ -591,6 +763,11 @@ export default function ModuleHandoverPage({ canManage = false }) {
               <button type="button" onClick={openImport} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
                 Import from Internals
               </button>
+              {drawingId && zones.length > 0 && otherDrawings.length > 0 && (
+                <button type="button" onClick={openCopy} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }} title="Copy these modules onto another floor's drawing">
+                  Copy modules → floor
+                </button>
+              )}
               {drawingId && (
                 <>
                   <button type="button" onClick={renameDrawing} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
@@ -633,12 +810,31 @@ export default function ModuleHandoverPage({ canManage = false }) {
             <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
               {tool === 'draw' ? (
                 <div
-                  ref={wrapRef}
+                  ref={viewportRef}
                   onMouseDown={onPlateMouseDown}
                   onMouseMove={onPlateMouseMove}
                   onDoubleClick={onPlateDoubleClick}
-                  style={{ position: 'relative', width: '100%', cursor: 'crosshair', userSelect: 'none' }}
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    minHeight: 'min(70vh, 620px)',
+                    overflow: 'hidden',
+                    background: '#ececf1',
+                    cursor: panMode ? (panning ? 'grabbing' : 'grab') : 'crosshair',
+                    userSelect: 'none',
+                    touchAction: 'none',
+                  }}
                 >
+                  <div
+                    ref={wrapRef}
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
+                      transformOrigin: '0 0',
+                      willChange: 'transform',
+                    }}
+                  >
                   <img
                     alt="Module plan"
                     src={`data:image/jpeg;base64,${drawing.image_data}`}
@@ -691,6 +887,15 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       </>
                     )}
                   </svg>
+                  </div>
+                  <div
+                    style={{ position: 'absolute', top: 10, left: 10, zIndex: 4, display: 'flex', flexDirection: 'column', gap: 6 }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <button type="button" title="Zoom in" style={drawZoomBtn} onClick={(e) => { e.stopPropagation(); zoomDraw(0.2); }}>+</button>
+                    <button type="button" title="Zoom out" style={drawZoomBtn} onClick={(e) => { e.stopPropagation(); zoomDraw(-0.2); }}>−</button>
+                    <button type="button" title="Reset view" style={{ ...drawZoomBtn, fontSize: 10 }} onClick={(e) => { e.stopPropagation(); resetDrawView(); }}>Reset</button>
+                  </div>
                 </div>
               ) : (
                 <ZoneDrawingCanvas
@@ -710,10 +915,12 @@ export default function ModuleHandoverPage({ canManage = false }) {
             </div>
             {tool === 'draw' && (
               <div style={{ marginTop: 8, fontSize: 12, color: T.muted, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                {drawShape === 'rect' ? (
-                  <span>Drag a box around each module, then name it.</span>
+                {panMode ? (
+                  <span>Pan mode: drag to move around. Scroll or use +/− to zoom. Pick Box or Polygon to draw again.</span>
+                ) : drawShape === 'rect' ? (
+                  <span>Drag a box around each module, then name it. Scroll to zoom; use ✋ Pan (or middle-drag) to move.</span>
                 ) : (
-                  <span>Click to drop each corner; click the first point (or double-click) to close, then name it.</span>
+                  <span>Click to drop each corner; click the first point (or double-click) to close. Scroll to zoom; use ✋ Pan to move.</span>
                 )}
                 {drawShape === 'poly' && polyPts.length > 0 && (
                   <>
@@ -854,6 +1061,55 @@ export default function ModuleHandoverPage({ canManage = false }) {
               </button>
               <button type="button" onClick={runImport} disabled={importBusy || !importSel.size} style={{ ...S.btn, ...S.btnPrimary, padding: '8px 16px', fontSize: 13, opacity: importBusy ? 0.6 : 1 }}>
                 {importBusy ? 'Importing…' : `Import ${importSel.size || ''} drawing${importSel.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {copyOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,18,28,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ ...card, width: 'min(480px, 96vw)', padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.hairline}` }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: T.text }}>Copy modules to another floor</div>
+              <div style={{ fontSize: 12, color: T.muted }}>
+                Copies all {zones.length} module shape{zones.length === 1 ? '' : 's'} from this drawing onto another floor. Stages reset to “Not started” on the new floor.
+              </div>
+            </div>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 700, color: T.muted }}>
+                Copy to drawing
+                <select
+                  value={copyTargetId}
+                  onChange={(e) => setCopyTargetId(e.target.value)}
+                  style={{ ...S.input, padding: '8px 10px', fontSize: 13 }}
+                >
+                  {!otherDrawings.length && <option value="">No other drawing</option>}
+                  {otherDrawings.map((d) => (
+                    <option key={d.id} value={String(d.id)}>{d.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 700, color: T.muted }}>
+                Renumber: add to each module number
+                <input
+                  type="number"
+                  value={copyOffset}
+                  onChange={(e) => setCopyOffset(e.target.value)}
+                  style={{ ...S.input, padding: '8px 10px', fontSize: 13, width: 120 }}
+                />
+                <span style={{ fontWeight: 500, color: T.faint }}>
+                  e.g. 1st → 2nd floor use 100, 1st → 3rd use 200. Set 0 to keep names.
+                  {zones[0]?.name ? ` Preview: “${zones[0].name}” → “${renumberName(zones[0].name, Number(copyOffset) || 0)}”.` : ''}
+                </span>
+              </label>
+            </div>
+            <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.hairline}`, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button type="button" onClick={() => setCopyOpen(false)} disabled={copyBusy} style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}>
+                Cancel
+              </button>
+              <button type="button" onClick={runCopy} disabled={copyBusy || !copyTargetId} style={{ ...S.btn, ...S.btnPrimary, padding: '8px 16px', fontSize: 13, opacity: copyBusy || !copyTargetId ? 0.6 : 1 }}>
+                {copyBusy ? `Copying ${copyProgress ? `${copyProgress.cur + 1}/${copyProgress.total}` : ''}…` : `Copy ${zones.length} module${zones.length === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>
