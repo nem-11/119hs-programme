@@ -7,67 +7,68 @@
  * step — see ModuleHandoverPage.
  */
 
-const OPENCV_CDN_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
+const DETECT_TIMEOUT_MS = 90000;
 
-const OPENCV_READY_TIMEOUT_MS = 60000;
+let detectWorker = null;
+let detectSeq = 0;
 
-let cvPromise = null;
 /**
- * Load OpenCV.js from CDN at runtime (script tag) rather than bundling it — the
- * npm builds require Node core modules that CRA/webpack 5 will not polyfill, and
- * the wasm payload is large, so on-demand loading keeps the app bundle lean.
- *
- * We poll for `window.cv.Mat` rather than relying on `cv.onRuntimeInitialized`:
- * the wasm runtime can finish initialising before any load/callback handler is
- * attached, in which case onRuntimeInitialized never fires and detection would
- * hang forever. Polling + a hard timeout makes loading deterministic.
+ * OpenCV box detection runs in a dedicated Web Worker (moduleDetectWorker.js) so
+ * the heavy wasm init + contour scan never block the main thread / freeze the UI.
+ * The worker loads OpenCV from CDN itself; here we just ship pixels and get boxes.
  */
-function getCv() {
-  if (cvPromise) return cvPromise;
-  cvPromise = new Promise((resolve, reject) => {
-    const ready = () => typeof window !== 'undefined' && window.cv && typeof window.cv.Mat === 'function';
-    const startedAt = Date.now();
-    let poll = null;
+function getDetectWorker() {
+  if (!detectWorker) {
+    detectWorker = new Worker(new URL('./moduleDetectWorker.js', import.meta.url));
+  }
+  return detectWorker;
+}
+
+function killDetectWorker() {
+  if (detectWorker) {
+    try {
+      detectWorker.terminate();
+    } catch (_) {}
+    detectWorker = null;
+  }
+}
+
+function detectBoxesViaWorker(imageData, opts = {}) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = getDetectWorker();
+    } catch (_) {
+      reject(new Error('Could not start the detection engine in this browser.'));
+      return;
+    }
+    const id = ++detectSeq;
     const cleanup = () => {
-      if (poll) clearInterval(poll);
-      poll = null;
+      clearTimeout(timer);
+      worker.removeEventListener('message', onMsg);
+      worker.removeEventListener('error', onErr);
     };
-    const waitReady = (onTimeoutMsg) => {
-      poll = setInterval(() => {
-        if (ready()) {
-          cleanup();
-          resolve(window.cv);
-        } else if (Date.now() - startedAt > OPENCV_READY_TIMEOUT_MS) {
-          cleanup();
-          cvPromise = null; // allow a later retry
-          reject(new Error(onTimeoutMsg));
-        }
-      }, 150);
-    };
-
-    if (ready()) {
-      resolve(window.cv);
-      return;
-    }
-
-    let script = document.getElementById('opencv-js-cdn');
-    if (script) {
-      waitReady('Detection library loaded but did not initialise. Reload the page and try again.');
-      return;
-    }
-    script = document.createElement('script');
-    script.id = 'opencv-js-cdn';
-    script.src = OPENCV_CDN_URL;
-    script.async = true;
-    script.onerror = () => {
+    const timer = setTimeout(() => {
       cleanup();
-      cvPromise = null;
-      reject(new Error('Could not load the detection library (network blocked?). Use the manual Box/Polygon tools.'));
+      killDetectWorker(); // a stuck worker is dead to us; next run starts fresh
+      reject(new Error('Detection timed out. Try a cleaner plan or use the manual Box/Polygon tools.'));
+    }, DETECT_TIMEOUT_MS);
+    const onMsg = (e) => {
+      if (!e.data || e.data.id !== id) return;
+      cleanup();
+      if (e.data.ok) resolve(e.data.boxes || []);
+      else reject(new Error(e.data.error || 'Detection failed'));
     };
-    document.body.appendChild(script);
-    waitReady('Detection library timed out while starting. Check your connection and try again.');
+    const onErr = () => {
+      cleanup();
+      killDetectWorker();
+      reject(new Error('Detection engine error. Use the manual Box/Polygon tools.'));
+    };
+    worker.addEventListener('message', onMsg);
+    worker.addEventListener('error', onErr);
+    // Transfer the pixel buffer (zero-copy); the source canvas keeps its own pixels.
+    worker.postMessage({ id, imageData, opts }, [imageData.data.buffer]);
   });
-  return cvPromise;
 }
 
 /** Reject after `ms` so a stuck CDN download (worker core / lang data) can't hang detection. */
@@ -107,6 +108,7 @@ async function getWorker() {
 }
 
 export async function terminateAutoDetect() {
+  killDetectWorker();
   if (workerPromise) {
     try {
       const w = await workerPromise;
@@ -125,84 +127,22 @@ function loadImage(src) {
   });
 }
 
-/** Intersection-over-smaller-area — high when one box mostly sits inside another. */
-function overlapRatio(a, b) {
-  const x1 = Math.max(a.x, b.x);
-  const y1 = Math.max(a.y, b.y);
-  const x2 = Math.min(a.x + a.w, b.x + b.w);
-  const y2 = Math.min(a.y + a.h, b.y + b.h);
-  if (x2 <= x1 || y2 <= y1) return 0;
-  const inter = (x2 - x1) * (y2 - y1);
-  return inter / Math.min(a.w * a.h, b.w * b.h);
-}
-
 /**
  * Detect candidate room rectangles. Returns boxes in pixel space plus image
  * dimensions. Tuned for clean line plans: keeps 4-sided contours within a size
  * band and drops the page border / title block (too big) and furniture (too small).
  */
 async function detectBoxesPx(img, opts = {}) {
-  const cv = await getCv();
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth || img.width;
   canvas.height = img.naturalHeight || img.height;
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-
-  const imgArea = canvas.width * canvas.height;
-  const minArea = (opts.minAreaFrac ?? 0.0006) * imgArea;
-  const maxArea = (opts.maxAreaFrac ?? 0.06) * imgArea;
-  const minAspect = opts.minAspect ?? 0.25;
-  const maxAspect = opts.maxAspect ?? 4.0;
-
-  const src = cv.imread(canvas);
-  const gray = new cv.Mat();
-  const edges = new cv.Mat();
-  const dil = new cv.Mat();
-  const contours = new cv.MatVector();
-  const hierarchy = new cv.Mat();
-  const boxes = [];
-  try {
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.Canny(gray, edges, 40, 120);
-    const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-    cv.dilate(edges, dil, kernel, new cv.Point(-1, -1), 1);
-    kernel.delete();
-    cv.findContours(dil, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i);
-      const peri = cv.arcLength(cnt, true);
-      const approx = new cv.Mat();
-      cv.approxPolyDP(cnt, approx, 0.03 * peri, true);
-      const isQuad = approx.rows === 4 && cv.isContourConvex(approx);
-      if (isQuad) {
-        const r = cv.boundingRect(approx);
-        const area = r.width * r.height;
-        const aspect = r.width / Math.max(1, r.height);
-        if (area >= minArea && area <= maxArea && aspect >= minAspect && aspect <= maxAspect) {
-          boxes.push({ x: r.x, y: r.y, w: r.width, h: r.height });
-        }
-      }
-      approx.delete();
-      cnt.delete();
-    }
-  } finally {
-    src.delete();
-    gray.delete();
-    edges.delete();
-    dil.delete();
-    contours.delete();
-    hierarchy.delete();
-  }
-
-  // Dedupe near-duplicate / nested rectangles (keep the larger of an overlapping pair).
-  boxes.sort((a, b) => b.w * b.h - a.w * a.h);
-  const kept = [];
-  for (const b of boxes) {
-    if (kept.some((k) => overlapRatio(k, b) > 0.6)) continue;
-    kept.push(b);
-  }
-  return { boxes: kept, canvas, imgW: canvas.width, imgH: canvas.height };
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  // Snapshot pixels for the worker (its buffer is transferred); the canvas keeps
+  // its own pixels for OCR crops afterwards.
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const boxes = await detectBoxesViaWorker(imageData, opts);
+  return { boxes, canvas, imgW: canvas.width, imgH: canvas.height };
 }
 
 function pickModuleNumber(text) {
