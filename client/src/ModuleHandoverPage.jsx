@@ -195,7 +195,12 @@ export default function ModuleHandoverPage({ canManage = false }) {
   }, [drawingId, reloadZones]);
 
   const summary = useMemo(() => moduleCompletionSummary(zones), [zones]);
-  const selected = useMemo(() => zones.find((z) => Number(z.id) === Number(selId)) || null, [zones, selId]);
+  // In Adjust mode the side panel (rename / delete / stage) follows the module
+  // you're editing; otherwise it follows the View-mode click selection.
+  const selected = useMemo(() => {
+    const id = editMode && editId != null ? editId : selId;
+    return zones.find((z) => Number(z.id) === Number(id)) || null;
+  }, [zones, selId, editId, editMode]);
 
   async function handleUpload(e) {
     const input = e.target;
@@ -750,6 +755,10 @@ export default function ModuleHandoverPage({ canManage = false }) {
     if (out && out.error) setErr(String(out.error));
     else {
       setSelId(null);
+      setEditId(null);
+      setEditGeom(null);
+      editGeomRef.current = null;
+      editIdRef.current = null;
       reloadZones(drawingId);
     }
   }
@@ -1190,7 +1199,17 @@ export default function ModuleHandoverPage({ canManage = false }) {
               <div style={{ ...card, padding: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                   <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>{selected.name}</div>
-                  <button type="button" onClick={() => setSelId(null)} style={{ ...S.btn, padding: '2px 8px', fontSize: 11 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelId(null);
+                      setEditId(null);
+                      setEditGeom(null);
+                      editGeomRef.current = null;
+                      editIdRef.current = null;
+                    }}
+                    style={{ ...S.btn, padding: '2px 8px', fontSize: 11 }}
+                  >
                     Close
                   </button>
                 </div>
@@ -1244,7 +1263,11 @@ export default function ModuleHandoverPage({ canManage = false }) {
               </div>
             ) : (
               <div style={{ ...card, padding: 14, fontSize: 13, color: T.muted }}>
-                {tool === 'draw' ? 'Drag on the plan to add a module.' : 'Tap a module on the plan to see its handover stage.'}
+                {tool === 'draw'
+                  ? editMode
+                    ? 'Click a module to move/resize it, rename or delete it.'
+                    : 'Drag on the plan to add a module. Use ✎ Adjust to move, rename or delete one.'
+                  : 'Tap a module on the plan to see its handover stage.'}
               </div>
             )}
           </div>
