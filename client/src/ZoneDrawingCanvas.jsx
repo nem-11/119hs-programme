@@ -41,6 +41,8 @@ export default function ZoneDrawingCanvas({
   emptyMessage = 'No drawing selected.',
   className = '',
   enableZoomPan = false,
+  horizontalLabels = false,
+  maxHeight = null,
 }) {
   const imageData = drawing?.image_data;
   const zoneList = Array.isArray(zones) ? zones : [];
@@ -159,7 +161,7 @@ export default function ZoneDrawingCanvas({
         const cy = bb.cy;
         const minDim = Math.min(bb.w, bb.h);
         const fs = zoneLabelFontSize(bb);
-        const vertical = bb.h > bb.w * 1.15;
+        const vertical = !horizontalLabels && bb.h > bb.w * 1.15;
         const shortLabel = labelForZone?.(z) || '';
         const labelLines = String(shortLabel || '').split('\n').filter(Boolean).slice(0, 2);
         const showText = labelLines.length > 0 && minDim >= 1.6;
@@ -250,6 +252,9 @@ export default function ZoneDrawingCanvas({
   }
 
   const { scale, tx, ty } = view;
+  // When maxHeight is set, the viewport is a fixed-height window (the plate is
+  // taken out of flow) so a tall plan stays compact and is explored via zoom/pan.
+  const boundedHeight = maxHeight != null;
 
   return (
     <div
@@ -258,7 +263,7 @@ export default function ZoneDrawingCanvas({
       style={{
         position: 'relative',
         width: '100%',
-        minHeight,
+        ...(boundedHeight ? { height: maxHeight } : { minHeight }),
         overflow: 'hidden',
         background: '#ececf1',
         cursor: panning ? 'grabbing' : 'grab',
@@ -320,7 +325,9 @@ export default function ZoneDrawingCanvas({
           transform (zoom/pan) does not change its layout box, so overflow clips cleanly. */}
       <div
         style={{
-          position: 'relative',
+          position: boundedHeight ? 'absolute' : 'relative',
+          top: boundedHeight ? 0 : undefined,
+          left: boundedHeight ? 0 : undefined,
           width: '100%',
           transform: `translate(${tx}px,${ty}px) scale(${scale})`,
           transformOrigin: '0 0',

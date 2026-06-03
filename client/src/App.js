@@ -1160,7 +1160,9 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
         <ZoneDrawingCanvas
           drawing={drawing}
           zones={zones}
-          minHeight={720}
+          enableZoomPan
+          maxHeight="min(56vh, 520px)"
+          horizontalLabels
           emptyMessage="No drawing selected for this scope."
           styleForZone={(z) => greenShadeForPct(zoneStats.get(Number(z.id))?.pct ?? null)}
           labelForZone={labelForZone}

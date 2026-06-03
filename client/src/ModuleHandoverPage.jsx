@@ -42,6 +42,16 @@ async function rasterizeImageFile(file) {
   return { width: c.width, height: c.height, b64 };
 }
 
+/** Natural floor order: Basement < Ground < 1st < 2nd < … so a re-added floor sorts into place. */
+function floorRank(name) {
+  const s = String(name || '').toLowerCase();
+  if (s.includes('basement')) return -1;
+  if (s.includes('ground') || /\bgf\b/.test(s)) return 0;
+  const m = s.match(/(\d+)\s*(?:st|nd|rd|th)?\s*floor/) || s.match(/floor\s*(\d+)/) || s.match(/(\d+)/);
+  if (m) return parseInt(m[1], 10);
+  return 999;
+}
+
 const DRAW_MIN_SCALE = 0.5;
 const DRAW_MAX_SCALE = 8;
 const clampDrawScale = (s) => Math.min(DRAW_MAX_SCALE, Math.max(DRAW_MIN_SCALE, s));
@@ -119,7 +129,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
     return api
       .getDrawings()
       .then((d) => {
-        const list = (Array.isArray(d) ? d : []).filter((x) => String(x.tab) === MODULE_HANDOVER_TAB);
+        const list = (Array.isArray(d) ? d : [])
+          .filter((x) => String(x.tab) === MODULE_HANDOVER_TAB)
+          .sort((a, b) => {
+            const ra = floorRank(a.name);
+            const rb = floorRank(b.name);
+            if (ra !== rb) return ra - rb;
+            return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true });
+          });
         setDrawings(list);
         return list;
       })
@@ -743,8 +760,9 @@ export default function ModuleHandoverPage({ canManage = false }) {
       const isSel = Number(z.id) === Number(selId);
       return {
         fill: meta.fill,
-        stroke: isSel ? 'rgba(36, 68, 140, 1)' : meta.stroke,
-        strokeW: isSel ? 1.7 : 0.85,
+        // Subtle selection: a slightly crisper accent outline, not a heavy halo.
+        stroke: isSel ? 'rgba(36, 68, 140, 0.95)' : meta.stroke,
+        strokeW: isSel ? 1.0 : 0.6,
       };
     },
     [selId]
@@ -1109,6 +1127,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
                   zones={zones}
                   enableZoomPan
                   allowZoneClick
+                  horizontalLabels
                   coarsePointer={coarse}
                   minHeight="min(70vh, 620px)"
                   styleForZone={styleForZone}
