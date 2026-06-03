@@ -94,11 +94,17 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
   const [panning, setPanning] = useState(false);
   const [panMode, setPanMode] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editGeom, setEditGeom] = useState(null);
 
   const wrapRef = useRef(null);
   const viewportRef = useRef(null);
   const panDragRef = useRef(null);
   const drawingRef = useRef(false);
+  const editGeomRef = useRef(null);
+  const editIdRef = useRef(null);
+  const editDragRef = useRef(null);
   const card = { background: '#fff', borderRadius: 12, border: '1px solid rgba(26,26,46,0.06)', boxShadow: shadowCard };
 
   useEffect(() => {
@@ -418,6 +424,113 @@ export default function ModuleHandoverPage({ canManage = false }) {
     window.addEventListener('mouseup', onUp);
   }, []);
 
+  const clamp01 = (v) => Math.max(0, Math.min(100, v));
+
+  const selectForEdit = useCallback((z) => {
+    const g = parseZoneGeometry(z);
+    if (!g) return;
+    const copy = JSON.parse(JSON.stringify(g));
+    editIdRef.current = Number(z.id);
+    setEditId(Number(z.id));
+    setEditGeom(copy);
+    editGeomRef.current = copy;
+  }, []);
+
+  const persistEdit = useCallback(
+    async (geom, id) => {
+      if (!id || !geom) return;
+      const out = await api.updateModuleZone(Number(id), { geometry: geom });
+      if (out && out.error) setErr(String(out.error));
+      reloadZones(drawingId);
+    },
+    [drawingId, reloadZones]
+  );
+
+  const onEditDragMove = useCallback((ev) => {
+    const d = editDragRef.current;
+    if (!d) return;
+    const [cx, cy] = clientToPct(ev.clientX, ev.clientY);
+    const dx = cx - d.start[0];
+    const dy = cy - d.start[1];
+    const orig = d.orig;
+    let next;
+    if (orig.kind === 'poly') {
+      const pts = orig.points.map((p) => [...p]);
+      if (d.mode === 'move') {
+        next = { kind: 'poly', points: pts.map((p) => [clamp01(p[0] + dx), clamp01(p[1] + dy)]) };
+      } else if (d.mode === 'vertex' && d.index != null) {
+        pts[d.index] = [clamp01(cx), clamp01(cy)];
+        next = { kind: 'poly', points: pts };
+      } else {
+        next = orig;
+      }
+    } else {
+      let { x, y, w, h } = orig;
+      if (d.mode === 'move') {
+        x = clamp01(x + dx);
+        y = clamp01(y + dy);
+        // keep the box inside the plate
+        x = Math.min(x, 100 - w);
+        y = Math.min(y, 100 - h);
+        next = { kind: 'rect', x, y, w, h };
+      } else if (d.mode === 'corner') {
+        const left = d.corner === 'nw' || d.corner === 'sw' ? clamp01(cx) : x;
+        const right = d.corner === 'ne' || d.corner === 'se' ? clamp01(cx) : x + w;
+        const top = d.corner === 'nw' || d.corner === 'ne' ? clamp01(cy) : y;
+        const bottom = d.corner === 'sw' || d.corner === 'se' ? clamp01(cy) : y + h;
+        const nx = Math.min(left, right);
+        const ny = Math.min(top, bottom);
+        next = { kind: 'rect', x: nx, y: ny, w: Math.max(0.8, Math.abs(right - left)), h: Math.max(0.8, Math.abs(bottom - top)) };
+      } else {
+        next = orig;
+      }
+    }
+    editGeomRef.current = next;
+    setEditGeom(next);
+  }, []);
+
+  const onEditDragUp = useCallback(() => {
+    window.removeEventListener('mousemove', onEditDragMove);
+    window.removeEventListener('mouseup', onEditDragUp);
+    const d = editDragRef.current;
+    editDragRef.current = null;
+    if (!d) return;
+    persistEdit(editGeomRef.current, d.id);
+  }, [onEditDragMove, persistEdit]);
+
+  const beginEditDrag = useCallback(
+    (e, mode, extra) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const base = editGeomRef.current;
+      if (!base) return;
+      const start = clientToPct(e.clientX, e.clientY);
+      editDragRef.current = {
+        mode,
+        ...(extra || {}),
+        start,
+        id: editIdRef.current,
+        orig: JSON.parse(JSON.stringify(base)),
+      };
+      window.addEventListener('mousemove', onEditDragMove);
+      window.addEventListener('mouseup', onEditDragUp);
+    },
+    [onEditDragMove, onEditDragUp]
+  );
+
+  // Leaving edit mode / changing drawing clears the active selection.
+  useEffect(() => {
+    if (!editMode) {
+      setEditId(null);
+      setEditGeom(null);
+      editGeomRef.current = null;
+      editIdRef.current = null;
+    }
+  }, [editMode]);
+  useEffect(() => {
+    setEditMode(false);
+  }, [drawingId, tool]);
+
   const onDrawMove = useCallback((ev) => {
     if (!drawingRef.current) return;
     const el = wrapRef.current;
@@ -487,10 +600,30 @@ export default function ModuleHandoverPage({ canManage = false }) {
       const mods = await autoDetectModules(drawing.image_data, {
         onProgress: (phase, cur, total) => setDetectProgress({ phase, cur, total }),
       });
+      // Ignore candidates that land on a module already drawn — only surface what's still missing.
+      const existing = zones
+        .map((z) => geomBBox(parseZoneGeometry(z), z))
+        .filter((b) => b && b.w > 0 && b.h > 0);
+      const overlapsExisting = (m) => {
+        for (const b of existing) {
+          const x1 = Math.max(m.x, b.x);
+          const y1 = Math.max(m.y, b.y);
+          const x2 = Math.min(m.x + m.w, b.x + b.w);
+          const y2 = Math.min(m.y + m.h, b.y + b.h);
+          if (x2 > x1 && y2 > y1) {
+            const inter = (x2 - x1) * (y2 - y1);
+            if (inter / Math.max(1e-6, m.w * m.h) > 0.25) return true;
+          }
+        }
+        return false;
+      };
+      const fresh = mods.filter((m) => !overlapsExisting(m));
       if (!mods.length) {
         setDetectErr('No module boxes were detected. Try the manual Box/Polygon tools, or upload a cleaner plan.');
+      } else if (!fresh.length) {
+        setDetectErr('Every detected box overlaps a module you have already drawn — nothing new to add.');
       } else {
-        setReview(mods.map((m) => ({ ...m, include: true, name: m.name || '' })));
+        setReview(fresh.map((m) => ({ ...m, include: true, name: m.name || '' })));
       }
     } catch (e) {
       setDetectErr(e?.message || 'Auto-detect failed (the detection libraries may be blocked). Use the manual tools.');
@@ -529,6 +662,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
 
   function onPlateMouseDown(e) {
     if (tool !== 'draw' || !canManage || !drawing?.image_data) return;
+    if (editMode && e.button !== 1) return; // shapes/handles handle their own drags
     // Pan instead of draw when Pan mode is on or the middle mouse button is used.
     if (panMode || e.button === 1) {
       e.preventDefault();
@@ -562,12 +696,13 @@ export default function ModuleHandoverPage({ canManage = false }) {
   }
 
   function onPlateMouseMove(e) {
-    if (tool !== 'draw' || drawShape !== 'poly' || panMode) return;
+    if (tool !== 'draw' || drawShape !== 'poly' || panMode || editMode) return;
     const [x, y] = clientToPct(e.clientX, e.clientY);
     setPolyHover([x, y]);
   }
 
   function onPlateDoubleClick() {
+    if (editMode) return;
     if (tool === 'draw' && drawShape === 'poly' && polyPts.length >= 3) commitPoly(polyPts);
   }
 
@@ -716,10 +851,11 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       onClick={() => {
                         setDrawShape('rect');
                         setPanMode(false);
+                        setEditMode(false);
                         setPolyPts([]);
                         setPolyHover(null);
                       }}
-                      style={{ ...S.btn, ...(drawShape === 'rect' && !panMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                      style={{ ...S.btn, ...(drawShape === 'rect' && !panMode && !editMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
                     >
                       ▭ Box
                     </button>
@@ -728,17 +864,33 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       onClick={() => {
                         setDrawShape('poly');
                         setPanMode(false);
+                        setEditMode(false);
                         setRectDraft(null);
                       }}
-                      style={{ ...S.btn, ...(drawShape === 'poly' && !panMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                      style={{ ...S.btn, ...(drawShape === 'poly' && !panMode && !editMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
                     >
                       ⬡ Polygon
+                    </button>
+                    <button
+                      type="button"
+                      title="Click a module, then drag its handles to resize/reshape, or drag the middle to move it"
+                      onClick={() => {
+                        setEditMode((p) => !p);
+                        setPanMode(false);
+                        setRectDraft(null);
+                        setPolyPts([]);
+                        setPolyHover(null);
+                      }}
+                      style={{ ...S.btn, ...(editMode ? S.btnAct : {}), padding: '7px 10px', fontSize: 12 }}
+                    >
+                      ✎ Adjust
                     </button>
                     <button
                       type="button"
                       title="Drag to move around the plan (scroll or +/− to zoom)"
                       onClick={() => {
                         setPanMode((p) => !p);
+                        setEditMode(false);
                         setRectDraft(null);
                         setPolyPts([]);
                         setPolyHover(null);
@@ -843,14 +995,68 @@ export default function ModuleHandoverPage({ canManage = false }) {
                   />
                   <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} viewBox="0 0 100 100" preserveAspectRatio="none">
                     {zones.map((z) => {
-                      const g = parseZoneGeometry(z);
+                      const isEditing = editMode && Number(z.id) === Number(editId);
+                      const g = isEditing && editGeom ? editGeom : parseZoneGeometry(z);
                       if (!g) return null;
                       const meta = moduleStageMeta(z.handover_stage);
+                      const shapeProps = {
+                        fill: meta.fill,
+                        stroke: isEditing ? 'rgba(36,68,140,1)' : meta.stroke,
+                        strokeWidth: isEditing ? 1.4 : 0.7,
+                        style: { cursor: editMode ? 'move' : 'default' },
+                        onMouseDown: editMode
+                          ? (e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              if (Number(editIdRef.current) !== Number(z.id)) selectForEdit(z);
+                              beginEditDrag(e, 'move');
+                            }
+                          : undefined,
+                      };
                       if (g.kind === 'poly') {
-                        return <polygon key={z.id} points={svgPolygonPoints(g)} fill={meta.fill} stroke={meta.stroke} strokeWidth={0.7} />;
+                        return <polygon key={z.id} points={svgPolygonPoints(g)} {...shapeProps} />;
                       }
-                      return <rect key={z.id} x={g.x} y={g.y} width={g.w} height={g.h} fill={meta.fill} stroke={meta.stroke} strokeWidth={0.7} />;
+                      return <rect key={z.id} x={g.x} y={g.y} width={g.w} height={g.h} {...shapeProps} />;
                     })}
+                    {editMode && editGeom && editGeom.kind === 'rect' && (
+                      <>
+                        {[
+                          { c: 'nw', x: editGeom.x, y: editGeom.y },
+                          { c: 'ne', x: editGeom.x + editGeom.w, y: editGeom.y },
+                          { c: 'se', x: editGeom.x + editGeom.w, y: editGeom.y + editGeom.h },
+                          { c: 'sw', x: editGeom.x, y: editGeom.y + editGeom.h },
+                        ].map((h) => (
+                          <circle
+                            key={h.c}
+                            cx={h.x}
+                            cy={h.y}
+                            r={1.4}
+                            fill="#fff"
+                            stroke="rgba(36,68,140,1)"
+                            strokeWidth={0.6}
+                            style={{ cursor: 'crosshair' }}
+                            onMouseDown={(e) => beginEditDrag(e, 'corner', { corner: h.c })}
+                          />
+                        ))}
+                      </>
+                    )}
+                    {editMode && editGeom && editGeom.kind === 'poly' && (
+                      <>
+                        {editGeom.points.map((p, i) => (
+                          <circle
+                            key={`v${i}`}
+                            cx={p[0]}
+                            cy={p[1]}
+                            r={1.4}
+                            fill="#fff"
+                            stroke="rgba(36,68,140,1)"
+                            strokeWidth={0.6}
+                            style={{ cursor: 'crosshair' }}
+                            onMouseDown={(e) => beginEditDrag(e, 'vertex', { index: i })}
+                          />
+                        ))}
+                      </>
+                    )}
                     {rectDraft && drawShape === 'rect' && (
                       <rect
                         x={Math.min(rectDraft.x, rectDraft.x + rectDraft.w)}
@@ -915,7 +1121,9 @@ export default function ModuleHandoverPage({ canManage = false }) {
             </div>
             {tool === 'draw' && (
               <div style={{ marginTop: 8, fontSize: 12, color: T.muted, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                {panMode ? (
+                {editMode ? (
+                  <span>Adjust mode: click a module, then drag its white handles to resize/reshape, or drag the middle to move it. Changes save automatically.</span>
+                ) : panMode ? (
                   <span>Pan mode: drag to move around. Scroll or use +/− to zoom. Pick Box or Polygon to draw again.</span>
                 ) : drawShape === 'rect' ? (
                   <span>Drag a box around each module, then name it. Scroll to zoom; use ✋ Pan (or middle-drag) to move.</span>
