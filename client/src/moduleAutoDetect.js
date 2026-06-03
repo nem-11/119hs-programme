@@ -9,42 +9,82 @@
 
 const OPENCV_CDN_URL = 'https://docs.opencv.org/4.10.0/opencv.js';
 
+const OPENCV_READY_TIMEOUT_MS = 60000;
+
 let cvPromise = null;
 /**
  * Load OpenCV.js from CDN at runtime (script tag) rather than bundling it — the
  * npm builds require Node core modules that CRA/webpack 5 will not polyfill, and
  * the wasm payload is large, so on-demand loading keeps the app bundle lean.
+ *
+ * We poll for `window.cv.Mat` rather than relying on `cv.onRuntimeInitialized`:
+ * the wasm runtime can finish initialising before any load/callback handler is
+ * attached, in which case onRuntimeInitialized never fires and detection would
+ * hang forever. Polling + a hard timeout makes loading deterministic.
  */
 function getCv() {
-  if (!cvPromise) {
-    cvPromise = new Promise((resolve, reject) => {
-      const ready = (cv) => cv && typeof cv.Mat === 'function';
-      if (typeof window !== 'undefined' && ready(window.cv)) {
-        resolve(window.cv);
-        return;
-      }
-      const finish = () => {
-        const cv = window.cv;
-        if (ready(cv)) resolve(cv);
-        else if (cv) cv.onRuntimeInitialized = () => resolve(cv);
-        else reject(new Error('OpenCV failed to initialise'));
-      };
-      let script = document.getElementById('opencv-js-cdn');
-      if (script) {
-        if (window.cv) finish();
-        else script.addEventListener('load', finish, { once: true });
-        return;
-      }
-      script = document.createElement('script');
-      script.id = 'opencv-js-cdn';
-      script.src = OPENCV_CDN_URL;
-      script.async = true;
-      script.onload = finish;
-      script.onerror = () => reject(new Error('Could not load the detection library (network blocked?)'));
-      document.body.appendChild(script);
-    });
-  }
+  if (cvPromise) return cvPromise;
+  cvPromise = new Promise((resolve, reject) => {
+    const ready = () => typeof window !== 'undefined' && window.cv && typeof window.cv.Mat === 'function';
+    const startedAt = Date.now();
+    let poll = null;
+    const cleanup = () => {
+      if (poll) clearInterval(poll);
+      poll = null;
+    };
+    const waitReady = (onTimeoutMsg) => {
+      poll = setInterval(() => {
+        if (ready()) {
+          cleanup();
+          resolve(window.cv);
+        } else if (Date.now() - startedAt > OPENCV_READY_TIMEOUT_MS) {
+          cleanup();
+          cvPromise = null; // allow a later retry
+          reject(new Error(onTimeoutMsg));
+        }
+      }, 150);
+    };
+
+    if (ready()) {
+      resolve(window.cv);
+      return;
+    }
+
+    let script = document.getElementById('opencv-js-cdn');
+    if (script) {
+      waitReady('Detection library loaded but did not initialise. Reload the page and try again.');
+      return;
+    }
+    script = document.createElement('script');
+    script.id = 'opencv-js-cdn';
+    script.src = OPENCV_CDN_URL;
+    script.async = true;
+    script.onerror = () => {
+      cleanup();
+      cvPromise = null;
+      reject(new Error('Could not load the detection library (network blocked?). Use the manual Box/Polygon tools.'));
+    };
+    document.body.appendChild(script);
+    waitReady('Detection library timed out while starting. Check your connection and try again.');
+  });
   return cvPromise;
+}
+
+/** Reject after `ms` so a stuck CDN download (worker core / lang data) can't hang detection. */
+function withTimeout(promise, ms, msg) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg || 'Timed out')), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
 }
 
 let workerPromise = null;
@@ -58,7 +98,10 @@ async function getWorker() {
         tessedit_pageseg_mode: '7', // treat the crop as a single text line
       });
       return worker;
-    })();
+    })().catch((e) => {
+      workerPromise = null; // allow retry on next run
+      throw e;
+    });
   }
   return workerPromise;
 }
@@ -191,9 +234,9 @@ export async function autoDetectModules(imageDataBase64, { onProgress } = {}) {
 
   let worker = null;
   try {
-    worker = await getWorker();
+    worker = await withTimeout(getWorker(), 30000, 'OCR engine timed out');
   } catch (_) {
-    worker = null;
+    worker = null; // detection still returns boxes; numbers are filled in during review
   }
 
   const ocrCanvas = document.createElement('canvas');
@@ -216,7 +259,7 @@ export async function autoDetectModules(imageDataBase64, { onProgress } = {}) {
           octx.fillStyle = '#fff';
           octx.fillRect(0, 0, ocrCanvas.width, ocrCanvas.height);
           octx.drawImage(canvas, sx, sy, sw, sh, 0, 0, ocrCanvas.width, ocrCanvas.height);
-          const { data } = await worker.recognize(ocrCanvas);
+          const { data } = await withTimeout(worker.recognize(ocrCanvas), 8000, 'OCR timed out');
           name = pickModuleNumber(data?.text);
         }
       } catch (_) {
