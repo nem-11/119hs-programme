@@ -1258,7 +1258,9 @@ function DashboardModuleSection(){
     let cancelled=false;
     api.getDrawings().then((d)=>{
       if(cancelled)return;
-      const list=(Array.isArray(d)?d:[]).filter((x)=>String(x.tab)===MODULE_HANDOVER_TAB);
+      const rank=(n)=>{const s=String(n||'').toLowerCase();if(s.includes('basement'))return -1;if(s.includes('ground')||/\bgf\b/.test(s))return 0;const m=s.match(/(\d+)\s*(?:st|nd|rd|th)?\s*floor/)||s.match(/floor\s*(\d+)/)||s.match(/(\d+)/);return m?parseInt(m[1],10):999;};
+      const list=(Array.isArray(d)?d:[]).filter((x)=>String(x.tab)===MODULE_HANDOVER_TAB)
+        .sort((a,b)=>{const ra=rank(a.name),rb=rank(b.name);return ra!==rb?ra-rb:String(a.name||'').localeCompare(String(b.name||''),undefined,{numeric:true});});
       setDrawings(list);
     }).catch(()=>{if(!cancelled)setDrawings([]);});
     return()=>{cancelled=true;};
@@ -1282,7 +1284,18 @@ function DashboardModuleSection(){
     return()=>{cancelled=true;};
   },[drawingId]);
 
+  // Aggregate every floor's modules for an all-floors total.
+  const [allZones,setAllZones]=useState([]);
+  useEffect(()=>{
+    if(!drawings.length){setAllZones([]);return undefined;}
+    let cancelled=false;
+    Promise.all(drawings.map((d)=>api.getZonesForDrawing(d.id).then((z)=>Array.isArray(z)?z:[]).catch(()=>[])))
+      .then((lists)=>{if(!cancelled)setAllZones(lists.flat());});
+    return()=>{cancelled=true;};
+  },[drawings]);
+
   const summary=useMemo(()=>moduleCompletionSummary(zones),[zones]);
+  const totalSummary=useMemo(()=>moduleCompletionSummary(allZones),[allZones]);
 
   if(!drawings.length)return null;
 
@@ -1303,7 +1316,14 @@ function DashboardModuleSection(){
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:10}}>
         <div>
           <div style={{fontSize:16,fontWeight:800,color:T.text}}>Module completion</div>
-          <div style={{fontSize:13,color:T.muted}}>{summary.handed} of {summary.total} modules handed over · {summary.pct}%</div>
+          <div style={{fontSize:13,color:T.muted}}>
+            <strong style={{color:T.text}}>All floors:</strong> {totalSummary.handed} of {totalSummary.total} modules handed over · {totalSummary.pct}%
+          </div>
+          {drawings.length>1&&(
+            <div style={{fontSize:12,color:T.faint,marginTop:2}}>
+              This floor: {summary.handed} of {summary.total} · {summary.pct}%
+            </div>
+          )}
         </div>
         {drawings.length>1&&(
           <select value={drawingId} onChange={(e)=>setDrawingId(e.target.value)} style={{...S.input,padding:'7px 10px',fontSize:13,minWidth:170}}>

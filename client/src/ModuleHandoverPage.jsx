@@ -202,6 +202,10 @@ export default function ModuleHandoverPage({ canManage = false }) {
     return zones.find((z) => Number(z.id) === Number(id)) || null;
   }, [zones, selId, editId, editMode]);
 
+  // Keep adjust handles / selection outline a roughly constant on-screen size
+  // regardless of zoom (they live inside the zoom-transformed plate).
+  const handleScale = 1 / Math.max(0.4, view.scale);
+
   async function handleUpload(e) {
     const input = e.target;
     const file = input.files?.[0];
@@ -1028,8 +1032,8 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       const meta = moduleStageMeta(z.handover_stage);
                       const shapeProps = {
                         fill: meta.fill,
-                        stroke: isEditing ? 'rgba(36,68,140,1)' : meta.stroke,
-                        strokeWidth: isEditing ? 1.4 : 0.7,
+                        stroke: isEditing ? 'rgba(36,68,140,0.95)' : meta.stroke,
+                        strokeWidth: isEditing ? 0.7 * handleScale : 0.6,
                         style: { cursor: editMode ? 'move' : 'default' },
                         onMouseDown: editMode
                           ? (e) => {
@@ -1057,10 +1061,10 @@ export default function ModuleHandoverPage({ canManage = false }) {
                             key={h.c}
                             cx={h.x}
                             cy={h.y}
-                            r={1.4}
+                            r={0.9 * handleScale}
                             fill="#fff"
-                            stroke="rgba(36,68,140,1)"
-                            strokeWidth={0.6}
+                            stroke="rgba(36,68,140,0.95)"
+                            strokeWidth={0.45 * handleScale}
                             style={{ cursor: 'crosshair' }}
                             onMouseDown={(e) => beginEditDrag(e, 'corner', { corner: h.c })}
                           />
@@ -1074,10 +1078,10 @@ export default function ModuleHandoverPage({ canManage = false }) {
                             key={`v${i}`}
                             cx={p[0]}
                             cy={p[1]}
-                            r={1.4}
+                            r={0.9 * handleScale}
                             fill="#fff"
-                            stroke="rgba(36,68,140,1)"
-                            strokeWidth={0.6}
+                            stroke="rgba(36,68,140,0.95)"
+                            strokeWidth={0.45 * handleScale}
                             style={{ cursor: 'crosshair' }}
                             onMouseDown={(e) => beginEditDrag(e, 'vertex', { index: i })}
                           />
