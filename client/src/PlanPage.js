@@ -28,7 +28,7 @@ import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
 import PlanAddActivityModal from './PlanAddActivityModal';
 import PlanActivityChip from './PlanActivityChip';
-import { clearPrintPageSize, setPrintPageSize, PAPER_DIMS_MM } from './printPage';
+import { clearPrintPageSize, setPrintPageSize, mmToPrintPx, printableAreaPx } from './printPage';
 
 /**
  * Fixed vivid palette so neighbouring zones stay visually distinct (not muddy HSL steps).
@@ -93,29 +93,29 @@ function planZoneDrawingStyles(zoneIndex, { done, active }) {
 
 const PDF_PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
 
-/* Layout constants (mm) used to estimate how much fits on a sheet and stay readable. */
-const PRINT_MARGIN_MM = 10; // matches @page margin in printPage.js
-const PRINT_HEADER_RESERVE_MM = 26; // title block + compact legend strip
-const PRINT_ZONE_COL_MM = 34; // sticky zone-label column
-const PRINT_HEAD_ROW_MM = 11; // table header (date) row
-const PRINT_MIN_DAY_COL_MM = 11; // keep each day column readable
-const PRINT_MIN_ROW_MM = 8; // keep each zone row readable
+/**
+ * Print layout sizing in physical CSS pixels (96 dpi), matching Zone setup A3
+ * print geometry — not getBoundingClientRect. Row height matches the rendered
+ * grid cell (36px) so capacity tracks what actually fits per sheet.
+ */
+const PRINT_ROW_PX = 36;
+const PRINT_TABLE_HEAD_PX = mmToPrintPx(11);
+const PRINT_PAGE_TITLE_PX = mmToPrintPx(18);
+const PRINT_LEGEND_PX = mmToPrintPx(10);
+const PRINT_ZONE_COL_PX = mmToPrintPx(34);
+const PRINT_DAY_COL_PX = mmToPrintPx(11);
 
 /**
- * Estimate how many rows (zones) and columns (days) fit on one sheet while
- * staying legible. Larger paper => more capacity, so the grid never has to be
- * shrunk into an unreadable cascade. Portrait swaps the long/short side.
+ * Derive how many zone rows and day columns fit on one sheet from the physical
+ * printable area minus per-page chrome (title, table head, colour key).
  */
-function paperCapacity(paper, orientation) {
-  const dims = PAPER_DIMS_MM[String(paper || 'A3').toUpperCase()] || PAPER_DIMS_MM.A3;
-  const [shortSide, longSide] = dims;
-  const portrait = String(orientation || 'landscape').toLowerCase() === 'portrait';
-  const widthMm = portrait ? shortSide : longSide;
-  const heightMm = portrait ? longSide : shortSide;
-  const usableW = widthMm - 2 * PRINT_MARGIN_MM - PRINT_ZONE_COL_MM;
-  const usableH = heightMm - 2 * PRINT_MARGIN_MM - PRINT_HEADER_RESERVE_MM - PRINT_HEAD_ROW_MM;
-  const cols = Math.max(1, Math.floor(usableW / PRINT_MIN_DAY_COL_MM));
-  const rows = Math.max(1, Math.floor(usableH / PRINT_MIN_ROW_MM));
+function paperCapacity(paper, orientation, { includeHeader = true, includeLegend = true } = {}) {
+  const { widthPx, heightPx } = printableAreaPx(paper, orientation);
+  let overheadPx = PRINT_TABLE_HEAD_PX;
+  if (includeHeader) overheadPx += PRINT_PAGE_TITLE_PX;
+  if (includeLegend) overheadPx += PRINT_LEGEND_PX;
+  const cols = Math.max(1, Math.floor((widthPx - PRINT_ZONE_COL_PX) / PRINT_DAY_COL_PX));
+  const rows = Math.max(1, Math.floor((heightPx - overheadPx) / PRINT_ROW_PX));
   return { rows, cols };
 }
 
@@ -211,6 +211,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
   /** Active during print preview + print dialog */
   const [printLayout, setPrintLayout] = useState(null);
+  const printPendingRef = useRef(false);
   const [dragState, setDragState] = useState(null);
   const [undoState, setUndoState] = useState(null);
   const [dismissedClashKey, setDismissedClashKey] = useState('');
@@ -315,6 +316,20 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     window.addEventListener('afterprint', afterPrint);
     return () => window.removeEventListener('afterprint', afterPrint);
   }, []);
+
+  /** Wait for paginated DOM before opening the print dialog (single rAF races React commit). */
+  useEffect(() => {
+    if (!printLayout || !printPendingRef.current) return undefined;
+    printPendingRef.current = false;
+    let innerId = 0;
+    const outerId = requestAnimationFrame(() => {
+      innerId = requestAnimationFrame(() => window.print());
+    });
+    return () => {
+      cancelAnimationFrame(outerId);
+      cancelAnimationFrame(innerId);
+    };
+  }, [printLayout]);
 
   const permittedTabs = useMemo(() => {
     const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
@@ -765,15 +780,16 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     document.body.dataset.planPrintOrientation = printSize.orientation;
     titleRestore.current = document.title;
     document.title = `119HS_Programme_${startDate}_${endDate}`;
+    printPendingRef.current = true;
     setPrintLayout(layout);
     document.body.classList.add('plan-print-mode');
-    requestAnimationFrame(() => {
-      window.print();
-    });
   }
 
   function printLayoutFromOpts(extra) {
-    const cap = paperCapacity(pdfOpts.paper, pdfOpts.orientation);
+    const cap = paperCapacity(pdfOpts.paper, pdfOpts.orientation, {
+      includeHeader: pdfOpts.header,
+      includeLegend: pdfOpts.legend,
+    });
     const rowsPerPage = pdfOpts.fit_to_paper ? cap.rows : sanitizePerPage(pdfOpts.rows_per_page, cap.rows);
     const colsPerPage = pdfOpts.fit_to_paper ? cap.cols : sanitizePerPage(pdfOpts.cols_per_page, cap.cols);
     return {
@@ -839,9 +855,11 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     downloadCsv(`119HS_Programme_${startDate}_${endDate}.csv`, lines);
   }
 
-  const printHeaderVisible = printLayout && printLayout.header;
   const legendVisible = printLayout == null || printLayout.legend;
-  const autoCapacity = paperCapacity(pdfOpts.paper, pdfOpts.orientation);
+  const autoCapacity = paperCapacity(pdfOpts.paper, pdfOpts.orientation, {
+    includeHeader: pdfOpts.header,
+    includeLegend: pdfOpts.legend,
+  });
   const activeRowsPerPage = sanitizePerPage(printLayout?.rowsPerPage ?? pdfOpts.rows_per_page, autoCapacity.rows);
   const activeColsPerPage = sanitizePerPage(printLayout?.colsPerPage ?? pdfOpts.cols_per_page, autoCapacity.cols);
   /**
@@ -1164,18 +1182,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         </div>
       )}
 
-      {printHeaderVisible && (
-        <div style={{ padding: '12px 14px 8px', flexShrink: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T.text, letterSpacing: '0.02em' }}>
-            119 HIGH STREET — PROGRAMME WEEK OF {formatShort(new Date(startDate + 'T12:00:00'))} TO{' '}
-            {formatShort(new Date(endDate + 'T12:00:00'))} {new Date(endDate + 'T12:00:00').getFullYear()}
-          </div>
-          <div style={{ fontSize: 10, color: T.muted, marginTop: 4 }}>
-            Printed {formatShort(new Date())} {new Date().getFullYear()} · {dayColumns.length} day column(s)
-          </div>
-        </div>
-      )}
-
       <div className="plan-grid-scroll" style={{ flex: 1, overflow: 'auto', padding: '0 12px 16px' }}>
         {zoneBlocks.length === 0 && !loadErr && (
           <div style={{ padding: 40, textAlign: 'center', color: T.faint, fontSize: 13 }}>No programme rows in this range or filters.</div>
@@ -1191,6 +1197,18 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                   key={`plan-print-page-${pageIndex}`}
                   className={printLayout ? `plan-print-page${isLastPrintPage ? ' plan-print-page--last' : ''}` : undefined}
                 >
+                  {printLayout && printLayout.header && (
+                    <div className="plan-print-page-header" style={{ padding: '0 0 6px' }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: T.text, letterSpacing: '0.02em' }}>
+                        119 HIGH STREET — PROGRAMME WEEK OF {formatShort(new Date(startDate + 'T12:00:00'))} TO{' '}
+                        {formatShort(new Date(endDate + 'T12:00:00'))} {new Date(endDate + 'T12:00:00').getFullYear()}
+                      </div>
+                      <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
+                        Printed {formatShort(new Date())} {new Date().getFullYear()} · {dayColumns.length} day column(s)
+                        {pages.length > 1 ? ` · Sheet ${pageIndex + 1} of ${pages.length}` : ''}
+                      </div>
+                    </div>
+                  )}
                   <table
                     style={{
                       borderCollapse: 'collapse',

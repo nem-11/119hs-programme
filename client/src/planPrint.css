@@ -58,6 +58,21 @@ body.plan-print-mode {
     word-break: break-word;
   }
 
+  body.plan-print-mode .plan-print-root tbody td {
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+
+  body.plan-print-mode .plan-print-root tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.plan-print-mode .plan-print-page-header {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
   body.plan-print-mode .plan-print-root colgroup,
   body.plan-print-mode .plan-print-root col {
     width: auto !important;
