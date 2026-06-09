@@ -2794,7 +2794,7 @@ function MainApp({user,onLogout,onUserUpdate}){
   const sched=tab==='groundworks'?gw:tab==='internals'?int_s:tab===PROJECT_PROGRAMME_TAB?project_s:{};
   const navItems=bottomNavItemsForRole(user.role);
 
-  return<div className="app-root-shell" style={{background:T.bg,height:'100vh',fontFamily:"'Segoe UI',sans-serif",display:'flex',flexDirection:'column',overflow:'hidden'}}>
+  return<div className="app-root-shell">
     <div className="app-header-bar">
       <div style={{display:'flex',alignItems:'center',gap:10}}><Wordmark119HS variant="nav"/>
         {page!=='plan'&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}</div>
@@ -2803,7 +2803,7 @@ function MainApp({user,onLogout,onUserUpdate}){
     {showDateNav&&<div className="app-date-nav">
       <button onClick={()=>nav(-1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>←</button><div style={{fontSize:15,fontWeight:700,color:T.text}}>{formatDate(date)}</div><button onClick={()=>nav(1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>→</button>
     </div>}
-    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+    <div className="app-main-content">
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} userTabs={user.tabs} onActivate={loadData} liveDataErr={liveDataErr}/>}
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
@@ -2814,9 +2814,11 @@ function MainApp({user,onLogout,onUserUpdate}){
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
     </div>
-    <div className="app-bottom-nav">
-      {navItems.map((p)=>(<button key={p.id} type="button" className={`app-bottom-nav__btn${page===p.id?' app-bottom-nav__btn--active':''}`} onClick={()=>setPage(p.id)}><span className="app-bottom-nav__icon" aria-hidden>{p.icon}</span><span className="app-bottom-nav__label">{p.label}</span></button>))}
-    </div>
+    <nav className="app-bottom-nav" aria-label="Main navigation">
+      <div className="app-bottom-nav__track">
+        {navItems.map((p)=>(<button key={p.id} type="button" className={`app-bottom-nav__btn${page===p.id?' app-bottom-nav__btn--active':''}`} onClick={()=>setPage(p.id)} aria-current={page===p.id?'page':undefined}><span className="app-bottom-nav__icon" aria-hidden>{p.icon}</span><span className="app-bottom-nav__label">{p.label}</span></button>))}
+      </div>
+    </nav>
   </div>;
 }
 
