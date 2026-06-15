@@ -469,6 +469,39 @@ app.patch('/api/module-handover/zones/:id/stage', auth, moduleHandoverEditor, (r
   if (out?.error) return res.status(400).json({ error: String(out.error) });
   res.json({ ok: true });
 });
+app.get('/api/module-handover/completion-progress', auth, (req, res) => {
+  res.json(db.getModuleCompletionProgress(req.query.today));
+});
+app.get('/api/admin/modules/bulk-schedule-preview', auth, admin, (req, res) => {
+  const out = db.getModuleBulkSchedulePreview({
+    startDate: req.query.startDate,
+    modulesPerDay: req.query.modulesPerDay,
+  });
+  res.json(out);
+});
+app.post('/api/admin/modules/bulk-schedule-apply', auth, admin, (req, res) => {
+  const body = req.body || {};
+  const out = db.applyModuleBulkSchedule({
+    startDate: body.startDate,
+    modulesPerDay: body.modulesPerDay,
+    dryRun: body.dryRun === true,
+  });
+  if (out.error) return res.status(400).json(out);
+  res.json(out);
+});
+app.post('/api/zones/:zoneId/schedule-from-template-start', auth, admin, (req, res) => {
+  const zoneId = Number(req.params.zoneId);
+  const { template_id, start_date, start_stage_idx, calendar } = req.body || {};
+  if (!template_id || !String(start_date || '').trim()) {
+    return res.status(400).json({ error: 'template_id and start_date required' });
+  }
+  const out = db.scheduleZoneFromTemplateStart(zoneId, template_id, start_date, {
+    startStageIndex: start_stage_idx,
+    calendar: calendar || 'module',
+  });
+  if (out.error) return res.status(400).json(out);
+  res.json(out);
+});
 app.post('/api/zones/:zoneId/schedule-from-target', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const {

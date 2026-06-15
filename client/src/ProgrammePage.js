@@ -370,6 +370,43 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
     },5000);
   }
 
+  /** Module programme from stage 0 uses Mon–Sat module calendar; other scopes use schedule-from-target. */
+  async function applyTemplateToZone(zoneId,{templateId,stageIdx,startDate,seq,dur}){
+    const sid=Number(zoneId);
+    const tid=Number(templateId);
+    const idx=Number(stageIdx)||0;
+    const start=startDate||dateKey(new Date());
+    if(tab===MODULE_PROGRAMME_TAB&&idx===0){
+      const res=await api.scheduleZoneFromTemplateStart(sid,{
+        template_id:tid,
+        start_date:start,
+        start_stage_idx:0,
+        calendar:'module',
+      });
+      if(res?.error)return{ok:false,hardError:String(res.error),anchorWarning:null};
+      return{ok:true,hardError:null,anchorWarning:null};
+    }
+    const {anchorActivityId,anchorEndDateKey}=targetEndParamsFromStartStage({
+      sequence:seq||tplSeq,
+      durations:dur||tplDur,
+      startStageIndex:idx,
+      startDateKey:start,
+      activityLookup,
+    });
+    if(!anchorActivityId||!anchorEndDateKey){
+      return{ok:false,hardError:'Could not resolve anchor activity for this template stage.',anchorWarning:null};
+    }
+    const res=await api.scheduleZoneFromTarget(sid,{
+      anchor_activity_id:Number(anchorActivityId),
+      anchor_date:anchorEndDateKey,
+      template_id:tid,
+      programme_stage_idx:idx,
+      programme_anchor_date:start,
+      programme_anchor_activity_id:Number(anchorActivityId),
+    });
+    return interpretScheduleFromTargetResult(res);
+  }
+
   async function saveDraftRows(){
     if(!canEdit||!selectedId||draftRows.length===0||!schedTpl)return;
     if(draftRows.some(r=>!r.activity_id)){
@@ -383,21 +420,17 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
       startDateKey:anchorDate,
       activityLookup,
     });
-    if(!anchorActivityId||!anchorEndDateKey){
+    if(!(tab===MODULE_PROGRAMME_TAB&&startStageIdx===0)&&(!anchorActivityId||!anchorEndDateKey)){
       window.alert('Could not resolve anchor activity for this template stage.');
       return;
     }
     setSaving(true);
     try{
-      const res=await api.scheduleZoneFromTarget(selectedId,{
-        anchor_activity_id:Number(anchorActivityId),
-        anchor_date:anchorEndDateKey,
-        template_id:Number(schedTpl),
-        programme_stage_idx:startStageIdx,
-        programme_anchor_date:anchorDate,
-        programme_anchor_activity_id:Number(anchorActivityId),
+      const outcome=await applyTemplateToZone(selectedId,{
+        templateId:schedTpl,
+        stageIdx:startStageIdx,
+        startDate:anchorDate,
       });
-      const outcome=interpretScheduleFromTargetResult(res);
       if(!outcome.ok){
         window.alert(outcome.hardError);
         return;
@@ -512,15 +545,13 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           activityLookup,
         });
         if(!anchorActivityId||!anchorEndDateKey)continue;
-        const res=await api.scheduleZoneFromTarget(z.id,{
-          anchor_activity_id:Number(anchorActivityId),
-          anchor_date:anchorEndDateKey,
-          template_id:Number(b.templateId),
-          programme_stage_idx:b.stageIdx??0,
-          programme_anchor_date:b.startDate||dateKey(new Date()),
-          programme_anchor_activity_id:Number(anchorActivityId),
+        const outcome=await applyTemplateToZone(z.id,{
+          templateId:b.templateId,
+          stageIdx:b.stageIdx??0,
+          startDate:b.startDate||dateKey(new Date()),
+          seq,
+          dur,
         });
-        const outcome=interpretScheduleFromTargetResult(res);
         if(!outcome.ok){
           window.alert(`${z.tower} ${z.name}: ${outcome.hardError}`);
           return;

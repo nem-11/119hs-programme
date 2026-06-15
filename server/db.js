@@ -8,6 +8,7 @@ const schedule = require('./programmeSchedule');
 const pw = require('./planWorkingDays');
 const { resolveDatabasePath } = require('./databasePath');
 const { DEFAULT_PROGRAMME_TEMPLATES } = require('./defaultTemplates');
+const mbs = require('./moduleBulkSchedule');
 
 const GW_NAMES = [
   'Pile Mat',
@@ -171,6 +172,15 @@ function seedProjectProgrammeActivities() {
 /** Module Programme activities — aligned with Module Handover stage labels. */
 function seedModuleProgrammeActivities() {
   MODULE_PROGRAMME_NAMES.forEach((name) => {
+    try {
+      run('INSERT OR IGNORE INTO activities (name,type) VALUES (?,?)', [name, 'module_programme']);
+    } catch (_) {}
+  });
+}
+
+/** Module Completion template activities (Ryan Snag → Sparkle). */
+function seedModuleCompletionActivities() {
+  mbs.MODULE_COMPLETION_SEQUENCE.forEach((name) => {
     try {
       run('INSERT OR IGNORE INTO activities (name,type) VALUES (?,?)', [name, 'module_programme']);
     } catch (_) {}
@@ -584,6 +594,7 @@ async function getDb() {
   seedActivities();
   seedProjectProgrammeActivities();
   seedModuleProgrammeActivities();
+  seedModuleCompletionActivities();
   migrateZonesGeometry();
   migrateZoneActivitiesTable();
   migrateZoneProgrammeMeta();
@@ -2538,5 +2549,240 @@ module.exports = {
     if (!row) return false;
     run('DELETE FROM activity_dependencies WHERE id=?', [Number(id)]);
     return true;
+  },
+
+  getModuleCompletionTemplate() {
+    return (
+      get('SELECT * FROM templates WHERE name=? AND tab=?', [
+        mbs.MODULE_COMPLETION_TEMPLATE_NAME,
+        mbs.MODULE_PROGRAMME_TAB,
+      ]) ||
+      null
+    );
+  },
+
+  /** A1 — ordered module list + computed start dates (inspect before bulk apply). */
+  getModuleBulkSchedulePreview(opts = {}) {
+    const zones = mbs.getOrderedModuleZones(all);
+    const startDates = mbs.assignModuleStartDates(zones.length, {
+      startDate: opts.startDate || mbs.DEFAULT_BULK_START,
+      modulesPerDay: opts.modulesPerDay || mbs.DEFAULT_MODULES_PER_DAY,
+    });
+    const tpl = module.exports.getModuleCompletionTemplate();
+    let templateWarning = null;
+    if (!tpl) templateWarning = `Template "${mbs.MODULE_COMPLETION_TEMPLATE_NAME}" not found — create it on Templates first.`;
+
+    const list = zones.map((z, i) => ({
+      order: i + 1,
+      zone_id: Number(z.id),
+      tower: String(z.tower || '').trim(),
+      name: String(z.name || '').trim(),
+      drawing_name: String(z.drawing_name || '').trim(),
+      drawing_floor: String(z.drawing_floor || z.drawing_name || '').trim(),
+      floor_rank: z._floorRank,
+      centre_x: null,
+      start_date: startDates[i] || null,
+      label: `${String(z.tower || '').trim()} ${String(z.name || '').trim()}`.trim(),
+    }));
+
+    for (let i = 0; i < zones.length; i++) {
+      list[i].centre_x = Math.round(mbs.parseGeomCenterX(zones[i]) * 100) / 100;
+    }
+
+    const lastStart = startDates[startDates.length - 1] || null;
+    return {
+      ok: true,
+      total: list.length,
+      template_id: tpl ? Number(tpl.id) : null,
+      template_name: mbs.MODULE_COMPLETION_TEMPLATE_NAME,
+      template_warning: templateWarning,
+      start_anchor: mbs.normalizeModuleStartKey(opts.startDate || mbs.DEFAULT_BULK_START),
+      modules_per_day: Number(opts.modulesPerDay) || mbs.DEFAULT_MODULES_PER_DAY,
+      last_start_date: lastStart,
+      ordered: list,
+    };
+  },
+
+  /**
+   * Apply Module Completion template from stage 0 start date (module Mon–Sat calendar).
+   * Reusable for single-zone edits and bulk apply.
+   */
+  scheduleZoneFromTemplateStart(zoneId, templateId, startDateKey, opts = {}) {
+    const zid = Number(zoneId);
+    const zone = get('SELECT * FROM zones WHERE id=?', [zid]);
+    if (!zone) return { error: 'Zone not found' };
+
+    const tid = Number(templateId);
+    const tpl = get('SELECT * FROM templates WHERE id=?', [tid]);
+    if (!tpl) return { error: 'Template not found' };
+
+    let seq = [];
+    let dur = [];
+    try {
+      seq = JSON.parse(tpl.sequence || '[]');
+    } catch (_) {}
+    try {
+      dur = JSON.parse(tpl.durations || '[]');
+    } catch (_) {}
+    if (!Array.isArray(seq) || !seq.length) return { error: 'Template has no sequence' };
+
+    const actRows = all('SELECT id, name FROM activities');
+    const activityLookup = schedule.buildActivityLookup(actRows);
+    const startStageIndex = Number(opts.startStageIndex) || 0;
+    const useModuleCalendar = opts.calendar === 'module';
+
+    const rows = useModuleCalendar
+      ? mbs.buildRowsFromModuleTemplateStart({
+          sequence: seq,
+          durations: dur,
+          startStageIndex,
+          startDateKey,
+          activityLookup,
+        })
+      : schedule.buildRowsFromTemplate({
+          sequence: seq,
+          durations: dur,
+          startStageIndex,
+          startDateKey,
+          activityLookup,
+        });
+
+    if (!rows.length) return { error: 'Could not compute schedule — check start date' };
+    if (rows.some((r) => !r.activity_id)) {
+      return { error: 'Unknown activity name in template — add matching activities in the database' };
+    }
+
+    const existing = all('SELECT * FROM programme_items WHERE zone_id=?', [zid]);
+    deleteDependenciesForProgrammeItemIds(existing.map((pi) => pi.id));
+    for (const it of existing) {
+      shrinkScheduleForItem(it);
+      run('DELETE FROM programme_items WHERE id=?', [it.id]);
+    }
+
+    const newItems = [];
+    for (const row of rows) {
+      if (!row || row.start_date == null || row.end_date == null) continue;
+      const { start_date: sd, end_date: ed } = clampProgrammeItemDates(row.start_date, row.end_date);
+      run(
+        'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
+        [zid, row.activity_id, sd, ed, row.status || 'planned', row.notes || '']
+      );
+      const nid = get('SELECT last_insert_rowid() as id').id;
+      const pi = get('SELECT * FROM programme_items WHERE id=?', [nid]);
+      if (pi) {
+        expandScheduleForItem(pi);
+        newItems.push(pi);
+      }
+    }
+
+    if (!newItems.length) return { error: 'Could not store programme rows — check start date' };
+
+    newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+    createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
+
+    const anchorActId = rows[startStageIndex]?.activity_id ?? rows[0]?.activity_id;
+    const anchorDate = rows[startStageIndex]?.start_date ?? rows[0]?.start_date;
+    try {
+      const now = new Date().toISOString();
+      run(
+        'UPDATE zones SET source_template_id=?, programme_stage_idx=?, programme_anchor_date=?, programme_anchor_activity_id=?, updated_at=? WHERE id=?',
+        [tid, startStageIndex, anchorDate, anchorActId, now, zid]
+      );
+      save();
+    } catch (e) {
+      console.error('[119HS] scheduleZoneFromTemplateStart anchor metadata failed zone', zid, e.message);
+    }
+
+    const datedEnd = rows.filter((r) => r && r.end_date != null);
+    return {
+      ok: true,
+      zone_id: zid,
+      zone_start: rows[0]?.start_date || null,
+      zone_finish: datedEnd.length ? datedEnd[datedEnd.length - 1].end_date : null,
+      activities: rows.length,
+    };
+  },
+
+  /** A2+A3 — bulk-apply Module Completion to all ordered module zones. */
+  applyModuleBulkSchedule(opts = {}) {
+    const dryRun = opts.dryRun === true;
+    const preview = module.exports.getModuleBulkSchedulePreview(opts);
+    if (!preview.ok) return preview;
+    const tpl = module.exports.getModuleCompletionTemplate();
+    if (!tpl) {
+      return { error: `Template "${mbs.MODULE_COMPLETION_TEMPLATE_NAME}" not found` };
+    }
+    const tid = Number(tpl.id);
+    if (dryRun) {
+      return { ok: true, dry_run: true, would_apply: preview.total, preview };
+    }
+
+    const errors = [];
+    let applied = 0;
+    for (const row of preview.ordered) {
+      if (!row.start_date) continue;
+      const out = module.exports.scheduleZoneFromTemplateStart(row.zone_id, tid, row.start_date, {
+        startStageIndex: 0,
+        calendar: 'module',
+      });
+      if (out.error) {
+        errors.push({ zone_id: row.zone_id, label: row.label, error: out.error });
+        continue;
+      }
+      applied += 1;
+    }
+    return {
+      ok: true,
+      applied,
+      total: preview.total,
+      errors,
+      preview_summary: {
+        start_anchor: preview.start_anchor,
+        last_start_date: preview.last_start_date,
+        modules_per_day: preview.modules_per_day,
+      },
+    };
+  },
+
+  /** Programme items for all module_handover zones — for Handover Progress mirror. */
+  getModuleProgrammeItemsGrouped() {
+    const rows = all(
+      `SELECT pi.*, a.name AS activity_name, a.type AS activity_type
+       FROM programme_items pi
+       JOIN zones z ON z.id = pi.zone_id
+       JOIN drawings d ON d.id = z.drawing_id
+       JOIN activities a ON a.id = pi.activity_id
+       WHERE d.tab = ?
+       ORDER BY pi.zone_id, pi.start_date`,
+      [mbs.MODULE_HANDOVER_TAB]
+    );
+    const byZone = new Map();
+    for (const r of rows) {
+      const zid = Number(r.zone_id);
+      if (!byZone.has(zid)) byZone.set(zid, []);
+      byZone.get(zid).push(r);
+    }
+    return byZone;
+  },
+
+  /** B2 — per-activity Module Completion counts across all module zones (read-only mirror). */
+  getModuleCompletionProgress(todayKey) {
+    const zones = mbs.getOrderedModuleZones(all);
+    const zoneIds = zones.map((z) => Number(z.id));
+    const byZone = module.exports.getModuleProgrammeItemsGrouped();
+    const today = String(todayKey || pw.dateKeyFromDate(new Date())).trim();
+    const counts = mbs.summarizeModuleProgrammeProgress(
+      byZone,
+      zoneIds,
+      today,
+      mbs.MODULE_COMPLETION_SEQUENCE
+    );
+    return {
+      ok: true,
+      total: zoneIds.length,
+      today,
+      sequence: mbs.MODULE_COMPLETION_SEQUENCE,
+      counts,
+    };
   },
 };

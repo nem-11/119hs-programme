@@ -319,6 +319,26 @@ function activityCompletionForTab(planRows, comp, drawingTab) {
   return { total, done };
 }
 
+/** Per-tower activity completion for one programme tab (same tick model as activityCompletionForTab). */
+function towerCompletionForTab(planRows, comp, drawingTab) {
+  const byTower = new Map();
+  for (const r of planRows || []) {
+    if (!r || String(r.drawing_tab || '') !== drawingTab) continue;
+    const tw = String(r.tower || '').trim();
+    const zn = String(r.zone_name || '').trim();
+    const act = String(r.activity_name || '').trim();
+    if (!tw || !zn || !act) continue;
+    if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
+    if (!byTower.has(tw)) byTower.set(tw, { tower: tw, total: 0, done: 0 });
+    const e = byTower.get(tw);
+    e.total++;
+    if (isProgrammeRowDone(r, comp)) e.done++;
+  }
+  return [...byTower.values()]
+    .map((e) => ({ ...e, pct: e.total > 0 ? Math.round((e.done / e.total) * 100) : 0 }))
+    .sort((a, b) => a.tower.localeCompare(b.tower, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 function overallActivityCompletion(planRows, comp) {
   const g = activityCompletionForTab(planRows, comp, 'groundworks');
   const i = activityCompletionForTab(planRows, comp, 'internals');
@@ -1603,6 +1623,12 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     };
   }, [metricPlanRows, comp]);
 
+  /** Per-tower completion for the internals programme. */
+  const intTowerStats = useMemo(
+    () => towerCompletionForTab(metricPlanRows, comp, 'internals'),
+    [metricPlanRows, comp]
+  );
+
   const metrics=[
     {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked · ${gwPct}% complete`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked · ${intPct}% complete`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
@@ -1767,6 +1793,38 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
             </div>
           );
         })}
+      </section>
+
+      <section style={{
+        marginBottom:18,
+        padding:'16px 18px 14px',
+        borderRadius:16,
+        background:grad.cardSurface,
+        border:'1px solid rgba(26,26,46,0.06)',
+        boxShadow:shadowCard,
+      }}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>Internals</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by tower</div>
+        </div>
+        {intTowerStats.length===0?(
+          <p style={{margin:0,fontSize:12,color:T.muted,lineHeight:1.5}}>No internals programme activities to report yet.</p>
+        ):(
+          intTowerStats.map((tw)=>(
+            <div key={tw.tower} style={{marginBottom:12}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
+                <span style={{fontSize:12,fontWeight:700,color:T.text}}>{tw.tower}</span>
+                <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                  <span style={{fontSize:12,fontWeight:800,color:'rgba(142,68,173,0.95)'}}>{tw.pct}%</span>
+                  <span style={{fontSize:10,color:T.muted}}>{tw.done}/{tw.total}</span>
+                </div>
+              </div>
+              <div style={{height:6,borderRadius:3,background:'rgba(26,26,46,0.07)',overflow:'hidden'}}>
+                <div style={{height:'100%',borderRadius:3,width:`${tw.pct}%`,background:'rgba(142,68,173,0.75)',transition:'width 0.4s ease'}}/>
+              </div>
+            </div>
+          ))
+        )}
       </section>
 
       <section style={{

@@ -5,9 +5,10 @@ import PageHeader, { PageFooterHint } from './PageHeader';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { parseZoneGeometry, svgPolygonPoints, geomBBox } from './zoneGeom';
 import { isPdfFile, rasterizePdfFirstPageToJpeg } from './pdfDrawing';
-import { MODULE_HANDOVER_TAB, MODULE_PROGRAMME_TAB, drawingTabLabel, dateKey } from './constants';
+import { MODULE_HANDOVER_TAB, MODULE_PROGRAMME_TAB, drawingTabLabel, dateKey, actColor } from './constants';
 import {
   MODULE_STAGES,
+  MODULE_COMPLETION_SEQUENCE,
   moduleStageMeta,
   normalizeModuleStage,
   moduleCompletionSummary,
@@ -109,6 +110,9 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [editMode, setEditMode] = useState(false);
   const [editId, setEditId] = useState(null);
   const [editGeom, setEditGeom] = useState(null);
+  const [completionProgress, setCompletionProgress] = useState(null);
+  const [bulkPreview, setBulkPreview] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const wrapRef = useRef(null);
   const viewportRef = useRef(null);
@@ -192,7 +196,27 @@ export default function ModuleHandoverPage({ canManage = false }) {
     }).catch(() => setProgrammeItems([]));
   }, []);
 
+  const todayKey = dateKey(new Date());
+
+  const reloadCompletionProgress = useCallback(() => {
+    return api
+      .getModuleCompletionProgress(todayKey)
+      .then((out) => {
+        setCompletionProgress(out && out.ok ? out : null);
+        return out;
+      })
+      .catch(() => {
+        setCompletionProgress(null);
+        return null;
+      });
+  }, [todayKey]);
+
   useRefreshOnFocus(() => reloadProgrammeItems(drawingId));
+  useRefreshOnFocus(reloadCompletionProgress);
+
+  useEffect(() => {
+    reloadCompletionProgress();
+  }, [reloadCompletionProgress]);
 
   useEffect(() => {
     setSelId(null);
@@ -212,8 +236,6 @@ export default function ModuleHandoverPage({ canManage = false }) {
       cancelled = true;
     };
   }, [drawingId, reloadZones, reloadProgrammeItems]);
-
-  const todayKey = dateKey(new Date());
 
   /** Active module_programme row per zone for today (for colour key + module list). */
   const programmeTodayByZone = useMemo(() => {
@@ -239,6 +261,73 @@ export default function ModuleHandoverPage({ canManage = false }) {
   }, [programmeTodayByZone]);
 
   const summary = useMemo(() => moduleCompletionSummary(zones), [zones]);
+
+  const completionCounts = useMemo(() => {
+    const c = completionProgress?.counts;
+    if (!c) return null;
+    return c;
+  }, [completionProgress]);
+
+  async function previewBulkSchedule() {
+    setErr('');
+    setBulkBusy(true);
+    try {
+      const out = await api.getModuleBulkSchedulePreview();
+      if (out?.error) {
+        setErr(String(out.error));
+        return;
+      }
+      setBulkPreview(out);
+      // eslint-disable-next-line no-console
+      console.log('[Module bulk schedule preview]', out);
+      if (out.ordered?.length) {
+        // eslint-disable-next-line no-console
+        console.table(out.ordered.map((r) => ({
+          order: r.order,
+          tower: r.tower,
+          module: r.name,
+          floor: r.drawing_floor || r.drawing_name,
+          centre_x: r.centre_x,
+          start: r.start_date,
+        })));
+      }
+    } catch (e) {
+      setErr(e?.message || 'Preview failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function applyBulkSchedule() {
+    if (!bulkPreview?.ordered?.length) {
+      await previewBulkSchedule();
+      return;
+    }
+    const n = bulkPreview.total || bulkPreview.ordered.length;
+    if (!window.confirm(`Apply Module Completion to all ${n} modules? This replaces each module's programme schedule.`)) {
+      return;
+    }
+    setErr('');
+    setBulkBusy(true);
+    try {
+      const out = await api.applyModuleBulkSchedule({ dryRun: false });
+      if (out?.error) {
+        setErr(String(out.error));
+        return;
+      }
+      if (out.errors?.length) {
+        setErr(`Applied ${out.applied}/${out.total}; ${out.errors.length} failed — see console.`);
+        // eslint-disable-next-line no-console
+        console.warn('[Module bulk schedule errors]', out.errors);
+      }
+      await reloadCompletionProgress();
+      reloadProgrammeItems(drawingId);
+    } catch (e) {
+      setErr(e?.message || 'Bulk apply failed');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
   // In Adjust mode the side panel (rename / delete / stage) follows the module
   // you're editing; otherwise it follows the View-mode click selection.
   const selected = useMemo(() => {
@@ -1256,6 +1345,94 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 ))}
               </div>
             </div>
+
+            {completionCounts && (
+              <div style={{ ...card, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Module Completion programme
+                </div>
+                <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>
+                  Read-only mirror — where each module sits in its 12-day schedule as of {completionProgress?.today || todayKey}.
+                </div>
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {MODULE_COMPLETION_SEQUENCE.map((label) => (
+                    <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: T.text }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 11, height: 11, borderRadius: 3, background: actColor(label, 0.88), border: `1px solid ${actColor(label, 1)}` }} />
+                        {label}
+                      </span>
+                      <span style={{ fontWeight: 700 }}>{completionCounts[label] || 0}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: T.text, marginTop: 4, paddingTop: 6, borderTop: `1px solid ${T.hairline}` }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 11, height: 11, borderRadius: 3, background: 'rgba(176,183,194,0.35)', border: '1px solid rgba(96,104,116,0.45)' }} />
+                      Not yet started
+                    </span>
+                    <span style={{ fontWeight: 700 }}>{completionCounts.not_yet_started || 0}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: T.text }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 11, height: 11, borderRadius: 3, background: actColor('Commission', 0.88), border: `1px solid ${actColor('Commission', 1)}` }} />
+                      Completed
+                    </span>
+                    <span style={{ fontWeight: 700 }}>{completionCounts.completed || 0}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {canManage && (
+              <div style={{ ...card, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Bulk programme
+                </div>
+                <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>
+                  Preview module order (T4→T1→T2→T3, floor up, right-to-left), then apply Module Completion with 5 starts per Mon–Sat day from 22 Jun 2026.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                  <button type="button" onClick={previewBulkSchedule} disabled={bulkBusy} style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}>
+                    {bulkBusy ? 'Working…' : 'Preview order'}
+                  </button>
+                  <button type="button" onClick={applyBulkSchedule} disabled={bulkBusy} style={{ ...S.btn, ...S.btnPrimary, padding: '7px 12px', fontSize: 12 }}>
+                    Apply to all modules
+                  </button>
+                </div>
+                {bulkPreview?.template_warning && (
+                  <div style={{ fontSize: 11, color: '#b45309', marginTop: 8 }}>{bulkPreview.template_warning}</div>
+                )}
+                {bulkPreview?.ordered?.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
+                      {bulkPreview.total} modules · last start {bulkPreview.last_start_date} · full list in browser console (console.table)
+                    </div>
+                    <div style={{ marginTop: 8, maxHeight: 220, overflow: 'auto', border: `1px solid ${T.hairline}`, borderRadius: 8, fontSize: 10 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(26,26,46,0.04)', position: 'sticky', top: 0 }}>
+                            {['#', 'Tower', 'Module', 'Floor', 'X', 'Start'].map((h) => (
+                              <th key={h} style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 700, color: T.muted }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bulkPreview.ordered.map((r) => (
+                            <tr key={r.zone_id} style={{ borderTop: `1px solid ${T.hairline}` }}>
+                              <td style={{ padding: '3px 6px' }}>{r.order}</td>
+                              <td style={{ padding: '3px 6px' }}>{r.tower}</td>
+                              <td style={{ padding: '3px 6px' }}>{r.name}</td>
+                              <td style={{ padding: '3px 6px' }}>{r.drawing_floor || r.drawing_name}</td>
+                              <td style={{ padding: '3px 6px' }}>{r.centre_x}</td>
+                              <td style={{ padding: '3px 6px' }}>{r.start_date}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {zones.length > 0 && (
               <div style={{ ...card, padding: 14 }}>

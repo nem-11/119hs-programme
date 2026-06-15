@@ -54,6 +54,21 @@ export const MODULE_STAGE_KEYS = MODULE_STAGES.map((s) => s.key);
 /** Activity names for Module Programme templates — same labels as handover stages. */
 export const MODULE_SEQUENCE = MODULE_STAGES.map((s) => s.label);
 
+/** Module Completion template — 11 activities, 12 schedule days (Module Paint = 2d). */
+export const MODULE_COMPLETION_SEQUENCE = [
+  'Ryan Snag',
+  'Build Clean',
+  'Mastic',
+  'Carpentry',
+  'Make Good',
+  'Module Paint',
+  'Furniture Install',
+  'TV Install',
+  'Ryan De Snag',
+  'Unilife Sign Off',
+  'Sparkle',
+];
+
 const STAGE_BY_KEY = new Map(MODULE_STAGES.map((s) => [s.key, s]));
 const STAGE_BY_LABEL = new Map(MODULE_STAGES.map((s) => [s.label.toLowerCase(), s]));
 

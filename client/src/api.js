@@ -112,6 +112,16 @@ export const addModuleZone=(drawing_id,name,tower,geometry)=>api('POST','/api/mo
 export const updateModuleZone=(id,patch)=>api('PUT',`/api/module-handover/zones/${id}`,patch);
 export const deleteModuleZone=(id)=>api('DELETE',`/api/module-handover/zones/${id}`);
 export const setModuleStage=(id,stage)=>api('PATCH',`/api/module-handover/zones/${id}/stage`,{stage});
+export const getModuleCompletionProgress=(today)=>api('GET',`/api/module-handover/completion-progress${today?`?today=${encodeURIComponent(today)}`:''}`);
+export const getModuleBulkSchedulePreview=(opts={})=>{
+  const q=new URLSearchParams();
+  if(opts.startDate)q.set('startDate',opts.startDate);
+  if(opts.modulesPerDay!=null)q.set('modulesPerDay',String(opts.modulesPerDay));
+  const qs=q.toString();
+  return api('GET',`/api/admin/modules/bulk-schedule-preview${qs?`?${qs}`:''}`);
+};
+export const applyModuleBulkSchedule=(body)=>api('POST','/api/admin/modules/bulk-schedule-apply',body||{});
+export const scheduleZoneFromTemplateStart=(zoneId,body)=>api('POST',`/api/zones/${zoneId}/schedule-from-template-start`,body);
 export const getPlanProgramme=()=>api('GET','/api/plan/programme');
 export const getPlanProgrammeFullExport=()=>api('GET','/api/plan/programme?full=1');
 export const replacePlanZoneItems=(zoneId,rows)=>api('PUT',`/api/plan/admin/zone/${zoneId}/items`,{rows});
