@@ -1573,9 +1573,36 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     return out;
   },[metricPlanRows,comp]);
 
+  const gwPct = ov.gw.total > 0 ? Math.round((ov.gw.done / ov.gw.total) * 100) : 0;
+  const intPct = ov.int.total > 0 ? Math.round((ov.int.done / ov.int.total) * 100) : 0;
+
+  const sectionPace = useMemo(() => {
+    const todayK = dateKey(new Date());
+    function calcPace(tab) {
+      let expectedDone = 0, actualDone = 0;
+      for (const r of metricPlanRows) {
+        if (String(r.drawing_tab || '') !== tab) continue;
+        const tw = String(r.tower || '').trim();
+        const zn = String(r.zone_name || '').trim();
+        const act = String(r.activity_name || '').trim();
+        if (!tw || !zn || !act) continue;
+        const endK = String(r.end_date || '').trim();
+        if (!endK || endK > todayK) continue;
+        expectedDone++;
+        if (isProgrammeRowDone(r, comp)) actualDone++;
+      }
+      const delta = actualDone - expectedDone;
+      return { expectedDone, actualDone, delta };
+    }
+    return {
+      gw: calcPace('groundworks'),
+      int: calcPace('internals'),
+    };
+  }, [metricPlanRows, comp]);
+
   const metrics=[
-    {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
-    {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
+    {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked · ${gwPct}% complete`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
+    {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked · ${intPct}% complete`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
     {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (activities)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
   ];
   return<div className="dashboard-page-root" style={{
@@ -1694,6 +1721,48 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
           <div style={{fontSize:22,fontWeight:800,color:`rgba(${s.accent},0.96)`,letterSpacing:'-0.02em',lineHeight:1.2}}>{s.value}</div>
         </div>)}
       </div>
+
+      <section style={{
+        marginBottom:18,
+        padding:'16px 18px 14px',
+        borderRadius:16,
+        background:grad.cardSurface,
+        border:'1px solid rgba(26,26,46,0.06)',
+        boxShadow:shadowCard,
+      }}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>Section progress</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by section</div>
+        </div>
+        {[
+          {key:'gw',label:'Groundworks',pct:gwPct,done:ov.gw.done,total:ov.gw.total,pace:sectionPace.gw,accent:'66,133,244'},
+          {key:'int',label:'Internals',pct:intPct,done:ov.int.done,total:ov.int.total,pace:sectionPace.int,accent:'142,68,173'},
+        ].map((sec)=>{
+          const {delta,expectedDone,actualDone}=sec.pace;
+          const paceLabel=expectedDone===0?null:delta<0?`${Math.abs(delta)} behind plan`:delta>0?`${delta} ahead of plan`:'On plan';
+          const paceColor=delta<0?'rgba(192,57,43,0.9)':delta>0?'rgba(39,174,96,0.9)':'rgba(46,178,96,0.9)';
+          return(
+            <div key={sec.key} style={{marginBottom:14}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
+                <span style={{fontSize:12,fontWeight:700,color:T.text}}>{sec.label}</span>
+                <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                  {paceLabel&&(
+                    <span style={{fontSize:10,fontWeight:700,color:paceColor}}>{paceLabel}</span>
+                  )}
+                  <span style={{fontSize:12,fontWeight:800,color:`rgba(${sec.accent},0.95)`}}>{sec.pct}%</span>
+                  <span style={{fontSize:10,color:T.muted}}>{sec.done}/{sec.total}</span>
+                </div>
+              </div>
+              <div style={{height:6,borderRadius:3,background:'rgba(26,26,46,0.07)',overflow:'hidden'}}>
+                <div style={{height:'100%',borderRadius:3,width:`${sec.pct}%`,background:`rgba(${sec.accent},0.75)`,transition:'width 0.4s ease'}}/>
+              </div>
+              {expectedDone>0&&(
+                <div style={{fontSize:10,color:T.muted,marginTop:3}}>{actualDone} of {expectedDone} tasks due by today ticked</div>
+              )}
+            </div>
+          );
+        })}
+      </section>
 
       <section style={{
         marginBottom:18,

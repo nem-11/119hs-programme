@@ -238,6 +238,21 @@ export function completionDoneKeySet(comp) {
 }
 
 /**
+ * Returns the completion record { date, by, at } for the first tick found on any day,
+ * or null if the row has no tick. Sorted by date ascending so the earliest tick is returned.
+ */
+export function completionInfoForRow(row, comp) {
+  const ck = completionKeyFromProgrammeRow(row);
+  if (!ck || !comp || typeof comp !== 'object') return null;
+  const dates = Object.keys(comp).sort();
+  for (const dk of dates) {
+    const entry = comp[dk]?.[ck];
+    if (entry) return { date: dk, by: entry.by || '', at: entry.at || '' };
+  }
+  return null;
+}
+
+/**
  * Activity-level done: status done, or a tick exists on any day for this row's key.
  * Pass a precomputed key set from completionDoneKeySet(comp) for efficiency; otherwise
  * the completions map is scanned.

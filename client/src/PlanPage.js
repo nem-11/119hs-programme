@@ -20,6 +20,7 @@ import {
   asCompletionsMap,
   isProgrammeRowDone,
   completionDoneKeySet,
+  completionInfoForRow,
 } from './planUtils';
 import { parseZoneGeometry, geomBBox } from './zoneGeom';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
@@ -89,6 +90,14 @@ function planZoneDrawingStyles(zoneIndex, { done, active }) {
   const sb = Math.max(0, b - 42);
   const stroke = `rgb(${sr},${sg},${sb})`;
   return { fill, stroke, strokeW: 1.05 };
+}
+
+/** Sort rank for floor labels: GF = 0, then numeric floors 1, 2, 3… */
+function floorSortRank(floor) {
+  const s = String(floor || '').toLowerCase().trim();
+  if (!s || s === 'gf' || s === 'ground' || s === 'ground floor' || s === 'g/f' || s === 'g') return 0;
+  const m = s.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 999;
 }
 
 const PDF_PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
@@ -195,6 +204,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   /** Explicit selected drawing tabs (multi-select); persisted in App via localStorage. */
   /** null = all towers; otherwise whitelist */
   const [towerWhitelist, setTowerWhitelist] = useState(null);
+  /** null = all floors; otherwise Set of drawing_floor strings */
+  const [floorWhitelist, setFloorWhitelist] = useState(null);
 
   const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfOpts, setPdfOpts] = useState({
@@ -410,9 +421,13 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         const tw = String(r.tower || '').trim();
         if (!towerWhitelist.has(tw)) return false;
       }
+      if (floorWhitelist !== null) {
+        const fl = String(r.drawing_floor || '').trim();
+        if (!floorWhitelist.has(fl)) return false;
+      }
       return true;
     });
-  }, [rowsForScope, towerWhitelist]);
+  }, [rowsForScope, towerWhitelist, floorWhitelist]);
 
   /** Activity-level tick set — a tick on any day marks the activity done everywhere. */
   const doneKeys = useMemo(() => completionDoneKeySet(comp), [comp]);
@@ -426,6 +441,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     return [...s].sort();
   }, [rowsForScope]);
 
+  const floorsInView = useMemo(() => {
+    const s = new Set();
+    rowsForScope.forEach((r) => {
+      const fl = String(r.drawing_floor || '').trim();
+      if (fl) s.add(fl);
+    });
+    return [...s].sort((a, b) => floorSortRank(a) - floorSortRank(b));
+  }, [rowsForScope]);
+
   useEffect(() => {
     const valid = new Set(towersInView);
     setTowerWhitelist((prev) => {
@@ -436,6 +460,17 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       return next;
     });
   }, [towersInView]);
+
+  useEffect(() => {
+    const valid = new Set(floorsInView);
+    setFloorWhitelist((prev) => {
+      if (prev === null) return null;
+      const next = new Set([...prev].filter((f) => valid.has(f)));
+      if (next.size === 0) return null;
+      if (next.size === valid.size) return null;
+      return next;
+    });
+  }, [floorsInView]);
 
   const dayColumns = useMemo(() => {
     const all = calendarDaysBetween(startDate, endDate);
@@ -634,6 +669,22 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
   function selectAllTowers() {
     setTowerWhitelist(null);
+  }
+
+  function toggleFloor(fl) {
+    setFloorWhitelist((prev) => {
+      const full = new Set(floorsInView);
+      const cur = new Set(prev === null ? full : prev);
+      if (cur.has(fl)) cur.delete(fl);
+      else cur.add(fl);
+      if (cur.size === 0) return null;
+      if (cur.size === full.size) return null;
+      return cur;
+    });
+  }
+
+  function selectAllFloors() {
+    setFloorWhitelist(null);
   }
 
   function toggleProgrammeTab(t) {
@@ -1110,6 +1161,28 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </div>
             )}
 
+            {floorsInView.length > 1 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Floor</span>
+                <button type="button" onClick={selectAllFloors} style={{ ...S.btn, padding: '6px 10px', fontSize: 11 }}>
+                  All floors
+                </button>
+                {floorsInView.map((fl) => {
+                  const active = floorWhitelist === null || floorWhitelist.has(fl);
+                  return (
+                    <button
+                      key={fl}
+                      type="button"
+                      onClick={() => toggleFloor(fl)}
+                      style={{ ...S.btn, ...(active ? S.btnAct : {}), padding: '6px 10px', fontSize: 11, opacity: active ? 1 : 0.55 }}
+                    >
+                      {fl}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {viewMode === 'drawing' && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
                 <span style={{ fontSize: 10, fontWeight: 600, color: T.muted }}>Drawing date</span>
@@ -1398,6 +1471,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                     const done = isProgrammeRowDone(it, comp, doneKeys);
                                     const label = abbrevActivity(it.activity_name);
                                     const zLab = zoneRowLabel(z);
+                                    const compInfo = done ? completionInfoForRow(it, comp) : null;
                                     return (
                                       <PlanActivityChip
                                         key={it.id}
@@ -1406,6 +1480,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                         dk={dk}
                                         isAdmin={isAdmin}
                                         done={done}
+                                        completionAt={compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
                                         isMobile={isMobile}
                                         coarsePointer={coarsePointer}
                                         label={label}

@@ -1705,7 +1705,7 @@ module.exports = {
   getPlanProgrammeRows: (tabs) => {
     const base = `SELECT pi.id, pi.zone_id, pi.activity_id, pi.start_date, pi.end_date, pi.status, pi.notes,
               z.name AS zone_name, z.tower, z.drawing_id,
-              d.tab AS drawing_tab, d.name AS drawing_name,
+              d.tab AS drawing_tab, d.name AS drawing_name, d.floor AS drawing_floor,
               a.name AS activity_name, a.type AS activity_type
        FROM programme_items pi
        JOIN zones z ON z.id = pi.zone_id

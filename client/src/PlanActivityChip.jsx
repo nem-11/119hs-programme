@@ -16,6 +16,7 @@ export default function PlanActivityChip({
   dk,
   isAdmin,
   done,
+  completionAt,
   isMobile,
   coarsePointer,
   label,
@@ -161,19 +162,28 @@ export default function PlanActivityChip({
         }, CLICK_DELAY_MS);
       }}
     >
-      {done && (
-        <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
-      )}
-      {hasDependency && (
-        <span
-          title="Has dependencies"
-          style={{ flexShrink: 0, fontSize: 9, lineHeight: 1, opacity: 0.85 }}
-          aria-hidden
-        >
-          🔗
-        </span>
-      )}
-      <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {done && (
+            <span style={{ flexShrink: 0, fontSize: 11 }}>✓</span>
+          )}
+          {hasDependency && (
+            <span
+              title="Has dependencies"
+              style={{ flexShrink: 0, fontSize: 9, lineHeight: 1, opacity: 0.85 }}
+              aria-hidden
+            >
+              🔗
+            </span>
+          )}
+          <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{label}</span>
+        </div>
+        {done && completionAt && (
+          <span style={{ fontSize: 8, opacity: 0.72, lineHeight: 1.2, marginTop: 1 }}>
+            {completionAt}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
