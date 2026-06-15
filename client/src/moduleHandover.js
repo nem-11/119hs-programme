@@ -51,7 +51,11 @@ export const MODULE_STAGES = [
 
 export const MODULE_STAGE_KEYS = MODULE_STAGES.map((s) => s.key);
 
+/** Activity names for Module Programme templates — same labels as handover stages. */
+export const MODULE_SEQUENCE = MODULE_STAGES.map((s) => s.label);
+
 const STAGE_BY_KEY = new Map(MODULE_STAGES.map((s) => [s.key, s]));
+const STAGE_BY_LABEL = new Map(MODULE_STAGES.map((s) => [s.label.toLowerCase(), s]));
 
 /** Default stage when a module has no recorded handover_stage. */
 export const DEFAULT_MODULE_STAGE = 'nothing';
@@ -66,6 +70,11 @@ export function normalizeModuleStage(stage) {
 
 export function moduleStageMeta(stage) {
   return STAGE_BY_KEY.get(normalizeModuleStage(stage));
+}
+
+/** Lookup stage colours by display label (Module Programme activity names). */
+export function moduleStageMetaByLabel(label) {
+  return STAGE_BY_LABEL.get(String(label || '').trim().toLowerCase());
 }
 
 export function moduleStageIndex(stage) {

@@ -53,6 +53,16 @@ const PROJECT_PROGRAMME_NAMES = [
   'Handover / commissioning block',
 ];
 
+/** Module Programme activities — same labels as Module Handover stages (client moduleHandover.js). */
+const MODULE_PROGRAMME_NAMES = [
+  'Not started',
+  'Snagged',
+  'Works in progress',
+  'Clean',
+  'Furniture',
+  'Handover',
+];
+
 let db;
 
 function save() {
@@ -93,14 +103,15 @@ function expandScheduleForItem(pi, opts) {
     'SELECT z.*, d.tab FROM zones z JOIN drawings d ON d.id=z.drawing_id WHERE z.id=?',
     [pi.zone_id]
   );
-  const a = get('SELECT name FROM activities WHERE id=?', [pi.activity_id]);
+  const a = get('SELECT name, type FROM activities WHERE id=?', [pi.activity_id]);
   if (!z || !a) return;
+  const tabVal = scheduleTabForProgrammeItem(pi);
   const dates = dateKeysBetween(pi.start_date, pi.end_date);
   dates.forEach((dk) => {
     try {
       const sql =
         'INSERT OR IGNORE INTO schedule (tab,date,tower,zone_name,activity) VALUES (?,?,?,?,?)';
-      const params = [z.tab, dk, z.tower, z.name, a.name];
+      const params = [tabVal, dk, z.tower, z.name, a.name];
       if (deferSave) runNoSave(sql, params);
       else run(sql, params);
     } catch (_) {}
@@ -115,9 +126,9 @@ function shrinkScheduleForItem(pi, opts) {
     'SELECT z.*, d.tab FROM zones z JOIN drawings d ON d.id=z.drawing_id WHERE z.id=?',
     [pi.zone_id]
   );
-  const a = get('SELECT name FROM activities WHERE id=?', [pi.activity_id]);
+  const a = get('SELECT name, type FROM activities WHERE id=?', [pi.activity_id]);
   if (!z || !a) return;
-  const tabVal = z.tab != null ? String(z.tab) : '';
+  const tabVal = scheduleTabForProgrammeItem(pi);
   const dates = dateKeysBetween(pi.start_date, pi.end_date);
   const sql =
     'DELETE FROM schedule WHERE tab=? AND date=? AND tower=? AND zone_name=? AND activity=?';
@@ -155,6 +166,27 @@ function seedProjectProgrammeActivities() {
       run('INSERT OR IGNORE INTO activities (name,type) VALUES (?,?)', [name, 'project_programme']);
     } catch (_) {}
   });
+}
+
+/** Module Programme activities — aligned with Module Handover stage labels. */
+function seedModuleProgrammeActivities() {
+  MODULE_PROGRAMME_NAMES.forEach((name) => {
+    try {
+      run('INSERT OR IGNORE INTO activities (name,type) VALUES (?,?)', [name, 'module_programme']);
+    } catch (_) {}
+  });
+}
+
+/** Schedule tab for a programme row: module_programme activities use that scope tab, not drawing tab. */
+function scheduleTabForProgrammeItem(pi) {
+  if (!pi) return '';
+  const a = get('SELECT type FROM activities WHERE id=?', [pi.activity_id]);
+  if (a && String(a.type) === 'module_programme') return 'module_programme';
+  const z = get(
+    'SELECT d.tab FROM zones z JOIN drawings d ON d.id=z.drawing_id WHERE z.id=?',
+    [pi.zone_id]
+  );
+  return z && z.tab != null ? String(z.tab) : '';
 }
 
 function roleGetsProjectProgrammeTab(role) {
@@ -229,6 +261,56 @@ function migrateUserTabsModuleProgramme() {
     run('UPDATE users SET tabs=? WHERE id=?', [JSON.stringify(t), u.id]);
   }
   save();
+}
+
+/** Fold legacy module_handover scope tab into module_programme (one "Modules" scope). */
+function migrateUserTabsUnifyModules() {
+  const users = all('SELECT id, tabs FROM users');
+  for (const u of users) {
+    let t = [];
+    try {
+      t = JSON.parse(u.tabs || '[]');
+    } catch (_) {}
+    if (!Array.isArray(t)) t = [];
+    const hadHandover = t.includes('module_handover');
+    const filtered = t.filter((x) => x !== 'module_handover');
+    if ((hadHandover || t.includes('module_programme')) && !filtered.includes('module_programme')) {
+      filtered.push('module_programme');
+    }
+    const next = JSON.stringify(filtered);
+    if (next !== JSON.stringify(t)) {
+      run('UPDATE users SET tabs=? WHERE id=?', [next, u.id]);
+    }
+  }
+  save();
+}
+
+/** Re-key schedule rows for module_programme items from drawing tab → module_programme scope tab. */
+function migrateModuleProgrammeScheduleTab() {
+  const items = all(
+    `SELECT pi.* FROM programme_items pi
+     JOIN activities a ON a.id = pi.activity_id
+     WHERE a.type = 'module_programme'`
+  );
+  if (!items.length) return;
+  for (const pi of items) {
+    const z = get(
+      'SELECT z.*, d.tab AS drawing_tab FROM zones z JOIN drawings d ON d.id = z.drawing_id WHERE z.id=?',
+      [pi.zone_id]
+    );
+    const a = get('SELECT name FROM activities WHERE id=?', [pi.activity_id]);
+    if (!z || !a) continue;
+    const dates = dateKeysBetween(pi.start_date, pi.end_date);
+    dates.forEach((dk) => {
+      runNoSave(
+        'DELETE FROM schedule WHERE tab=? AND date=? AND tower=? AND zone_name=? AND activity=?',
+        [String(z.drawing_tab || ''), dk, z.tower, z.name, a.name]
+      );
+    });
+    expandScheduleForItem(pi, { deferSave: true });
+  }
+  save();
+  console.log('[119HS] Migrated module_programme schedule tab for', items.length, 'item(s)');
 }
 
 /** Sync role + tabs for standard programme accounts from defaultUsers.js (live RBAC matrix). */
@@ -501,6 +583,7 @@ async function getDb() {
 
   seedActivities();
   seedProjectProgrammeActivities();
+  seedModuleProgrammeActivities();
   migrateZonesGeometry();
   migrateZoneActivitiesTable();
   migrateZoneProgrammeMeta();
@@ -518,6 +601,8 @@ async function getDb() {
   migrateUserTabsProjectProgramme();
   migrateUserTabsModuleHandover();
   migrateUserTabsModuleProgramme();
+  migrateUserTabsUnifyModules();
+  migrateModuleProgrammeScheduleTab();
   save();
   const danglingCompletions = countCompletionsDanglingZoneRef();
   if (danglingCompletions > 0) {
@@ -1723,7 +1808,7 @@ module.exports = {
     });
     save();
   },
-  /** All programme rows with zone + drawing tab for PLAN view and exports. Pass tabs (drawing_tab values) or null for no filter. */
+  /** All programme rows with zone + drawing tab for PLAN view and exports. Pass scope tabs or null for no filter. */
   getPlanProgrammeRows: (tabs) => {
     const base = `SELECT pi.id, pi.zone_id, pi.activity_id, pi.start_date, pi.end_date, pi.status, pi.notes,
               z.name AS zone_name, z.tower, z.drawing_id,
@@ -1734,8 +1819,18 @@ module.exports = {
        JOIN drawings d ON d.id = z.drawing_id
        JOIN activities a ON a.id = pi.activity_id`;
     const order = ` ORDER BY d.tab, z.tower, z.name, pi.start_date`;
-    if (tabs && tabs.length)
-      return all(`${base} WHERE d.tab IN (${tabs.map(() => '?').join(',')})${order}`, tabs);
+    if (tabs && tabs.length) {
+      const drawingTabs = new Set();
+      for (const t of tabs) {
+        const s = String(t || '').trim();
+        if (!s || s === 'module_handover') continue;
+        if (s === 'module_programme') drawingTabs.add('module_handover');
+        else drawingTabs.add(s);
+      }
+      const list = [...drawingTabs];
+      if (!list.length) return [];
+      return all(`${base} WHERE d.tab IN (${list.map(() => '?').join(',')})${order}`, list);
+    }
     return all(base + order);
   },
   getProgrammeItemsByDrawing: (drawingId) =>

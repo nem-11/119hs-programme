@@ -125,7 +125,8 @@ function scheduleTabReader(req, res, next) {
   const tab = req.params.tab;
   if (perm.isAdminRole(req.user.role)) return next();
   const tabs = req.user.tabs || [];
-  if (!tabs.includes(tab)) {
+  const norm = perm.normalizeUserTabsArray(tabs);
+  if (!norm.includes(tab) && !(tab === 'module_handover' && norm.includes('module_programme'))) {
     return res.status(403).json({ error: 'Schedule tab not permitted' });
   }
   next();
@@ -142,6 +143,7 @@ app.post('/api/login', (req, res) => {
     tabs = JSON.parse(u.tabs || '[]');
   } catch (_) {}
   if (!Array.isArray(tabs)) tabs = [];
+  tabs = perm.normalizeUserTabsArray(tabs);
   const token = jwt.sign(
     { id: u.id, username: u.username, name: u.name, role: u.role, tabs },
     SECRET,
@@ -161,7 +163,7 @@ app.get('/api/me', auth, (req, res) => {
       username: req.user.username,
       name: req.user.name,
       role: req.user.role,
-      tabs: req.user.tabs || [],
+      tabs: perm.normalizeUserTabsArray(req.user.tabs || []),
     },
   });
 });
@@ -490,7 +492,7 @@ app.post('/api/zones/:zoneId/schedule-from-target', auth, admin, (req, res) => {
 });
 app.get('/api/plan/programme', auth, (req, res) => {
   const wantFull = req.query.full === '1' && perm.isAdminRole(req.user.role);
-  const tabs = wantFull ? null : req.user.tabs && req.user.tabs.length ? req.user.tabs : ['groundworks', 'internals'];
+  const tabs = wantFull ? null : perm.normalizeUserTabsArray(req.user.tabs && req.user.tabs.length ? req.user.tabs : ['groundworks', 'internals']);
   res.json(db.getPlanProgrammeRows(tabs));
 });
 app.get('/api/programme-items/drawing/:did', auth, perm.programmeItemsReader, (req, res) => {

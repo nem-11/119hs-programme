@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as api from './api';
-import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow } from './constants';
+import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow, buildPermittedScopeTabs, normalizeProgrammeScopeTabs } from './constants';
 import { T, S } from './uiTheme';
 import PageHeader, { PageFooterHint } from './PageHeader';
 import { useRefreshOnFocus, usePollingWhenVisible, formatLastRefreshed } from './useRefreshOnFocus';
@@ -342,21 +342,16 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     };
   }, [printLayout]);
 
-  const permittedTabs = useMemo(() => {
-    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
-    if (!isAdmin) return base;
-    const s = new Set(base);
-    for (const r of rows) {
-      const sc = scopeForRow(r);
-      if (sc) s.add(sc);
-    }
-    return [...s].sort((a, b) => a.localeCompare(b));
-  }, [isAdmin, userTabs, rows]);
+  const permittedTabs = useMemo(
+    () => buildPermittedScopeTabs({ userTabs, planRows: rows, isAdmin }),
+    [isAdmin, userTabs, rows]
+  );
 
   useEffect(() => {
     if (!permittedTabs.length) return;
     onSelectedTabsChange((prev) => {
-      const kept = prev.filter((t) => permittedTabs.includes(t));
+      const normPrev = normalizeProgrammeScopeTabs(prev);
+      const kept = normPrev.filter((t) => permittedTabs.includes(t));
       if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [permittedTabs[0]];
     });

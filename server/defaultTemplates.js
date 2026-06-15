@@ -120,6 +120,21 @@ const DEFAULT_PROGRAMME_TEMPLATES = [
     durations: [2, 2, 3, 2, 3],
   },
   {
+    name: 'Module handover standard',
+    tab: 'module_programme',
+    tower: 'T1',
+    zone_name: '001',
+    sequence: [
+      'Not started',
+      'Snagged',
+      'Works in progress',
+      'Clean',
+      'Furniture',
+      'Handover',
+    ],
+    durations: [1, 2, 3, 2, 2, 1],
+  },
+  {
     name: 'T1 Lift and Riser',
     tab: 'internals',
     tower: 'T1',

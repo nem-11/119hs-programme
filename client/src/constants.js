@@ -1,3 +1,5 @@
+import { moduleStageMetaByLabel } from './moduleHandover';
+
 export const COLORS={"Verts":"46,178,96","Blind Concrete":"244,97,37","Blinding":"244,97,37","Insulation":"6,188,208","Drainage":"102,194,165","Waterproofing":"142,68,173","Pour":"66,133,244","Reinforcement - Shuttering":"244,165,26","Podium Pour":"228,57,57","Cage Pile Cap":"149,208,235","Pour Pile Cap":"235,149,208","Break Pile Cap":"208,235,149","Form Pile Cap":"149,208,235","Pile Caps":"149,208,235","Pile Mat":"180,180,180","Piling":"120,120,120","Crop Piles":"160,140,100","Cure":"200,200,200","Riser Stitching":"244,165,26","Service Riser stitching":"244,165,26","Corridor Ceiling Stitch":"66,133,244","Modular Ceiling Stitch":"102,194,165","Modular Floor Stitch":"142,68,173","Form Door Aperture":"160,120,80","Corridor Floor Stitch":"6,188,208","Stair Core Stitching":"228,57,57","MEP Riser":"244,97,37","MEP Corridor":"244,130,37","Ceiling Install":"100,180,220","Install Ceiling Panels":"80,160,200","Modular Linear Stitch":"180,120,200","Install Fire Doors":"120,80,60","Paint":"200,200,220","Commission":"46,178,96","Stud Walls":"180,140,100","Dryline":"149,208,235"};
 function rgbToHue(r,g,b){
   const rn=r/255,gn=g/255,bn=b/255;
@@ -58,8 +60,19 @@ function generateDistinctColor(name){
   const light=0.44+((hash>>16)%12)/100; // 0.44..0.55
   return hslToRgbString(hue,sat,light);
 }
+function rgbFromCssRgb(css) {
+  const m = /rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i.exec(String(css || ''));
+  if (!m) return null;
+  return `${m[1]},${m[2]},${m[3]}`;
+}
+
 export function actColor(n,o){
   const key=String(n||'').trim();
+  const stageMeta=moduleStageMetaByLabel(key);
+  if(stageMeta){
+    const stageRgb=rgbFromCssRgb(stageMeta.swatch);
+    if(stageRgb)return`rgba(${stageRgb},${o})`;
+  }
   const rgb=COLORS[key]||generateDistinctColor(key||'activity');
   return`rgba(${rgb},${o})`;
 }
@@ -85,9 +98,9 @@ export const MAIN_HEADER_TAB_ORDER = ['groundworks', 'internals', MODULE_PROGRAM
 export function drawingTabLabel(tab) {
   if (tab === 'groundworks') return 'Groundworks';
   if (tab === 'internals') return 'Internals';
-  if (tab === MODULE_PROGRAMME_TAB) return 'Module Programme';
+  if (tab === MODULE_PROGRAMME_TAB) return 'Modules';
   if (tab === PROJECT_PROGRAMME_TAB) return 'Project programme';
-  if (tab === MODULE_HANDOVER_TAB) return 'Module Handover';
+  if (tab === MODULE_HANDOVER_TAB) return 'Modules';
   const s = String(tab || '').replace(/_/g, ' ');
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(tab);
 }
@@ -107,15 +120,42 @@ export function drawingTabForScope(scope) {
  */
 export function scopeForRow(row) {
   if (row && String(row.activity_type || '') === MODULE_PROGRAMME_TAB) return MODULE_PROGRAMME_TAB;
-  return String(row?.drawing_tab || '');
+  const dt = String(row?.drawing_tab || '');
+  if (dt === MODULE_HANDOVER_TAB) return MODULE_PROGRAMME_TAB;
+  return dt;
+}
+
+/**
+ * Programme scope tabs for Plan / Update / header pills — one "Modules" scope, not handover + programme.
+ * Legacy `module_handover` in user.tabs is folded into `module_programme`.
+ */
+export function normalizeProgrammeScopeTabs(tabs) {
+  const raw = (Array.isArray(tabs) ? tabs : []).map((t) => String(t || '').trim()).filter(Boolean);
+  const hadModule = raw.includes(MODULE_HANDOVER_TAB) || raw.includes(MODULE_PROGRAMME_TAB);
+  const out = raw.filter((t) => t !== MODULE_HANDOVER_TAB);
+  if (hadModule && !out.includes(MODULE_PROGRAMME_TAB)) out.push(MODULE_PROGRAMME_TAB);
+  return [...new Set(out)];
+}
+
+/** Permitted scope checkboxes — normalized user tabs plus admin-discovered scopes from plan rows. */
+export function buildPermittedScopeTabs({ userTabs, planRows, isAdmin }) {
+  const base = normalizeProgrammeScopeTabs(userTabs?.length ? userTabs : ['groundworks', 'internals']);
+  if (!isAdmin) return base;
+  const s = new Set(base);
+  for (const r of planRows || []) {
+    const sc = scopeForRow(r);
+    if (sc) s.add(sc);
+  }
+  s.delete(MODULE_HANDOVER_TAB);
+  return [...s].sort((a, b) => a.localeCompare(b));
 }
 
 export function pickInitialScopeTab(userTabs) {
-  const allowed = new Set(userTabs || []);
+  const allowed = new Set(normalizeProgrammeScopeTabs(userTabs));
   for (const t of MAIN_HEADER_TAB_ORDER) {
     if (allowed.has(t)) return t;
   }
-  const arr = userTabs || [];
+  const arr = normalizeProgrammeScopeTabs(userTabs);
   return arr[0] || 'groundworks';
 }
 export function dateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}

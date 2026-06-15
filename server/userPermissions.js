@@ -67,9 +67,9 @@ function completionKeyAllowedForUser(db, user, dateStr, key) {
   const role = user.role;
   const tabCandidates = [];
   if (isAdminRole(role) || isSiteEditorRole(role)) {
-    tabCandidates.push(...(user.tabs || []));
+    tabCandidates.push(...normalizeUserTabsArray(user.tabs));
   } else if (isGwSubbieRole(role) || isIntSubbieRole(role)) {
-    tabCandidates.push(...(user.tabs || []));
+    tabCandidates.push(...normalizeUserTabsArray(user.tabs));
   } else {
     return false;
   }
@@ -82,10 +82,32 @@ function completionKeyAllowedForUser(db, user, dateStr, key) {
   return false;
 }
 
-/** Tabs used for drawing/zone/schedule scope — board always includes module handover (dashboard + Modules page). */
+/** Tabs used for drawing/zone/schedule scope — board always includes Modules programme scope. */
+const MODULE_HANDOVER_TAB = 'module_handover';
+const MODULE_PROGRAMME_TAB = 'module_programme';
+
+function normalizeUserTabs(rawTabs) {
+  const raw = (Array.isArray(rawTabs) ? rawTabs : []).map((t) => String(t || '').trim()).filter(Boolean);
+  const hadModule = raw.includes(MODULE_HANDOVER_TAB) || raw.includes(MODULE_PROGRAMME_TAB);
+  const out = raw.filter((t) => t !== MODULE_HANDOVER_TAB);
+  if (hadModule && !out.includes(MODULE_PROGRAMME_TAB)) out.push(MODULE_PROGRAMME_TAB);
+  return new Set(out);
+}
+
+function normalizeUserTabsArray(rawTabs) {
+  return [...normalizeUserTabs(rawTabs)];
+}
+
+function userHasDrawingTab(tabs, drawingTab) {
+  const dt = String(drawingTab || '');
+  if (tabs.has(dt)) return true;
+  if (dt === MODULE_HANDOVER_TAB && tabs.has(MODULE_PROGRAMME_TAB)) return true;
+  return false;
+}
+
 function effectiveUserTabs(user) {
-  const tabs = new Set(Array.isArray(user?.tabs) ? user.tabs.filter(Boolean) : []);
-  if (isBoardViewer(user?.role)) tabs.add('module_handover');
+  const tabs = normalizeUserTabs(user?.tabs);
+  if (isBoardViewer(user?.role)) tabs.add(MODULE_PROGRAMME_TAB);
   return tabs;
 }
 
@@ -100,7 +122,7 @@ function assertDrawingTabAllowed(db, user, drawingId) {
   if (!d) return { ok: false };
   if (isAdminRole(user.role)) return { ok: true, drawing: d };
   const tabs = userTabsSet(user);
-  if (!tabs.has(d.tab)) return { ok: false };
+  if (!userHasDrawingTab(tabs, d.tab)) return { ok: false };
   return { ok: true, drawing: d };
 }
 
@@ -110,7 +132,7 @@ function assertZoneTabAllowed(db, user, zoneId) {
   const row = db.getZoneDrawingTab(zid);
   if (!row) return { ok: false };
   if (isAdminRole(user.role)) return { ok: true, tab: row.tab };
-  if (!userTabsSet(user).has(row.tab)) return { ok: false };
+  if (!userHasDrawingTab(userTabsSet(user), row.tab)) return { ok: false };
   return { ok: true, tab: row.tab };
 }
 
@@ -125,7 +147,7 @@ function filterDrawingsForUser(user, rows) {
   if (!Array.isArray(rows)) return [];
   if (isAdminRole(user.role)) return rows;
   const tabs = userTabsSet(user);
-  return rows.filter((d) => tabs.has(d.tab));
+  return rows.filter((d) => userHasDrawingTab(tabs, d.tab));
 }
 
 function filterZonesAllForUser(db, user, rows) {
@@ -134,7 +156,7 @@ function filterZonesAllForUser(db, user, rows) {
   const tabs = userTabsSet(user);
   return rows.filter((z) => {
     const d = db.getDrawing(z.drawing_id);
-    return d && tabs.has(d.tab);
+    return d && userHasDrawingTab(tabs, d.tab);
   });
 }
 
@@ -180,4 +202,5 @@ module.exports = {
   filterCompletionsForUser,
   filterTemplatesForUser,
   userTabsSet,
+  normalizeUserTabsArray,
 };

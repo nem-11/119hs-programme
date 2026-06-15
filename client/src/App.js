@@ -2,7 +2,7 @@ import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'rea
 import * as api from './api';
 import './loginLanding.css';
 import './dashboardCompletionPrint.css';
-import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,MODULE_HANDOVER_TAB,MODULE_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
+import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,MODULE_HANDOVER_TAB,MODULE_PROGRAMME_TAB,drawingTabLabel,drawingTabForScope,scopeForRow,buildPermittedScopeTabs,normalizeProgrammeScopeTabs,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
 import {
   bottomNavItemsForRole,
   allowedPageIdsForRole,
@@ -23,7 +23,7 @@ import ModuleHandoverPage from './ModuleHandoverPage';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
 import { zoneCompletionsAsOf } from './completionStats';
-import { MODULE_STAGES, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
+import { MODULE_STAGES, MODULE_SEQUENCE, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
 import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey, isProgrammeRowDone } from './planUtils';
@@ -78,7 +78,9 @@ function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
   const bySection = new Map();
   const metaByCk = new Map();
   for (const r of rows || []) {
-    if (!r || !sel.has(String(r.drawing_tab || ''))) continue;
+    if (!r) continue;
+    const scope = scopeForRow(r);
+    if (!scope || !sel.has(scope)) continue;
     const dk = String(dateK);
     if (dk < String(r.start_date) || dk > String(r.end_date)) continue;
     const tw = String(r.tower || '').trim();
@@ -89,7 +91,7 @@ function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
     const label = `${tw} ${zn}`;
     const ck = `${pfx}|${act}`;
     if (!bySection.has(pfx)) {
-      bySection.set(pfx, { label, pfx, acts: [], drawing_tab: r.drawing_tab });
+      bySection.set(pfx, { label, pfx, acts: [], drawing_tab: scope });
     }
     const sec = bySection.get(pfx);
     if (!sec.acts.includes(act)) sec.acts.push(act);
@@ -110,7 +112,7 @@ function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
 
 function seqForDrawingTab(t) {
   if (t === PROJECT_PROGRAMME_TAB) return [];
-  if (t === MODULE_PROGRAMME_TAB) return [];
+  if (t === MODULE_PROGRAMME_TAB) return MODULE_SEQUENCE;
   if (t === 'groundworks') return GW_SEQUENCE;
   if (t === 'internals') return INT_SEQUENCE;
   return [];
@@ -741,7 +743,7 @@ function TemplatePage({tab,isAdmin,onReload}){
   }
   const scopedTemplates=templates.filter(t=>t.tab===templateTab);
 
-  return<div style={{flex:1,overflowY:'auto',background:T.bg,display:'flex',flexDirection:'column',minHeight:0}}>
+  return<div style={{flex:1,overflow:'hidden',background:T.bg,display:'flex',flexDirection:'column',minHeight:0}}>
     <PageHeader
       title="Programme Templates"
       collapsible
@@ -752,13 +754,13 @@ function TemplatePage({tab,isAdmin,onReload}){
           <select id="tpl-scope" value={templateTab} onChange={e=>onTemplateScopeChange(e.target.value)} style={{...S.input,width:'auto',minWidth:200,fontSize:12,padding:'8px 12px'}}>
             <option value="groundworks">Groundworks</option>
             <option value="internals">Internals</option>
-            <option value="module_programme">Module Programme</option>
+            <option value="module_programme">Modules</option>
             <option value="project_programme">Project programme</option>
           </select>
         </>
       }
     />
-    <div style={{padding:16,flex:1,minHeight:0}}>
+    <div style={{padding:16,flex:1,minHeight:0,overflowY:'auto'}}>
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:12,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text}}>New activity</span>
       <input value={newAct} onChange={e=>setNewAct(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewActivity()} placeholder={`Add ${templateTab} activity`} style={{...S.input,width:220,fontSize:12,padding:'7px 10px'}}/>
@@ -887,7 +889,7 @@ function TemplatePage({tab,isAdmin,onReload}){
       Build once, apply to any zone.{' '}
       {templateTab==='groundworks'?`${GW_SEQUENCE.length} groundworks activities.`:
         templateTab==='internals'?`${INT_SEQUENCE.length} internal activities.`:
-        templateTab===MODULE_PROGRAMME_TAB?'Module programme — add named activities below, then apply to numbered module zones.':
+        templateTab===MODULE_PROGRAMME_TAB?`${MODULE_SEQUENCE.length} module handover stages — schedule on Programme, track live stage on Modules.`:
         'Master programme lines — add named activities below (not tied to floor drawings).'}
     </PageFooterHint>
   </div>;
@@ -919,15 +921,10 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
     return () => window.removeEventListener('afterprint', afterPrint);
   }, []);
 
-  const permittedTabs = useMemo(() => {
-    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
-    if (!isAdmin) return base;
-    const s = new Set(base);
-    for (const r of planRows || []) {
-      if (r.drawing_tab) s.add(String(r.drawing_tab));
-    }
-    return [...s].sort((a, b) => a.localeCompare(b));
-  }, [isAdmin, userTabs, planRows]);
+  const permittedTabs = useMemo(
+    () => buildPermittedScopeTabs({ userTabs, planRows, isAdmin }),
+    [isAdmin, userTabs, planRows]
+  );
 
   useEffect(() => {
     if (!permittedTabs.length) return;
@@ -953,7 +950,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   }, []);
 
   const scopeDrawings = useMemo(
-    () => drawings.filter((d) => String(d.tab || '') === String(scopeTab || '')),
+    () => drawings.filter((d) => String(d.tab || '') === drawingTabForScope(scopeTab)),
     [drawings, scopeTab]
   );
 
@@ -990,7 +987,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   }, [drawingId]);
 
   const rowsInScope = useMemo(
-    () => (planRows || []).filter((r) => String(r.drawing_tab || '') === String(scopeTab || '')),
+    () => (planRows || []).filter((r) => scopeForRow(r) === String(scopeTab || '')),
     [planRows, scopeTab]
   );
 
@@ -2102,7 +2099,7 @@ function readStoredSelectedTabs() {
     const raw = localStorage.getItem(SELECTED_TABS_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw);
-    return Array.isArray(p) ? p.map(String) : null;
+    return Array.isArray(p) ? normalizeProgrammeScopeTabs(p.map(String)) : null;
   } catch (_) {
     return null;
   }
@@ -2144,20 +2141,16 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
     void reloadPlan();
   }, [reloadPlan]);
 
-  const permittedTabs = useMemo(() => {
-    const base = userTabs?.length ? userTabs : ['groundworks', 'internals'];
-    if (!isAdmin) return base;
-    const s = new Set(base);
-    for (const r of planRows) {
-      if (r.drawing_tab) s.add(String(r.drawing_tab));
-    }
-    return [...s].sort((a, b) => a.localeCompare(b));
-  }, [isAdmin, userTabs, planRows]);
+  const permittedTabs = useMemo(
+    () => buildPermittedScopeTabs({ userTabs, planRows, isAdmin }),
+    [isAdmin, userTabs, planRows]
+  );
 
   useEffect(() => {
     if (!permittedTabs.length) return;
     onSelectedTabsChange((prev) => {
-      const kept = prev.filter((t) => permittedTabs.includes(t));
+      const normPrev = normalizeProgrammeScopeTabs(prev);
+      const kept = normPrev.filter((t) => permittedTabs.includes(t));
       if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [...permittedTabs];
     });
@@ -2799,12 +2792,12 @@ function MainApp({user,onLogout,onUserUpdate}){
   },[]);
   const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
   const[selectedScopeTabs,setSelectedScopeTabs]=useState(()=>{
-    const base=Array.isArray(user.tabs)&&user.tabs.length?[...user.tabs].filter(Boolean):['groundworks','internals'];
+    const base=normalizeProgrammeScopeTabs(Array.isArray(user.tabs)&&user.tabs.length?user.tabs:['groundworks','internals']);
     const stored=readStoredSelectedTabs();
     if(stored?.length){
       const kept=stored.filter((t)=>base.includes(t));
       if(kept.length)return base.filter((t)=>kept.includes(t));
-      return stored;
+      return normalizeProgrammeScopeTabs(stored);
     }
     return [...base];
   });
@@ -2856,7 +2849,7 @@ function MainApp({user,onLogout,onUserUpdate}){
   useEffect(()=>{
     if(!selectedScopeTabs.length)return;
     try{
-      localStorage.setItem(SELECTED_TABS_KEY,JSON.stringify(selectedScopeTabs));
+      localStorage.setItem(SELECTED_TABS_KEY,JSON.stringify(normalizeProgrammeScopeTabs(selectedScopeTabs)));
     }catch(_){}
   },[selectedScopeTabs]);
   useEffect(()=>{
@@ -2865,7 +2858,7 @@ function MainApp({user,onLogout,onUserUpdate}){
   useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
-  const userTabsSafe=Array.isArray(user.tabs)?user.tabs:[];
+  const userTabsSafe=normalizeProgrammeScopeTabs(user.tabs);
   const canSee=t=>userTabsSafe.includes(t);
   const isAdmin=roleIsAdmin(user.role);
   const canTick=roleCanTick(user.role);

@@ -2,7 +2,7 @@ import React,{useState,useEffect,useRef,useCallback,useMemo} from 'react';
 import * as api from './api';
 import {T,S} from './uiTheme';
 import {parseZoneGeometry,svgPolygonPoints,pointInGeom} from './zoneGeom';
-import {toHtmlDateInputValue,actColor,dateKey,PROJECT_PROGRAMME_TAB,drawingTabLabel} from './constants';
+import {toHtmlDateInputValue,actColor,dateKey,PROJECT_PROGRAMME_TAB,MODULE_PROGRAMME_TAB,drawingTabLabel,drawingTabForScope} from './constants';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {
   buildRowsFromTargetEndDate,
@@ -103,7 +103,8 @@ function filterPreviewTableRows(tasks,filterType){
 }
 
 export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneSetup,zoneSetupAvailable=true,isAdmin=false}){
-  const typeTab=['groundworks','internals',PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
+  const typeTab=['groundworks','internals',MODULE_PROGRAMME_TAB,PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
+  const drawingTab=drawingTabForScope(tab);
   const[drawings,setDrawings]=useState([]);
   const[selDraw,setSelDraw]=useState(null);
   const[drawData,setDrawData]=useState(null);
@@ -149,7 +150,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const filteredActs=activities.filter(a=>a.type===typeTab);
   useEffect(()=>{setNewActType(typeTab)},[typeTab]);
   const selectedZone=zones.find(z=>z.id===selectedId);
-  const tabDrawings=(drawings||[]).filter(d=>d.tab===tab);
+  const tabDrawings=(drawings||[]).filter(d=>d.tab===drawingTab);
   const tabTemplates=(templates||[]).filter(t=>t.tab===tab);
   const hasFloorPlan=Boolean(selDraw&&drawData?.image_data);
 
@@ -171,6 +172,10 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           ? (zoneSetupAvailable
               ? 'On Zones, upload a one-page programme PDF or any placeholder image, add logical rows (towers / packages / milestones) as zones, then schedule here. This scope feeds Plan alongside floor drawings.'
               : 'An administrator should upload a drawing for Project programme and define zones.')
+          : tab===MODULE_PROGRAMME_TAB
+          ? (zoneSetupAvailable
+              ? 'Uses the same module zones as the Modules page. Apply the Module handover standard template to each module, then track live handover stages on Modules and the dated grid on Plan.'
+              : 'An administrator should set up module drawings on the Modules page before scheduling here.')
           : (zoneSetupAvailable
               ? 'Upload a plan on Zones, mark zones on the drawing, then return here to link programme dates to each zone.'
               : 'An administrator must upload a floor plan and define zones before scheduling here. Use Plan to view the programme by zone.')}
@@ -182,7 +187,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
   const reloadDrawings=useCallback(()=>{
     api.getDrawings().then(d=>{
       setDrawings(d||[]);
-      const f=(d||[]).filter(x=>x.tab===tab);
+      const f=(d||[]).filter(x=>x.tab===drawingTab);
       setSelDraw((p)=>{
         const saved=readSavedDrawingId(tab,f);
         if(saved!=null)return saved;
@@ -190,7 +195,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
         return f.length?f[0].id:null;
       });
     });
-  },[tab]);
+  },[tab,drawingTab]);
 
   useEffect(()=>{reloadDrawings()},[reloadDrawings]);
 
@@ -756,7 +761,7 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           drawingTabLabel(tab),
           tabDrawings.find((d) => d.id === selDraw)?.name || (tabDrawings.length ? 'Select drawing' : 'No drawing'),
         ]}
-        title={tab === PROJECT_PROGRAMME_TAB ? 'Project programme' : 'Programme'}
+        title={tab === PROJECT_PROGRAMME_TAB ? 'Project programme' : tab === MODULE_PROGRAMME_TAB ? 'Modules' : 'Programme'}
         filters={
           tabDrawings.length > 0 ? (
             <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
@@ -1085,10 +1090,14 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
       )}
       <PageFooterHint>
         {hasFloorPlan
-          ? 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.'
+          ? (tab === MODULE_PROGRAMME_TAB
+            ? 'Schedule module handover stages on each module zone — same labels and colours as the Modules page and Plan.'
+            : 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.')
           : zoneSetupAvailable
-          ? 'Add a plan on Zones to use this screen.'
-          : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}
+          ? (tab === MODULE_PROGRAMME_TAB ? 'Set up modules on the Modules page first, then schedule here.' : 'Add a plan on Zones to use this screen.')
+          : (tab === MODULE_PROGRAMME_TAB
+            ? 'Ask an administrator to set up module drawings on Modules.'
+            : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.')}
       </PageFooterHint>
     </div>
   );

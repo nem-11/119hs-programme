@@ -5,7 +5,7 @@ import PageHeader, { PageFooterHint } from './PageHeader';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { parseZoneGeometry, svgPolygonPoints, geomBBox } from './zoneGeom';
 import { isPdfFile, rasterizePdfFirstPageToJpeg } from './pdfDrawing';
-import { MODULE_HANDOVER_TAB, drawingTabLabel } from './constants';
+import { MODULE_HANDOVER_TAB, MODULE_PROGRAMME_TAB, drawingTabLabel, dateKey } from './constants';
 import {
   MODULE_STAGES,
   moduleStageMeta,
@@ -13,6 +13,7 @@ import {
   moduleCompletionSummary,
 } from './moduleHandover';
 import { autoDetectModules } from './moduleAutoDetect';
+import { useRefreshOnFocus } from './useRefreshOnFocus';
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -79,6 +80,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [drawingId, setDrawingId] = useState('');
   const [drawing, setDrawing] = useState(null);
   const [zones, setZones] = useState([]);
+  const [programmeItems, setProgrammeItems] = useState([]);
   const [selId, setSelId] = useState(null);
   const [tool, setTool] = useState('view'); // 'view' | 'draw'
   const [drawShape, setDrawShape] = useState('rect'); // 'rect' | 'poly'
@@ -177,11 +179,27 @@ export default function ModuleHandoverPage({ canManage = false }) {
       });
   }, []);
 
+  const reloadProgrammeItems = useCallback((did) => {
+    if (!did) {
+      setProgrammeItems([]);
+      return;
+    }
+    api.getProgrammeItemsByDrawing(did).then((rows) => {
+      const list = (Array.isArray(rows) ? rows : []).filter(
+        (r) => String(r.activity_type || '') === MODULE_PROGRAMME_TAB
+      );
+      setProgrammeItems(list);
+    }).catch(() => setProgrammeItems([]));
+  }, []);
+
+  useRefreshOnFocus(() => reloadProgrammeItems(drawingId));
+
   useEffect(() => {
     setSelId(null);
     if (!drawingId) {
       setDrawing(null);
       setZones([]);
+      setProgrammeItems([]);
       return;
     }
     let cancelled = false;
@@ -189,10 +207,36 @@ export default function ModuleHandoverPage({ canManage = false }) {
       if (!cancelled) setDrawing(d || null);
     });
     reloadZones(drawingId);
+    reloadProgrammeItems(drawingId);
     return () => {
       cancelled = true;
     };
-  }, [drawingId, reloadZones]);
+  }, [drawingId, reloadZones, reloadProgrammeItems]);
+
+  const todayKey = dateKey(new Date());
+
+  /** Active module_programme row per zone for today (for colour key + module list). */
+  const programmeTodayByZone = useMemo(() => {
+    const by = new Map();
+    for (const r of programmeItems) {
+      const dk = todayKey;
+      if (dk < String(r.start_date) || dk > String(r.end_date)) continue;
+      const zid = Number(r.zone_id);
+      const cur = by.get(zid);
+      if (!cur || String(r.start_date) < String(cur.start_date)) by.set(zid, r);
+    }
+    return by;
+  }, [programmeItems, todayKey]);
+
+  const programmeTodayByStageLabel = useMemo(() => {
+    const counts = {};
+    MODULE_STAGES.forEach((s) => { counts[s.label] = 0; });
+    programmeTodayByZone.forEach((r) => {
+      const label = String(r.activity_name || '').trim();
+      if (counts[label] != null) counts[label] += 1;
+    });
+    return counts;
+  }, [programmeTodayByZone]);
 
   const summary = useMemo(() => moduleCompletionSummary(zones), [zones]);
   // In Adjust mode the side panel (rename / delete / stage) follows the module
@@ -803,7 +847,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
       }}
     >
       <span style={{ fontSize: 11, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        Stages
+        Stages (handover &amp; programme)
       </span>
       {MODULE_STAGES.map((s) => (
         <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.text, fontWeight: 600 }}>
@@ -820,7 +864,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
       <PageHeader
         collapsible
         collapsibleSummary={[drawing?.name || 'No drawing'].filter(Boolean)}
-        title="Module Handover"
+        title="Modules"
         filters={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ fontSize: 12, fontWeight: 700, color: T.muted }}>Drawing</label>
@@ -1186,6 +1230,9 @@ export default function ModuleHandoverPage({ canManage = false }) {
               <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 Handover progress
               </div>
+              <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>
+                Same stage names and colours as Module Programme — schedule on Programme, track live stage here.
+              </div>
               <div style={{ fontSize: 30, fontWeight: 800, color: T.text, marginTop: 6 }}>{summary.pct}%</div>
               <div style={{ fontSize: 13, color: T.muted }}>
                 {summary.handed} of {summary.total} modules handed over
@@ -1197,7 +1244,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
                       <span style={{ width: 11, height: 11, borderRadius: 3, background: s.swatch, border: `1px solid ${s.stroke}` }} />
                       {s.label}
                     </span>
-                    <span style={{ fontWeight: 700 }}>{summary.byStage[s.key] || 0}</span>
+                    <span style={{ fontWeight: 700, textAlign: 'right' }}>
+                      {summary.byStage[s.key] || 0}
+                      {programmeTodayByStageLabel[s.label] > 0 && (
+                        <span style={{ fontWeight: 600, color: T.faint, marginLeft: 6 }}>
+                          · {programmeTodayByStageLabel[s.label]} prog.
+                        </span>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1213,6 +1267,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
                     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true }))
                     .map((z) => {
                       const meta = moduleStageMeta(z.handover_stage);
+                      const prog = programmeTodayByZone.get(Number(z.id));
                       const isSel = Number(z.id) === Number(selected?.id);
                       return (
                         <div
@@ -1249,7 +1304,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
                             }}
                           >
                             <span style={{ width: 11, height: 11, borderRadius: 3, background: meta.swatch || meta.fill, border: `1px solid ${meta.stroke}`, flex: '0 0 auto' }} />
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.name}</span>
+                            <span style={{ minWidth: 0, flex: 1 }}>
+                              <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{z.name}</span>
+                              {prog?.activity_name && (
+                                <span style={{ display: 'block', fontSize: 10, color: T.faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  Programme: {prog.activity_name}
+                                </span>
+                              )}
+                            </span>
                           </button>
                           {canManage && (
                             <button
