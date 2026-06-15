@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as api from './api';
-import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel } from './constants';
+import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow } from './constants';
 import { T, S } from './uiTheme';
 import PageHeader from './PageHeader';
 import { useRefreshOnFocus, usePollingWhenVisible, formatLastRefreshed } from './useRefreshOnFocus';
@@ -347,7 +347,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     if (!isAdmin) return base;
     const s = new Set(base);
     for (const r of rows) {
-      if (r.drawing_tab) s.add(String(r.drawing_tab));
+      const sc = scopeForRow(r);
+      if (sc) s.add(sc);
     }
     return [...s].sort((a, b) => a.localeCompare(b));
   }, [isAdmin, userTabs, rows]);
@@ -408,7 +409,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   /** Scope only (no tower filter) so the tower chips always list every tower in the current scope. */
   const rowsForScope = useMemo(() => {
     return rows.filter((r) => {
-      const dt = String(r.drawing_tab || '').trim();
+      const dt = scopeForRow(r);
       if (!permittedTabs.includes(dt)) return false;
       if (!selectedSet.has(dt)) return false;
       return true;
@@ -539,14 +540,24 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [zoneBlocks, dayColumns]);
 
+  /** Drawing tabs that the currently selected scopes read (Module Programme reuses Module Handover drawings). */
+  const selectedDrawingTabs = useMemo(
+    () => new Set([...selectedSet].map((s) => drawingTabForScope(s))),
+    [selectedSet]
+  );
+  const permittedDrawingTabs = useMemo(
+    () => new Set(permittedTabs.map((s) => drawingTabForScope(s))),
+    [permittedTabs]
+  );
+
   const drawingOptions = useMemo(() => {
     return (drawings || []).filter((d) => {
       const t = String(d.tab || '').trim();
-      if (!permittedTabs.includes(t)) return false;
-      if (!selectedSet.has(t)) return false;
+      if (!permittedDrawingTabs.has(t)) return false;
+      if (!selectedDrawingTabs.has(t)) return false;
       return true;
     });
-  }, [drawings, permittedTabs, selectedSet]);
+  }, [drawings, permittedDrawingTabs, selectedDrawingTabs]);
 
   useEffect(() => {
     if (!drawingOptions.length) {
@@ -983,15 +994,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         }}
       />
       <PageHeader
-        className="plan-no-print"
+        className="plan-no-print page-header--plan"
         collapsible
         collapsibleSummary={headerSummaryChips}
         title="Plan"
-        description={
-          <>
-            Printable programme grid by zone and day — durations count <strong style={{ color: T.muted }}>scheduleable days</strong> (Mon–Fri only; Saturdays, Sundays, and England and Wales bank holidays are grey; you can still drag or edit onto a Saturday when needed). Admins: ＋ add per zone, drag to move, double-click (or long-press on mobile) a chip to delete, or single-click a chip to move/duration.
-          </>
-        }
         toggles={
           <div className="page-header__toggle-group">
             <button type="button" onClick={() => setViewMode('grid')} style={{ ...S.btn, ...(viewMode === 'grid' ? S.btnAct : {}), padding: '6px 10px', fontSize: 11 }}>Grid</button>
@@ -1006,7 +1012,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </span>
             )}
             {isMobile && (
-              <span style={{ fontSize: 10, color: T.muted, maxWidth: 220, lineHeight: 1.35 }}>
+              <span className="plan-header-print-note" style={{ fontSize: 10, color: T.muted, maxWidth: 220, lineHeight: 1.35 }}>
                 For best results, print from a desktop browser.
               </span>
             )}
@@ -1073,9 +1079,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </label>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: T.muted, marginBottom: 4 }}>Days</div>
-                <div style={{ fontSize: 9, color: T.faint, marginBottom: 4, maxWidth: 280, lineHeight: 1.35 }}>
-                  ← → arrow keys step one day{viewMode === 'grid' ? '; click a date column header to jump the window' : '; scroll to zoom and drag to pan the drawing'}.
-                </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {['7', '14', '21', '28'].map((p) => (
                     <button
@@ -1200,48 +1203,43 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                 </select>
               </div>
             )}
+
+            {isAdmin && (
+              <div className="plan-header-undo" style={{ marginTop: 4, padding: '8px 10px', borderRadius: 8, border: `1px solid ${T.hairline}`, background: 'rgba(66,133,244,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', width: '100%' }}>
+                <div style={{ minWidth: 140 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Undo
+                  </div>
+                  <div style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>
+                    {undoState?.label || 'No undo snapshot yet'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={!undoState}
+                  onClick={async () => {
+                    if (!undoState) return;
+                    try {
+                      if (undoState.type === 'zone_rows') {
+                        await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
+                      } else if (undoState.type === 'delete_zone') {
+                        await api.restorePlanZone(undoState.snapshot);
+                      }
+                      setUndoState(null);
+                      await load();
+                    } catch (e) {
+                      window.alert(e?.message || 'Undo failed');
+                    }
+                  }}
+                  style={{ ...S.btn, ...(!undoState ? {} : S.btnPrimary), padding: '6px 12px', fontSize: 11, opacity: undoState ? 1 : 0.45 }}
+                >
+                  Undo last
+                </button>
+              </div>
+            )}
           </>
         }
-      >
-        {isAdmin && (
-          <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 10, border: `1px solid ${T.hairline}`, background: 'rgba(66,133,244,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 180 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>
-                Undo Last Change
-              </div>
-              <div style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>
-                {undoState?.label || 'No undo snapshot yet'}
-              </div>
-              {undoState?.at && (
-                <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
-                  Saved {formatShort(new Date(undoState.at))}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              disabled={!undoState}
-              onClick={async () => {
-                if (!undoState) return;
-                try {
-                  if (undoState.type === 'zone_rows') {
-                    await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
-                  } else if (undoState.type === 'delete_zone') {
-                    await api.restorePlanZone(undoState.snapshot);
-                  }
-                  setUndoState(null);
-                  await load();
-                } catch (e) {
-                  window.alert(e?.message || 'Undo failed');
-                }
-              }}
-              style={{ ...S.btn, ...(!undoState ? {} : S.btnPrimary), padding: '8px 14px', fontSize: 12, opacity: undoState ? 1 : 0.45 }}
-            >
-              Undo Last
-            </button>
-          </div>
-        )}
-      </PageHeader>
+      />
 
       {loadErr && (
         <div className="plan-no-print" style={{ padding: '8px 14px', fontSize: 12, color: '#c0392b' }}>
@@ -1255,7 +1253,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         </div>
       )}
 
-      <div className="plan-grid-scroll" style={{ flex: 1, overflow: 'auto', padding: '0 12px 16px' }}>
+      <div className="plan-grid-area">
+      <div className="plan-grid-scroll">
         {zoneBlocks.length === 0 && !loadErr && (
           <div style={{ padding: 40, textAlign: 'center', color: T.faint, fontSize: 13 }}>No programme rows in this range or filters.</div>
         )}
@@ -1283,20 +1282,21 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                     </div>
                   )}
                   <table
+                    className="plan-grid-table"
                     style={{
-                      borderCollapse: 'collapse',
+                      borderCollapse: 'separate',
+                      borderSpacing: 0,
                       fontSize: isMobile ? 10 : 11,
                       minWidth: 480,
                       background: T.surface,
                       border: `1px solid ${T.hairline}`,
                       borderRadius: 8,
-                      overflow: 'hidden',
                     }}
                   >
-                    <thead>
+                    <thead className="plan-date-head">
                       <tr>
                         <th
-                          className="plan-zone-col"
+                          className="plan-zone-col plan-zone-col--head"
                           style={{
                             textAlign: 'left',
                             padding: '8px 10px',
@@ -1308,9 +1308,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                             minWidth: 140,
                             maxWidth: 220,
                             width: 180,
-                            position: 'sticky',
-                            left: 0,
-                            zIndex: 3,
                           }}
                         >
                           Zone
@@ -1322,6 +1319,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                           return (
                             <th
                               key={dk}
+                              className="plan-date-col"
                               role="button"
                               tabIndex={0}
                               title="Jump date range to start on this day (same number of columns)"
@@ -1368,10 +1366,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                               verticalAlign: 'top',
                               background: T.surface,
                               lineHeight: 1.25,
-                              position: 'sticky',
-                              left: 0,
-                              zIndex: 2,
-                              boxShadow: '4px 0 8px rgba(26,26,46,0.06)',
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
@@ -1630,21 +1624,31 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         )}
 
         {!printLayout && legendVisible && viewMode === 'grid' && legendActs.length > 0 && (
-          <div style={{ marginTop: 14, padding: 12, background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 8 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-              Legend
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="plan-grid-legend">
+            <span className="plan-grid-legend__title">Key</span>
+            <div className="plan-grid-legend__items">
               {legendActs.map((name) => (
-                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 14, height: 14, borderRadius: 4, background: actColor(name, 0.88), WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
-                  <span style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{name}</span>
-                  <span style={{ fontSize: 10, color: T.faint }}>({abbrevActivity(name)})</span>
-                </div>
+                <span key={name} className="plan-grid-legend__item" title={name}>
+                  <span className="plan-grid-legend__swatch" style={{ background: actColor(name, 0.88) }} />
+                  <span>{abbrevActivity(name)}</span>
+                </span>
               ))}
             </div>
           </div>
         )}
+      </div>
+
+      {!printLayout && (
+        <div className="plan-grid-footer plan-no-print">
+          <p>
+            Mon–Fri = scheduleable days; grey = weekends &amp; bank holidays.
+            {viewMode === 'grid'
+              ? ' ← → step days; click a date header to jump the window.'
+              : ' Scroll to zoom; drag to pan the drawing.'}
+            {isAdmin ? ' Admin: ＋ add, drag to move, double-click (long-press) to delete.' : ''}
+          </p>
+        </div>
+      )}
       </div>
 
       {pdfOpen && (

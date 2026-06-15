@@ -10,6 +10,144 @@ body.plan-print-mode {
   print-color-adjust: exact;
 }
 
+/* ---- Plan screen layout: sticky dates, compact chrome, footer hints ---- */
+
+.page-header--plan .page-header__title {
+  margin-bottom: 0;
+  font-size: clamp(17px, 3.2vw, 20px);
+}
+
+.page-header--plan .page-header__description {
+  display: none;
+}
+
+.page-header--plan.page-header--collapsible .page-header__mobile-bar {
+  margin-top: 6px;
+}
+
+.page-header--plan:not(:has(.page-header__collapsible-body--open)) {
+  padding-bottom: 8px;
+}
+
+.page-header--plan:not(:has(.page-header__collapsible-body--open)) .page-header__actions {
+  gap: 4px;
+}
+
+.page-header--plan:not(:has(.page-header__collapsible-body--open)) .plan-header-print-note {
+  display: none;
+}
+
+.plan-grid-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.plan-grid-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.plan-grid-table thead.plan-date-head th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: 0 1px 0 rgba(26, 26, 46, 0.1);
+}
+
+.plan-grid-table thead th.plan-zone-col--head {
+  left: 0;
+  z-index: 4;
+  box-shadow:
+    1px 1px 0 rgba(26, 26, 46, 0.1),
+    4px 0 8px rgba(26, 26, 46, 0.06);
+}
+
+.plan-grid-table tbody td.plan-zone-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 4px 0 8px rgba(26, 26, 46, 0.06);
+}
+
+.plan-grid-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(26, 26, 46, 0.08);
+  border-radius: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.plan-grid-legend::-webkit-scrollbar {
+  display: none;
+}
+
+.plan-grid-legend__title {
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 800;
+  color: rgba(26, 26, 46, 0.38);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.plan-grid-legend__items {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.plan-grid-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(26, 26, 46, 0.72);
+  white-space: nowrap;
+}
+
+.plan-grid-legend__swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.plan-grid-footer {
+  flex-shrink: 0;
+  padding: 4px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(26, 26, 46, 0.06);
+  background: rgba(244, 243, 239, 0.96);
+}
+
+.plan-grid-footer p {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.35;
+  color: rgba(26, 26, 46, 0.42);
+}
+
+@media (max-width: 899px) {
+  .page-header--plan .page-header__actions button {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+  }
+}
+
 /* @page size for Plan is injected at print time via printPage.js */
 
 @media print {
@@ -21,6 +159,11 @@ body.plan-print-mode {
 
   body.plan-print-mode .plan-no-print,
   body.plan-print-mode .zone-drawing-zoom-controls {
+    display: none !important;
+  }
+
+  body.plan-print-mode .plan-grid-footer,
+  body.plan-print-mode .plan-grid-legend {
     display: none !important;
   }
 
