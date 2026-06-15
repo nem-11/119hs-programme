@@ -7,14 +7,17 @@ import {isPdfFile,rasterizePdfFirstPageToJpeg} from './pdfDrawing';
 import {
   actColor,
   PROJECT_PROGRAMME_TAB,
+  MODULE_PROGRAMME_TAB,
+  drawingTabForScope,
   zoneDisplayName,
   dateKey,
   formatShort,
+  drawingTabLabel,
 } from './constants';
 import { dayKeyInItemRange, abbrevActivity } from './planUtils';
 import {readSavedDrawingId,writeSavedDrawingId} from './drawingSelection';
 import {buildActivityLookup,resolveActivityId,alignTemplateDurations} from './programmeSchedule';
-import PageHeader from './PageHeader';
+import PageHeader, { PageFooterHint } from './PageHeader';
 import './planPrint.css';
 
 function sortZoneActs(z){
@@ -316,7 +319,9 @@ function dragRectCorner(corner,px,py,g){
 export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false}){
   /** Board members get a plain zone reference map — no day-by-day programme overlay. */
   const dayViewEnabled=!isBoardViewer;
-  const typeTab=['groundworks','internals',PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
+  const typeTab=['groundworks','internals',MODULE_PROGRAMME_TAB,PROJECT_PROGRAMME_TAB].includes(tab)?tab:'groundworks';
+  /** Physical drawing tab this scope reads — Module Programme reuses the Module Handover drawings/zones. */
+  const drawingTab=drawingTabForScope(tab);
   const[drawings,setDrawings]=useState([]);
   const[selDraw,setSelDraw]=useState(null);
   const[drawData,setDrawData]=useState(null);
@@ -380,7 +385,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
   const reloadDrawings=useCallback(()=>{
     api.getDrawings().then(d=>{
       setDrawings(d||[]);
-      const f=(d||[]).filter(x=>x.tab===tab);
+      const f=(d||[]).filter(x=>x.tab===drawingTab);
       setSelDraw((p)=>{
         const saved=readSavedDrawingId(tab,f);
         if(saved!=null)return saved;
@@ -624,7 +629,7 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
         const out=await rasterizeImageFile(file);
         width=out.width;height=out.height;b64=out.b64;
       }
-      const r=await api.uploadDrawing(file.name,tab,'ground',b64,width,height,null);
+      const r=await api.uploadDrawing(file.name,drawingTab,'ground',b64,width,height,null);
       if(r?.ok){const nid=Number(r.id);writeSavedDrawingId(tab,nid);reloadDrawings();setSelDraw(nid)}
       else setUploadErr(typeof r?.error==='string'?r.error:'Upload failed.');
     }catch(err){
@@ -1072,12 +1077,18 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
 
   const {scale,tx,ty}=view;
 
+  const selectedDrawingName = useMemo(
+    () => (drawings.find((d) => Number(d.id) === Number(selDraw)) || {}).name || '',
+    [drawings, selDraw]
+  );
+
   return(
     <div className="zone-setup-print-root" style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:T.bg,minHeight:0}}>
       <PageHeader
         className="zone-setup-no-print"
+        collapsible
+        collapsibleSummary={[drawingTabLabel(typeTab), selectedDrawingName].filter(Boolean)}
         title="Zone drawing"
-        description={isBoardViewer?"All zones for reference · Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan":"Scroll to zoom · Pan tool or middle-click drag or Space+drag to pan · double-click a zone to edit in the panel · Esc cancels drawing"}
         toggles={
           drawData?.image_data ? (
             <>
@@ -1096,9 +1107,9 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
           ) : null
         }
         filters={
-          drawings.filter(d => d.tab === tab).length > 0 ? (
+          drawings.filter(d => d.tab === drawingTab).length > 0 ? (
             <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
-              {drawings.filter(d => d.tab === tab).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {drawings.filter(d => d.tab === drawingTab).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           ) : null
         }
@@ -1649,6 +1660,11 @@ export default function ZoneSetupPage({tab,canEdit,isAdmin,isBoardViewer=false})
           )}
         </div>
       </div>
+      <PageFooterHint>
+        {isBoardViewer
+          ? 'All zones for reference. Scroll to zoom; Pan tool, middle-drag, or Space+drag to move.'
+          : 'Scroll to zoom; Pan or middle-drag to move. Double-click a zone to edit; Esc cancels drawing.'}
+      </PageFooterHint>
     </div>
   );
 }

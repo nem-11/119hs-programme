@@ -72,16 +72,42 @@ export const PROJECT_PROGRAMME_TAB = 'project_programme';
 /** Drawing tab for the Module Handover view (modules-as-zones with a handover stage, no programme). */
 export const MODULE_HANDOVER_TAB = 'module_handover';
 
+/**
+ * Programme scope for a dated programme that runs on the SAME module zones as Module Handover.
+ * It is not a drawing tab of its own — its activities live on `module_handover` drawings but
+ * carry activity_type `module_programme`. See drawingTabForScope / scopeForRow below.
+ */
+export const MODULE_PROGRAMME_TAB = 'module_programme';
+
 /** Header pill order; filtered by each user’s allowed tabs. */
-export const MAIN_HEADER_TAB_ORDER = ['groundworks', 'internals', PROJECT_PROGRAMME_TAB];
+export const MAIN_HEADER_TAB_ORDER = ['groundworks', 'internals', MODULE_PROGRAMME_TAB, PROJECT_PROGRAMME_TAB];
 
 export function drawingTabLabel(tab) {
   if (tab === 'groundworks') return 'Groundworks';
   if (tab === 'internals') return 'Internals';
+  if (tab === MODULE_PROGRAMME_TAB) return 'Module Programme';
   if (tab === PROJECT_PROGRAMME_TAB) return 'Project programme';
   if (tab === MODULE_HANDOVER_TAB) return 'Module Handover';
   const s = String(tab || '').replace(/_/g, ' ');
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(tab);
+}
+
+/**
+ * Which physical drawing tab a programme scope reads. Module Programme reuses the
+ * existing Module Handover drawings/zones; every other scope reads its own tab.
+ */
+export function drawingTabForScope(scope) {
+  return scope === MODULE_PROGRAMME_TAB ? MODULE_HANDOVER_TAB : scope;
+}
+
+/**
+ * Which programme scope a Plan/programme row belongs to. Module-programme rows live on
+ * `module_handover` drawings but are identified by their activity_type; everything else
+ * scopes by its drawing tab.
+ */
+export function scopeForRow(row) {
+  if (row && String(row.activity_type || '') === MODULE_PROGRAMME_TAB) return MODULE_PROGRAMME_TAB;
+  return String(row?.drawing_tab || '');
 }
 
 export function pickInitialScopeTab(userTabs) {

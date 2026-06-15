@@ -14,7 +14,7 @@ import {
 } from './programmeSchedule';
 import ScheduleFromTargetModal from './ScheduleFromTargetModal';
 import ProgrammeNlCommand from './ProgrammeNlCommand';
-import PageHeader from './PageHeader';
+import PageHeader, { PageFooterHint } from './PageHeader';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 function sortZoneActs(z){
@@ -757,7 +757,6 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           tabDrawings.find((d) => d.id === selDraw)?.name || (tabDrawings.length ? 'Select drawing' : 'No drawing'),
         ]}
         title={tab === PROJECT_PROGRAMME_TAB ? 'Project programme' : 'Programme'}
-        description={hasFloorPlan ? 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.' : zoneSetupAvailable ? 'Add a plan on Zones to use this screen.' : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}
         filters={
           tabDrawings.length > 0 ? (
             <select value={selDraw || ''} onChange={e => { const id = Number(e.target.value); writeSavedDrawingId(tab, id); setSelDraw(id); }} style={{ ...S.input, width: 'auto', fontSize: 12, padding: '6px 10px' }}>
@@ -1084,6 +1083,13 @@ export default function ProgrammePage({tab,canEdit,onScheduleChanged,onGoToZoneS
           {toast}
         </div>
       )}
+      <PageFooterHint>
+        {hasFloorPlan
+          ? 'Click a zone on the plan for single-zone scheduling, or use Schedule all zones below.'
+          : zoneSetupAvailable
+          ? 'Add a plan on Zones to use this screen.'
+          : 'Ask an administrator to add a floor plan and zones. Use Plan for the zone programme overview.'}
+      </PageFooterHint>
     </div>
   );
 }

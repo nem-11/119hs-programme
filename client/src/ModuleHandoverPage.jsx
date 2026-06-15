@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as api from './api';
 import { T, S, shadowCard } from './uiTheme';
-import PageHeader from './PageHeader';
+import PageHeader, { PageFooterHint } from './PageHeader';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { parseZoneGeometry, svgPolygonPoints, geomBBox } from './zoneGeom';
 import { isPdfFile, rasterizePdfFirstPageToJpeg } from './pdfDrawing';
@@ -815,14 +815,12 @@ export default function ModuleHandoverPage({ canManage = false }) {
   );
 
   return (
-    <div style={{ padding: '14px 16px 90px' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '0 0 0' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 12px' }}>
       <PageHeader
+        collapsible
+        collapsibleSummary={[drawing?.name || 'No drawing'].filter(Boolean)}
         title="Module Handover"
-        description={
-          canManage
-            ? 'Upload a plan, draw each module, then set its handover stage. Board sees the live picture.'
-            : 'Live view of module handover progress across the plan.'
-        }
         filters={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <label style={{ fontSize: 12, fontWeight: 700, color: T.muted }}>Drawing</label>
@@ -1517,6 +1515,12 @@ export default function ModuleHandoverPage({ canManage = false }) {
           </div>
         </div>
       )}
+      </div>
+      <PageFooterHint>
+        {canManage
+          ? 'Upload a plan, draw each module, then set its handover stage. Board sees the live picture.'
+          : 'Live view of module handover progress across the plan.'}
+      </PageFooterHint>
     </div>
   );
 }

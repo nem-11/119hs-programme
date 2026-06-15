@@ -210,6 +210,27 @@ function migrateUserTabsModuleHandover() {
   save();
 }
 
+/**
+ * Add module_programme tab (dated programme on the same module zones) to anyone who already
+ * has Module Handover access, so the new Plan/Template scope shows up for them.
+ */
+function migrateUserTabsModuleProgramme() {
+  const users = all('SELECT id, tabs, role FROM users');
+  const tab = 'module_programme';
+  for (const u of users) {
+    if (!roleGetsModuleHandoverTab(u.role)) continue;
+    let t = [];
+    try {
+      t = JSON.parse(u.tabs || '[]');
+    } catch (_) {}
+    if (!Array.isArray(t)) t = [];
+    if (t.includes(tab)) continue;
+    t.push(tab);
+    run('UPDATE users SET tabs=? WHERE id=?', [JSON.stringify(t), u.id]);
+  }
+  save();
+}
+
 /** Sync role + tabs for standard programme accounts from defaultUsers.js (live RBAC matrix). */
 function migrateDefaultUserRoles() {
   const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
@@ -496,6 +517,7 @@ async function getDb() {
   migrateDefaultUserRoles();
   migrateUserTabsProjectProgramme();
   migrateUserTabsModuleHandover();
+  migrateUserTabsModuleProgramme();
   save();
   const danglingCompletions = countCompletionsDanglingZoneRef();
   if (danglingCompletions > 0) {

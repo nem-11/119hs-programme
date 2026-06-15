@@ -234,6 +234,34 @@
   max-width: 520px;
 }
 
+/* Descriptions live in PageFooterHint at the bottom — not under the title */
+.page-header__description--legacy {
+  display: none;
+}
+
+.page-header--collapsible .page-header__title {
+  margin-bottom: 0;
+  font-size: clamp(17px, 3.2vw, 20px);
+}
+
+.page-header--collapsible:not(:has(.page-header__collapsible-body--open)) {
+  padding-bottom: 8px;
+}
+
+.app-page-footer-hint {
+  flex-shrink: 0;
+  padding: 4px 12px calc(6px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(26, 26, 46, 0.06);
+  background: rgba(244, 243, 239, 0.96);
+}
+
+.app-page-footer-hint p {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.35;
+  color: rgba(26, 26, 46, 0.42);
+}
+
 .page-header__actions {
   display: flex;
   flex-wrap: wrap;

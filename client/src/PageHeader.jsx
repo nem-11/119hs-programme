@@ -1,8 +1,19 @@
 import React, { useEffect, useState } from 'react';
 
+/** Tiny help line pinned to the bottom of a page — keeps headers compact on phone/tablet. */
+export function PageFooterHint({ children }) {
+  if (children == null || children === '' || children === false) return null;
+  return (
+    <div className="app-page-footer-hint" role="note">
+      <p>{children}</p>
+    </div>
+  );
+}
+
 /**
- * Unified page header — title, description, toggles, filters, actions.
- * Pass `collapsible` on Plan (mobile): controls fold into a summary bar + "Show controls".
+ * Unified page header — title, toggles, filters, actions.
+ * Pass `collapsible` to fold controls into a summary bar + "Show controls".
+ * Put longer guidance in `<PageFooterHint>` at the bottom of the page, not `description`.
  */
 export default function PageHeader({
   title,
@@ -36,7 +47,7 @@ export default function PageHeader({
       <div className="page-header__top">
         <div className="page-header__title-block">
           {title ? <h2 className="page-header__title">{title}</h2> : null}
-          {description ? <p className="page-header__description">{description}</p> : null}
+          {description ? <p className="page-header__description page-header__description--legacy">{description}</p> : null}
         </div>
         {actions ? <div className="page-header__actions">{actions}</div> : null}
       </div>

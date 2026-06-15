@@ -2,7 +2,7 @@ import React,{useState,useEffect,useCallback,useMemo,useRef,Component} from 'rea
 import * as api from './api';
 import './loginLanding.css';
 import './dashboardCompletionPrint.css';
-import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,MODULE_HANDOVER_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
+import {actColor,GW_SEQUENCE,INT_SEQUENCE,MAIN_HEADER_TAB_ORDER,PROJECT_PROGRAMME_TAB,MODULE_HANDOVER_TAB,MODULE_PROGRAMME_TAB,drawingTabLabel,pickInitialScopeTab,dateKey,formatDate,formatShort,toHtmlDateInputValue,parseZoneNameForActivity} from './constants';
 import {
   bottomNavItemsForRole,
   allowedPageIdsForRole,
@@ -14,7 +14,7 @@ import {
   canManageModules as roleCanManageModules,
 } from './userPermissions';
 import {T,S,shadowCard,grad} from './uiTheme';
-import PageHeader from './PageHeader';
+import PageHeader, { PageFooterHint } from './PageHeader';
 import ZoneSetupPage from './ZoneSetupPage';
 import ProgrammePage from './ProgrammePage';
 import { useRefreshOnFocus } from './useRefreshOnFocus';
@@ -110,8 +110,10 @@ function buildUpdateSectionsFromPlanRows(rows, dateK, selectedTabs) {
 
 function seqForDrawingTab(t) {
   if (t === PROJECT_PROGRAMME_TAB) return [];
+  if (t === MODULE_PROGRAMME_TAB) return [];
   if (t === 'groundworks') return GW_SEQUENCE;
-  return INT_SEQUENCE;
+  if (t === 'internals') return INT_SEQUENCE;
+  return [];
 }
 
 function dayOrdKey(key) {
@@ -739,27 +741,24 @@ function TemplatePage({tab,isAdmin,onReload}){
   }
   const scopedTemplates=templates.filter(t=>t.tab===templateTab);
 
-  return<div style={{flex:1,overflowY:'auto',background:T.bg,display:'flex',flexDirection:'column'}}>
+  return<div style={{flex:1,overflowY:'auto',background:T.bg,display:'flex',flexDirection:'column',minHeight:0}}>
     <PageHeader
       title="Programme Templates"
-      description="Build once, apply to any zone"
+      collapsible
+      collapsibleSummary={[drawingTabLabel(templateTab)]}
       filters={
         <>
           <label style={{ fontSize: 11, fontWeight: 600, color: T.text }} htmlFor="tpl-scope">Programme</label>
           <select id="tpl-scope" value={templateTab} onChange={e=>onTemplateScopeChange(e.target.value)} style={{...S.input,width:'auto',minWidth:200,fontSize:12,padding:'8px 12px'}}>
             <option value="groundworks">Groundworks</option>
             <option value="internals">Internals</option>
+            <option value="module_programme">Module Programme</option>
             <option value="project_programme">Project programme</option>
           </select>
-          <span style={{fontSize:10,color:T.muted}}>
-            {templateTab==='groundworks'?`${GW_SEQUENCE.length} groundworks activities`:
-              templateTab==='internals'?`${INT_SEQUENCE.length} internal activities`:
-              'Master programme lines — add named activities below (not tied to floor drawings).'}
-          </span>
         </>
       }
     />
-    <div style={{padding:16,flex:1}}>
+    <div style={{padding:16,flex:1,minHeight:0}}>
     {isAdmin&&<div style={{padding:10,background:T.surface,border:`1px solid ${T.hairline}`,borderRadius:10,marginBottom:12,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
       <span style={{fontSize:11,fontWeight:600,color:T.text}}>New activity</span>
       <input value={newAct} onChange={e=>setNewAct(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addNewActivity()} placeholder={`Add ${templateTab} activity`} style={{...S.input,width:220,fontSize:12,padding:'7px 10px'}}/>
@@ -884,6 +883,13 @@ function TemplatePage({tab,isAdmin,onReload}){
       </div>
     </div></>}
     </div>
+    <PageFooterHint>
+      Build once, apply to any zone.{' '}
+      {templateTab==='groundworks'?`${GW_SEQUENCE.length} groundworks activities.`:
+        templateTab==='internals'?`${INT_SEQUENCE.length} internal activities.`:
+        templateTab===MODULE_PROGRAMME_TAB?'Module programme — add named activities below, then apply to numbered module zones.':
+        'Master programme lines — add named activities below (not tied to floor drawings).'}
+    </PageFooterHint>
   </div>;
 }
 
@@ -1607,12 +1613,14 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   ];
   return<div className="dashboard-page-root" style={{
     flex:1,
-    overflowY:'auto',
+    overflow:'hidden',
     background:`linear-gradient(165deg,rgba(235,238,245,0.85) 0%,${T.bg} 22%,${T.bg} 100%)`,
+    display:'flex',
+    flexDirection:'column',
+    minHeight:0,
   }}>
     <PageHeader
       title="Dashboard"
-      description="Programme snapshot — completion across scheduled groundworks and internals."
       actions={
         <>
           <div style={{
@@ -1631,7 +1639,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         </>
       }
     />
-    <div className="dashboard-page-content" style={{maxWidth:760,margin:'0 auto',padding:'22px 18px 40px'}}>
+    <div className="dashboard-page-content" style={{flex:1,minHeight:0,overflowY:'auto',maxWidth:760,margin:'0 auto',padding:'22px 18px 12px',width:'100%'}}>
       {liveDataErr&&(
         <div style={{
           marginBottom:14,
@@ -1992,6 +2000,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
 
       <DashboardModuleSection />
     </div>
+    <PageFooterHint>Programme snapshot — completion across scheduled groundworks and internals.</PageFooterHint>
   </div>;
 }
 
@@ -2289,10 +2298,11 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   }
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1, background: T.bg, paddingBottom: canTick && dirty ? 80 : 12 }}>
+    <div style={{ overflow: 'hidden', flex: 1, background: T.bg, display: 'flex', flexDirection: 'column', minHeight: 0, paddingBottom: canTick && dirty ? 80 : 0 }}>
       <PageHeader
         title="Update"
-        description="Tick scheduled activities for the selected day, then submit to lock in progress for the whole team."
+        collapsible
+        collapsibleSummary={selectedTabs.map((t) => drawingTabLabel(t))}
         actions={
           <button type="button" onClick={() => void reloadPlan()} style={{ ...S.btn, padding: '8px 14px', fontSize: 12 }}>
             Refresh
@@ -2339,6 +2349,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
           ) : null
         }
       />
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
       {loadErr && (
         <div style={{ margin: '10px 12px', fontSize: 12, color: '#c0392b' }}>
           {loadErr}{' '}
@@ -2550,6 +2561,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
           )}
         </div>
       )}
+      </div>
       {canTick && dirty && (
         <div
           style={{
@@ -2596,6 +2608,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
           {toast}
         </div>
       )}
+      <PageFooterHint>Tick scheduled activities for the selected day, then submit to lock in progress for the whole team.</PageFooterHint>
     </div>
   );
 }
@@ -2718,19 +2731,14 @@ function LAPage({ planRows, comp, date, tab, onRefreshLiveData }) {
     </div>;
   }
 
-  return<div style={{overflowY:'auto',flex:1,background:T.bg}}>
+  return<div style={{overflow:'hidden',flex:1,background:T.bg,display:'flex',flexDirection:'column',minHeight:0}}>
     <PageHeader
       title="Look ahead"
-      description={
-        <>
-          Three-week window from the date above (Saturdays, Sundays, and bank holidays skipped). Matches the <strong style={{fontWeight:600,color:T.text}}>{drawingTabLabel(tab)}</strong> scope. Export is one row per activity with tick status for Excel or reports.
-        </>
-      }
       actions={
         <button type="button" onClick={exportCsv} style={{...S.btn,...S.btnPrimary,padding:'8px 14px',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>Export CSV</button>
       }
     />
-    <div style={{maxWidth:640,margin:'0 auto',padding:'0 14px 28px'}}>
+    <div style={{flex:1,minHeight:0,overflowY:'auto',maxWidth:640,margin:'0 auto',padding:'0 14px 12px',width:'100%'}}>
       {stats.total>0?<div style={{
         marginBottom:18,
         padding:'14px 16px',
@@ -2770,6 +2778,9 @@ function LAPage({ planRows, comp, date, tab, onRefreshLiveData }) {
         </div>;
       })}
     </div>
+    <PageFooterHint>
+      Three-week window from the date above (Saturdays, Sundays, and bank holidays skipped). Matches the {drawingTabLabel(tab)} scope. Export is one row per activity with tick status for Excel or reports.
+    </PageFooterHint>
   </div>;
 }
 

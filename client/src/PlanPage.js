@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import * as api from './api';
 import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow } from './constants';
 import { T, S } from './uiTheme';
-import PageHeader from './PageHeader';
+import PageHeader, { PageFooterHint } from './PageHeader';
 import { useRefreshOnFocus, usePollingWhenVisible, formatLastRefreshed } from './useRefreshOnFocus';
 import {
   calendarDaysBetween,
@@ -1639,15 +1639,13 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       </div>
 
       {!printLayout && (
-        <div className="plan-grid-footer plan-no-print">
-          <p>
-            Mon–Fri = scheduleable days; grey = weekends &amp; bank holidays.
-            {viewMode === 'grid'
-              ? ' ← → step days; click a date header to jump the window.'
-              : ' Scroll to zoom; drag to pan the drawing.'}
-            {isAdmin ? ' Admin: ＋ add, drag to move, double-click (long-press) to delete.' : ''}
-          </p>
-        </div>
+        <PageFooterHint>
+          Mon–Fri = scheduleable days; grey = weekends &amp; bank holidays.
+          {viewMode === 'grid'
+            ? ' ← → step days; click a date header to jump the window.'
+            : ' Scroll to zoom; drag to pan the drawing.'}
+          {isAdmin ? ' Admin: ＋ add, drag to move, double-click (long-press) to delete.' : ''}
+        </PageFooterHint>
       )}
       </div>
 

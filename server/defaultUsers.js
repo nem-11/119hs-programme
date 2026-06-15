@@ -10,7 +10,7 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     username: 'admin',
     name: 'Nem',
     role: 'admin',
-    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover'],
+    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover', 'module_programme'],
     /** Ignored in bootstrap — uses SEED_ADMIN_PASSWORD or dev-only `119hs`. */
     passwordPlain: null,
   },
@@ -19,7 +19,7 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     passwordPlain: 'site123',
     name: 'Site Team',
     role: 'site_editor',
-    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover'],
+    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover', 'module_programme'],
   },
   {
     username: 'DBs',
@@ -40,13 +40,13 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     passwordPlain: 'board119',
     name: 'Board',
     role: 'board_viewer',
-    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover'],
+    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover', 'module_programme'],
   },
   {
     username: 'Team',
     passwordPlain: '119team',
     name: 'Team',
     role: 'board_viewer',
-    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover'],
+    tabs: ['groundworks', 'internals', 'project_programme', 'module_handover', 'module_programme'],
   },
 ];
