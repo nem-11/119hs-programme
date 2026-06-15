@@ -76,7 +76,7 @@ const drawZoomBtn = {
 };
 
 /** Module Handover — modules drawn as zones on a plan, each carrying a single handover stage. */
-export default function ModuleHandoverPage({ canManage = false }) {
+export default function ModuleHandoverPage({ canManage = false, isAdmin = false }) {
   const [drawings, setDrawings] = useState([]);
   const [drawingId, setDrawingId] = useState('');
   const [drawing, setDrawing] = useState(null);
@@ -113,6 +113,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [completionProgress, setCompletionProgress] = useState(null);
   const [bulkPreview, setBulkPreview] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [okMsg, setOkMsg] = useState('');
 
   const wrapRef = useRef(null);
   const viewportRef = useRef(null);
@@ -270,6 +271,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
 
   async function previewBulkSchedule() {
     setErr('');
+    setOkMsg('');
     setBulkBusy(true);
     try {
       const out = await api.getModuleBulkSchedulePreview();
@@ -278,6 +280,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
         return;
       }
       setBulkPreview(out);
+      if (!out.total) {
+        const gs = out.zone_stats || {};
+        setErr(
+          `No schedulable modules (${gs.total || 0} total, ${gs.ground_excluded || 0} on ground-floor drawings skipped). Drawings must be named 1st/2nd/3rd floor — not Ground.`
+        );
+        return;
+      }
+      setOkMsg(`Preview ready: ${out.total} modules, last start ${out.last_start_date}.`);
       // eslint-disable-next-line no-console
       console.log('[Module bulk schedule preview]', out);
       if (out.ordered?.length) {
@@ -308,6 +318,7 @@ export default function ModuleHandoverPage({ canManage = false }) {
       return;
     }
     setErr('');
+    setOkMsg('');
     setBulkBusy(true);
     try {
       const out = await api.applyModuleBulkSchedule({ dryRun: false });
@@ -319,6 +330,8 @@ export default function ModuleHandoverPage({ canManage = false }) {
         setErr(`Applied ${out.applied}/${out.total}; ${out.errors.length} failed — see console.`);
         // eslint-disable-next-line no-console
         console.warn('[Module bulk schedule errors]', out.errors);
+      } else {
+        setOkMsg(`Applied Module Completion to ${out.applied} module${out.applied === 1 ? '' : 's'}. Check Plan → Modules scope.`);
       }
       await reloadCompletionProgress();
       reloadProgrammeItems(drawingId);
@@ -1111,6 +1124,14 @@ export default function ModuleHandoverPage({ canManage = false }) {
           </button>
         </div>
       )}
+      {okMsg && (
+        <div style={{ margin: '10px 0', padding: '8px 12px', background: 'rgba(46,160,67,0.08)', border: '1px solid rgba(46,160,67,0.3)', borderRadius: 8, color: '#1b782d', fontSize: 13 }}>
+          {okMsg}
+          <button type="button" onClick={() => setOkMsg('')} style={{ ...S.btn, marginLeft: 10, padding: '2px 8px', fontSize: 11 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {detectErr && (
         <div style={{ margin: '10px 0', padding: '8px 12px', background: 'rgba(230,108,0,0.08)', border: '1px solid rgba(230,108,0,0.32)', borderRadius: 8, color: '#9a5b00', fontSize: 13 }}>
           {detectErr}
@@ -1382,13 +1403,13 @@ export default function ModuleHandoverPage({ canManage = false }) {
               </div>
             )}
 
-            {canManage && (
+            {isAdmin && (
               <div style={{ ...card, padding: 14 }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   Bulk programme
                 </div>
                 <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>
-                  Preview module order (T4→T1→T2→T3, floor up, right-to-left), then apply Module Completion with 5 starts per Mon–Sat day from 22 Jun 2026.
+                  1) Preview order · 2) Apply to all modules. Schedules Module Completion (5 starts/day Mon–Sat from 22 Jun 2026). Ground-floor drawings are skipped.
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                   <button type="button" onClick={previewBulkSchedule} disabled={bulkBusy} style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}>

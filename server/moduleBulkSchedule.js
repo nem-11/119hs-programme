@@ -180,6 +180,22 @@ function getOrderedModuleZones(allFn) {
   return ordered;
 }
 
+/** Count all module_handover zones vs ground-floor exclusions. */
+function countModuleZoneStats(allFn) {
+  const rows = allFn(
+    `SELECT z.id, d.name AS drawing_name, d.floor AS drawing_floor
+     FROM zones z
+     JOIN drawings d ON d.id = z.drawing_id
+     WHERE d.tab = ?`,
+    [MODULE_HANDOVER_TAB]
+  );
+  let groundExcluded = 0;
+  for (const z of rows) {
+    if (isGroundFloorDrawing({ name: z.drawing_name, floor: z.drawing_floor })) groundExcluded += 1;
+  }
+  return { total: rows.length, ground_excluded: groundExcluded, schedulable: rows.length - groundExcluded };
+}
+
 /** Assign Mon–Sat start dates (5 modules per day) from anchor Monday. */
 function assignModuleStartDates(count, opts = {}) {
   const anchor = normalizeModuleStartKey(opts.startDate || DEFAULT_BULK_START);
@@ -312,6 +328,7 @@ module.exports = {
   DEFAULT_BULK_START,
   DEFAULT_MODULES_PER_DAY,
   getOrderedModuleZones,
+  countModuleZoneStats,
   assignModuleStartDates,
   buildRowsFromModuleTemplateStart,
   moduleProgrammeStatusForZone,

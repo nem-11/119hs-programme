@@ -2557,12 +2557,56 @@ module.exports = {
         mbs.MODULE_COMPLETION_TEMPLATE_NAME,
         mbs.MODULE_PROGRAMME_TAB,
       ]) ||
+      get('SELECT * FROM templates WHERE name=? ORDER BY id DESC LIMIT 1', [
+        mbs.MODULE_COMPLETION_TEMPLATE_NAME,
+      ]) ||
       null
     );
   },
 
+  /** Sync Module Completion template + activities before bulk apply. */
+  ensureModuleCompletionReady() {
+    seedModuleCompletionActivities();
+    const seqJson = JSON.stringify(mbs.MODULE_COMPLETION_SEQUENCE);
+    const durJson = JSON.stringify(mbs.MODULE_COMPLETION_DURATIONS);
+    let tpl = module.exports.getModuleCompletionTemplate();
+    if (tpl) {
+      run('UPDATE templates SET tab=?, sequence=?, durations=? WHERE id=?', [
+        mbs.MODULE_PROGRAMME_TAB,
+        seqJson,
+        durJson,
+        tpl.id,
+      ]);
+    } else {
+      run('INSERT INTO templates (name,tab,tower,zone_name,sequence,durations) VALUES (?,?,?,?,?,?)', [
+        mbs.MODULE_COMPLETION_TEMPLATE_NAME,
+        mbs.MODULE_PROGRAMME_TAB,
+        'T4',
+        'Module',
+        seqJson,
+        durJson,
+      ]);
+      tpl = module.exports.getModuleCompletionTemplate();
+    }
+    if (!tpl) return { error: `Could not create template "${mbs.MODULE_COMPLETION_TEMPLATE_NAME}"` };
+
+    const actRows = all('SELECT id, name FROM activities');
+    const lookup = schedule.buildActivityLookup(actRows);
+    const missing = mbs.MODULE_COMPLETION_SEQUENCE.filter(
+      (name) => !schedule.resolveActivityId(lookup, name)
+    );
+    if (missing.length) {
+      return { error: `Missing module activities in database: ${missing.join(', ')}` };
+    }
+    return { ok: true, template_id: Number(tpl.id) };
+  },
+
   /** A1 — ordered module list + computed start dates (inspect before bulk apply). */
   getModuleBulkSchedulePreview(opts = {}) {
+    const ready = module.exports.ensureModuleCompletionReady();
+    if (ready.error) return { ok: false, error: ready.error };
+
+    const zoneStats = mbs.countModuleZoneStats(all);
     const zones = mbs.getOrderedModuleZones(all);
     const startDates = mbs.assignModuleStartDates(zones.length, {
       startDate: opts.startDate || mbs.DEFAULT_BULK_START,
@@ -2593,6 +2637,7 @@ module.exports = {
     return {
       ok: true,
       total: list.length,
+      zone_stats: zoneStats,
       template_id: tpl ? Number(tpl.id) : null,
       template_name: mbs.MODULE_COMPLETION_TEMPLATE_NAME,
       template_warning: templateWarning,
@@ -2706,13 +2751,18 @@ module.exports = {
   /** A2+A3 — bulk-apply Module Completion to all ordered module zones. */
   applyModuleBulkSchedule(opts = {}) {
     const dryRun = opts.dryRun === true;
+    const ready = module.exports.ensureModuleCompletionReady();
+    if (ready.error) return { error: ready.error };
+
     const preview = module.exports.getModuleBulkSchedulePreview(opts);
     if (!preview.ok) return preview;
-    const tpl = module.exports.getModuleCompletionTemplate();
-    if (!tpl) {
-      return { error: `Template "${mbs.MODULE_COMPLETION_TEMPLATE_NAME}" not found` };
+    if (!preview.total) {
+      const gs = preview.zone_stats || {};
+      return {
+        error: `No schedulable modules found (${gs.total || 0} total, ${gs.ground_excluded || 0} on ground-floor drawings excluded). Rename drawings to 1st/2nd/3rd floor etc.`,
+      };
     }
-    const tid = Number(tpl.id);
+    const tid = ready.template_id;
     if (dryRun) {
       return { ok: true, dry_run: true, would_apply: preview.total, preview };
     }

@@ -2940,7 +2940,7 @@ function MainApp({user,onLogout,onUserUpdate}){
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)}/>}
-      {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)}/>}
+      {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)} isAdmin={isAdmin}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}
