@@ -1539,6 +1539,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   );
   const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
   const intRem=Math.max(0,ov.int.total-ov.int.done);
+  const projRem=Math.max(0,ov.project.total-ov.project.done);
 
   const riskList=useMemo(()=>{
     const tk=dateKey(new Date());
@@ -1599,6 +1600,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
 
   const gwPct = ov.gw.total > 0 ? Math.round((ov.gw.done / ov.gw.total) * 100) : 0;
   const intPct = ov.int.total > 0 ? Math.round((ov.int.done / ov.int.total) * 100) : 0;
+  const projPct = ov.project.total > 0 ? Math.round((ov.project.done / ov.project.total) * 100) : 0;
 
   const sectionPace = useMemo(() => {
     const todayK = dateKey(new Date());
@@ -1621,6 +1623,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     return {
       gw: calcPace('groundworks'),
       int: calcPace('internals'),
+      project: calcPace(PROJECT_PROGRAMME_TAB),
     };
   }, [metricPlanRows, comp]);
 
@@ -1633,7 +1636,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   const metrics=[
     {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked · ${gwPct}% complete`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked · ${intPct}% complete`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
-    {k:'act',glyph:'◎',label:'Activities ticked',sub:'GW, INT & project programme (activities)',value:`${ov.done} / ${ov.total}`,accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
+    {k:'proj',glyph:'▣',label:'Project programme (remaining)',sub:`${ov.project.done} of ${ov.project.total} project activities ticked · ${projPct}% complete`,value:String(projRem),accent:'230,126,34',bg:'rgba(230,126,34,0.07)'},
   ];
   return<div className="dashboard-page-root" style={{
     flex:1,
@@ -1769,6 +1772,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         {[
           {key:'gw',label:'Groundworks',pct:gwPct,done:ov.gw.done,total:ov.gw.total,pace:sectionPace.gw,accent:'66,133,244'},
           {key:'int',label:'Internals',pct:intPct,done:ov.int.done,total:ov.int.total,pace:sectionPace.int,accent:'142,68,173'},
+          {key:'proj',label:'Project programme',pct:projPct,done:ov.project.done,total:ov.project.total,pace:sectionPace.project,accent:'230,126,34'},
         ].map((sec)=>{
           const {delta,expectedDone,actualDone}=sec.pace;
           const paceLabel=expectedDone===0?null:delta<0?`${Math.abs(delta)} behind plan`:delta>0?`${delta} ahead of plan`:'On plan';
@@ -2056,7 +2060,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
 
       <DashboardModuleSection />
     </div>
-    <PageFooterHint>Programme snapshot — completion across scheduled groundworks and internals.</PageFooterHint>
+    <PageFooterHint>Programme snapshot — completion across Groundworks, Internals, and Project programme.</PageFooterHint>
   </div>;
 }
 

@@ -111,6 +111,8 @@ export default function ModuleHandoverPage({ canManage = false }) {
   const [editId, setEditId] = useState(null);
   const [editGeom, setEditGeom] = useState(null);
   const [completionProgress, setCompletionProgress] = useState(null);
+  const [programmePreview, setProgrammePreview] = useState(null);
+  const [programmeApplyBusy, setProgrammeApplyBusy] = useState(false);
 
   const wrapRef = useRef(null);
   const viewportRef = useRef(null);
@@ -215,6 +217,53 @@ export default function ModuleHandoverPage({ canManage = false }) {
   useEffect(() => {
     reloadCompletionProgress();
   }, [reloadCompletionProgress]);
+
+  const reloadProgrammeOrderPreview = useCallback(() => {
+    if (!canManage) {
+      setProgrammePreview(null);
+      return Promise.resolve(null);
+    }
+    return api
+      .previewModuleL1L5Order({ skipMissing: true })
+      .then((out) => {
+        setProgrammePreview(out && !out.error ? out : null);
+        return out;
+      })
+      .catch(() => {
+        setProgrammePreview(null);
+        return null;
+      });
+  }, [canManage]);
+
+  useEffect(() => {
+    void reloadProgrammeOrderPreview();
+  }, [reloadProgrammeOrderPreview]);
+
+  async function applyL1L5Programme() {
+    const total = programmePreview?.total || programmePreview?.matched;
+    const msg = total
+      ? `Apply Module Completion programme to ${total} modules in the L1–L5 floor-plan order?\n\nStart Mon 22 Jun 2026 · 5 modules per working day (Mon–Sat). Existing per-module schedules will be replaced.`
+      : 'Apply Module Completion programme to all L1–L5 modules in floor-plan order? Existing per-module schedules will be replaced.';
+    if (!window.confirm(msg)) return;
+    setProgrammeApplyBusy(true);
+    setErr('');
+    try {
+      const out = await api.applyModuleL1L5Order({ skipMissing: true });
+      if (out?.error) throw new Error(out.error);
+      const applied = Number(out.applied) || 0;
+      const skipped = Number(out.skipped) || 0;
+      window.alert(
+        `Programme applied to ${applied} module(s).` +
+          (skipped ? ` ${skipped} module(s) in the list were not found in the database.` : '') +
+          (out.last_start_date ? ` Last start date: ${out.last_start_date}.` : '')
+      );
+      await Promise.all([reloadProgrammeOrderPreview(), reloadCompletionProgress(), reloadProgrammeItems(drawingId)]);
+    } catch (e) {
+      setErr(e?.message || 'Could not apply module programme');
+    } finally {
+      setProgrammeApplyBusy(false);
+    }
+  }
 
   useEffect(() => {
     setSelId(null);
@@ -1283,6 +1332,47 @@ export default function ModuleHandoverPage({ canManage = false }) {
                 ))}
               </div>
             </div>
+
+            {canManage && (
+              <div style={{ ...card, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Apply module programme
+                </div>
+                <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.45 }}>
+                  Bulk-schedule all L1–L5 modules with the Module Completion template (11 activities, 12 days) in your floor-plan order — pod → right stack → corridor zigzag → inner → far-left; Level 5 corridor then left wing.
+                </div>
+                <div style={{ marginTop: 10, fontSize: 12, color: T.text, lineHeight: 1.5 }}>
+                  {programmePreview?.total ? (
+                    <>
+                      <strong>{programmePreview.total}</strong> modules matched
+                      <span style={{ color: T.muted }}> · Mon 22 Jun 2026 start · 5/day Mon–Sat</span>
+                    </>
+                  ) : programmePreview === null ? (
+                    <span style={{ color: T.muted }}>Could not load preview — check you are logged in as admin.</span>
+                  ) : (
+                    <span style={{ color: T.muted }}>No modules matched — add module zones on the floor plans first.</span>
+                  )}
+                </div>
+                <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    disabled={programmeApplyBusy || !programmePreview?.total}
+                    onClick={() => void applyL1L5Programme()}
+                    style={{ ...S.btn, ...S.btnPrimary, padding: '8px 14px', fontSize: 12, opacity: programmeApplyBusy ? 0.65 : 1 }}
+                  >
+                    {programmeApplyBusy ? 'Applying…' : 'Apply L1–L5 programme'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={programmeApplyBusy}
+                    onClick={() => void reloadProgrammeOrderPreview()}
+                    style={{ ...S.btn, padding: '8px 12px', fontSize: 12 }}
+                  >
+                    Refresh preview
+                  </button>
+                </div>
+              </div>
+            )}
 
             {completionCounts && (
               <div style={{ ...card, padding: 14 }}>
