@@ -49,4 +49,11 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     role: 'board_viewer',
     tabs: ['groundworks', 'internals', 'project_programme', 'module_programme'],
   },
+  {
+    username: '119hs',
+    passwordPlain: 'site119',
+    name: '119HS',
+    role: 'programme_viewer',
+    tabs: ['groundworks', 'internals', 'project_programme', 'module_programme'],
+  },
 ];

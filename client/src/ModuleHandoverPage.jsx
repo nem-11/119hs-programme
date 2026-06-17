@@ -76,7 +76,7 @@ const drawZoomBtn = {
 };
 
 /** Module Handover — modules drawn as zones on a plan, each carrying a single handover stage. */
-export default function ModuleHandoverPage({ canManage = false, isAdmin = false }) {
+export default function ModuleHandoverPage({ canManage = false }) {
   const [drawings, setDrawings] = useState([]);
   const [drawingId, setDrawingId] = useState('');
   const [drawing, setDrawing] = useState(null);
@@ -111,9 +111,6 @@ export default function ModuleHandoverPage({ canManage = false, isAdmin = false 
   const [editId, setEditId] = useState(null);
   const [editGeom, setEditGeom] = useState(null);
   const [completionProgress, setCompletionProgress] = useState(null);
-  const [bulkPreview, setBulkPreview] = useState(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [okMsg, setOkMsg] = useState('');
 
   const wrapRef = useRef(null);
   const viewportRef = useRef(null);
@@ -269,78 +266,6 @@ export default function ModuleHandoverPage({ canManage = false, isAdmin = false 
     return c;
   }, [completionProgress]);
 
-  async function previewBulkSchedule() {
-    setErr('');
-    setOkMsg('');
-    setBulkBusy(true);
-    try {
-      const out = await api.getModuleBulkSchedulePreview();
-      if (out?.error) {
-        setErr(String(out.error));
-        return;
-      }
-      setBulkPreview(out);
-      if (!out.total) {
-        const gs = out.zone_stats || {};
-        setErr(
-          `No schedulable modules (${gs.total || 0} total, ${gs.ground_excluded || 0} on ground-floor drawings skipped). Drawings must be named 1st/2nd/3rd floor — not Ground.`
-        );
-        return;
-      }
-      setOkMsg(`Preview ready: ${out.total} modules, last start ${out.last_start_date}.`);
-      // eslint-disable-next-line no-console
-      console.log('[Module bulk schedule preview]', out);
-      if (out.ordered?.length) {
-        // eslint-disable-next-line no-console
-        console.table(out.ordered.map((r) => ({
-          order: r.order,
-          tower: r.tower,
-          module: r.name,
-          floor: r.drawing_floor || r.drawing_name,
-          centre_x: r.centre_x,
-          start: r.start_date,
-        })));
-      }
-    } catch (e) {
-      setErr(e?.message || 'Preview failed');
-    } finally {
-      setBulkBusy(false);
-    }
-  }
-
-  async function applyBulkSchedule() {
-    if (!bulkPreview?.ordered?.length) {
-      await previewBulkSchedule();
-      return;
-    }
-    const n = bulkPreview.total || bulkPreview.ordered.length;
-    if (!window.confirm(`Apply Module Completion to all ${n} modules? This replaces each module's programme schedule.`)) {
-      return;
-    }
-    setErr('');
-    setOkMsg('');
-    setBulkBusy(true);
-    try {
-      const out = await api.applyModuleBulkSchedule({ dryRun: false });
-      if (out?.error) {
-        setErr(String(out.error));
-        return;
-      }
-      if (out.errors?.length) {
-        setErr(`Applied ${out.applied}/${out.total}; ${out.errors.length} failed — see console.`);
-        // eslint-disable-next-line no-console
-        console.warn('[Module bulk schedule errors]', out.errors);
-      } else {
-        setOkMsg(`Applied Module Completion to ${out.applied} module${out.applied === 1 ? '' : 's'}. Check Plan → Modules scope.`);
-      }
-      await reloadCompletionProgress();
-      reloadProgrammeItems(drawingId);
-    } catch (e) {
-      setErr(e?.message || 'Bulk apply failed');
-    } finally {
-      setBulkBusy(false);
-    }
-  }
   // In Adjust mode the side panel (rename / delete / stage) follows the module
   // you're editing; otherwise it follows the View-mode click selection.
   const selected = useMemo(() => {
@@ -1124,14 +1049,6 @@ export default function ModuleHandoverPage({ canManage = false, isAdmin = false 
           </button>
         </div>
       )}
-      {okMsg && (
-        <div style={{ margin: '10px 0', padding: '8px 12px', background: 'rgba(46,160,67,0.08)', border: '1px solid rgba(46,160,67,0.3)', borderRadius: 8, color: '#1b782d', fontSize: 13 }}>
-          {okMsg}
-          <button type="button" onClick={() => setOkMsg('')} style={{ ...S.btn, marginLeft: 10, padding: '2px 8px', fontSize: 11 }}>
-            Dismiss
-          </button>
-        </div>
-      )}
       {detectErr && (
         <div style={{ margin: '10px 0', padding: '8px 12px', background: 'rgba(230,108,0,0.08)', border: '1px solid rgba(230,108,0,0.32)', borderRadius: 8, color: '#9a5b00', fontSize: 13 }}>
           {detectErr}
@@ -1400,58 +1317,6 @@ export default function ModuleHandoverPage({ canManage = false, isAdmin = false 
                     <span style={{ fontWeight: 700 }}>{completionCounts.completed || 0}</span>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {isAdmin && (
-              <div style={{ ...card, padding: 14 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Bulk programme
-                </div>
-                <div style={{ fontSize: 11, color: T.faint, marginTop: 4, lineHeight: 1.4 }}>
-                  1) Preview order · 2) Apply to all modules. Schedules Module Completion (5 starts/day Mon–Sat from 22 Jun 2026). Ground-floor drawings are skipped.
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                  <button type="button" onClick={previewBulkSchedule} disabled={bulkBusy} style={{ ...S.btn, padding: '7px 12px', fontSize: 12 }}>
-                    {bulkBusy ? 'Working…' : 'Preview order'}
-                  </button>
-                  <button type="button" onClick={applyBulkSchedule} disabled={bulkBusy} style={{ ...S.btn, ...S.btnPrimary, padding: '7px 12px', fontSize: 12 }}>
-                    Apply to all modules
-                  </button>
-                </div>
-                {bulkPreview?.template_warning && (
-                  <div style={{ fontSize: 11, color: '#b45309', marginTop: 8 }}>{bulkPreview.template_warning}</div>
-                )}
-                {bulkPreview?.ordered?.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
-                      {bulkPreview.total} modules · last start {bulkPreview.last_start_date} · full list in browser console (console.table)
-                    </div>
-                    <div style={{ marginTop: 8, maxHeight: 220, overflow: 'auto', border: `1px solid ${T.hairline}`, borderRadius: 8, fontSize: 10 }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ background: 'rgba(26,26,46,0.04)', position: 'sticky', top: 0 }}>
-                            {['#', 'Tower', 'Module', 'Floor', 'X', 'Start'].map((h) => (
-                              <th key={h} style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 700, color: T.muted }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {bulkPreview.ordered.map((r) => (
-                            <tr key={r.zone_id} style={{ borderTop: `1px solid ${T.hairline}` }}>
-                              <td style={{ padding: '3px 6px' }}>{r.order}</td>
-                              <td style={{ padding: '3px 6px' }}>{r.tower}</td>
-                              <td style={{ padding: '3px 6px' }}>{r.name}</td>
-                              <td style={{ padding: '3px 6px' }}>{r.drawing_floor || r.drawing_name}</td>
-                              <td style={{ padding: '3px 6px' }}>{r.centre_x}</td>
-                              <td style={{ padding: '3px 6px' }}>{r.start_date}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
               </div>
             )}
 

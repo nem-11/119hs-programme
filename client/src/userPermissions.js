@@ -1,4 +1,4 @@
-/** Mirrors server roles: admin | site_editor | editor (legacy) | gw_subbie | int_subbie | board_viewer */
+/** Mirrors server roles: admin | site_editor | editor (legacy) | gw_subbie | int_subbie | board_viewer | programme_viewer */
 
 export function isAdmin(role) {
   return role === 'admin';
@@ -10,6 +10,11 @@ export function isSiteEditor(role) {
 
 export function isBoardViewer(role) {
   return role === 'board_viewer';
+}
+
+/** Shared 119HS login — Plan programme view only. */
+export function isProgrammeViewer(role) {
+  return role === 'programme_viewer';
 }
 
 export function isGwSubbie(role) {
@@ -48,6 +53,10 @@ export function bottomNavItemsForRole(role) {
 
   if (isBoardViewer(role)) {
     return [dash, plan, zones, mod];
+  }
+
+  if (isProgrammeViewer(role)) {
+    return [plan];
   }
 
   /** Site: view Programme (incl. Project programme XML list); structural edit remains admin-only in ProgrammePage. */

@@ -489,6 +489,32 @@ app.post('/api/admin/modules/bulk-schedule-apply', auth, admin, (req, res) => {
   if (out.error) return res.status(400).json(out);
   res.json(out);
 });
+app.post('/api/admin/modules/apply-l1-l5-order', auth, admin, (req, res) => {
+  const body = req.body || {};
+  const out = db.applyModuleOrderL1L5({
+    startDate: body.startDate,
+    modulesPerDay: body.modulesPerDay,
+    dryRun: body.dryRun === true,
+    skipMissing: body.skipMissing !== false,
+  });
+  if (out.error) return res.status(400).json(out);
+  res.json(out);
+});
+app.post('/api/admin/modules/apply-explicit-order', auth, admin, (req, res) => {
+  const body = req.body || {};
+  const order = body.order;
+  if (!Array.isArray(order) || !order.length) {
+    return res.status(400).json({ error: 'order array required' });
+  }
+  const out = db.applyModuleBulkScheduleFromExplicitOrder(order, {
+    startDate: body.startDate,
+    modulesPerDay: body.modulesPerDay,
+    dryRun: body.dryRun === true,
+    skipMissing: body.skipMissing !== false,
+  });
+  if (out.error) return res.status(400).json(out);
+  res.json(out);
+});
 app.post('/api/zones/:zoneId/schedule-from-template-start', auth, admin, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const { template_id, start_date, start_stage_idx, calendar } = req.body || {};

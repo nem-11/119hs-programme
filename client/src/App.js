@@ -10,6 +10,7 @@ import {
   canEditZonesProgramme,
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
+  isProgrammeViewer as roleIsProgrammeViewer,
   isSiteEditor as roleIsSiteEditor,
   canManageModules as roleCanManageModules,
 } from './userPermissions';
@@ -2848,7 +2849,8 @@ function MainApp({user,onLogout,onUserUpdate}){
     }).catch(()=>{});
     return()=>{cancelled=true;};
   },[]);
-  const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));const[page,setPage]=useState('dashboard');const[date,setDate]=useState(()=>new Date());
+  const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));
+  const[page,setPage]=useState(()=>bottomNavItemsForRole(user.role)[0]?.id||'plan');const[date,setDate]=useState(()=>new Date());
   const[selectedScopeTabs,setSelectedScopeTabs]=useState(()=>{
     const base=normalizeProgrammeScopeTabs(Array.isArray(user.tabs)&&user.tabs.length?user.tabs:['groundworks','internals']);
     const stored=readStoredSelectedTabs();
@@ -2863,7 +2865,7 @@ function MainApp({user,onLogout,onUserUpdate}){
   const loadData=useCallback(async(opts)=>{
     const silent=opts?.silent===true;
     let tabs=Array.isArray(user.tabs)?[...user.tabs].filter(Boolean):[];
-    if(!tabs.length&&(roleIsAdmin(user.role)||roleIsSiteEditor(user.role)||roleIsBoardViewer(user.role)))tabs=[...MAIN_HEADER_TAB_ORDER];
+    if(!tabs.length&&(roleIsAdmin(user.role)||roleIsSiteEditor(user.role)||roleIsBoardViewer(user.role)||roleIsProgrammeViewer(user.role)))tabs=[...MAIN_HEADER_TAB_ORDER];
     if(!silent)setLiveDataErr('');
     try{
       const planPromise = roleIsAdmin(user.role)
@@ -2910,9 +2912,13 @@ function MainApp({user,onLogout,onUserUpdate}){
       localStorage.setItem(SELECTED_TABS_KEY,JSON.stringify(normalizeProgrammeScopeTabs(selectedScopeTabs)));
     }catch(_){}
   },[selectedScopeTabs]);
+  const navItems=useMemo(()=>bottomNavItemsForRole(user.role),[user.role]);
   useEffect(()=>{
-    if(!allowedPageIds.has(page))setPage('dashboard');
-  },[page,allowedPageIds]);
+    if(!allowedPageIds.has(page)){
+      const fallback=navItems[0]?.id||'plan';
+      if(fallback!==page)setPage(fallback);
+    }
+  },[page,allowedPageIds,navItems]);
   useEffect(()=>{const onKey=e=>{if(['dashboard','zones','programme','templates','settings','plan'].includes(page))return;if(e.key==='ArrowLeft')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()-1);if(n.getDay()===0)n.setDate(n.getDate()-1);return n});if(e.key==='ArrowRight')setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+1);if(n.getDay()===0)n.setDate(n.getDate()+1);return n})};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[page]);
   function nav(dir){setDate(d=>{const n=new Date(d);n.setDate(n.getDate()+dir);if(n.getDay()===0)n.setDate(n.getDate()+dir);return n})}
   if(loading)return<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:T.bg,color:T.muted,fontFamily:'monospace'}}>Loading...</div>;
@@ -2923,7 +2929,6 @@ function MainApp({user,onLogout,onUserUpdate}){
   const canEditZp=canEditZonesProgramme(user.role);
   const showDateNav=['update','lookahead'].includes(page);
   const sched=tab==='groundworks'?gw:tab==='internals'?int_s:tab===PROJECT_PROGRAMME_TAB?project_s:{};
-  const navItems=bottomNavItemsForRole(user.role);
 
   return<div className="app-root-shell">
     <div className="app-header-bar">
@@ -2940,7 +2945,7 @@ function MainApp({user,onLogout,onUserUpdate}){
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)}/>}
-      {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)} isAdmin={isAdmin}/>}
+      {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
       {page==='templates'&&isAdmin&&<TemplatePage tab={tab} isAdmin={isAdmin} onReload={loadData}/>}
       {page==='settings'&&isAdmin&&<SettingsPage/>}

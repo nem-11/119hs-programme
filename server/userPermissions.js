@@ -1,6 +1,6 @@
 /**
  * Role-based access for API enforcement.
- * Roles: admin | site_editor | gw_subbie | int_subbie | board_viewer
+ * Roles: admin | site_editor | gw_subbie | int_subbie | board_viewer | programme_viewer
  * Legacy: editor → treated as site_editor
  */
 
@@ -44,6 +44,11 @@ function programmeItemsReader(req, res, next) {
 
 function isBoardViewer(role) {
   return role === 'board_viewer';
+}
+
+/** Shared site login — Plan programme grid only, no ticking or editing. */
+function isProgrammeViewerRole(role) {
+  return role === 'programme_viewer';
 }
 
 /** Flatten schedule day JSON into completion keys (matches client UpdPage). */
@@ -162,8 +167,8 @@ function filterZonesAllForUser(db, user, rows) {
 
 function filterCompletionsForUser(db, user, completionsObj) {
   if (isAdminRole(user.role) || isSiteEditorRole(user.role)) return completionsObj || {};
-  /** Board: read-only full completions for dashboard metrics (cannot POST — completionWriter). */
-  if (isBoardViewer(user.role)) return completionsObj || {};
+  /** Board + shared programme viewer: read-only full completions for Plan colouring. */
+  if (isBoardViewer(user.role) || isProgrammeViewerRole(user.role)) return completionsObj || {};
   const out = {};
   Object.entries(completionsObj || {}).forEach(([date, keysObj]) => {
     const filtered = {};
@@ -192,6 +197,7 @@ module.exports = {
   canReadProgrammeItemsApi,
   programmeItemsReader,
   isBoardViewer,
+  isProgrammeViewerRole,
   scheduleDayCompletionKeys,
   completionKeyAllowedForUser,
   assertDrawingTabAllowed,

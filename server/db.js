@@ -2794,6 +2794,122 @@ module.exports = {
     };
   },
 
+  /**
+   * Apply Module Completion from an explicit ordered list (your module number sequence).
+   * Each entry: module name string ("101"), "T4 101", or { tower, name }.
+   */
+  applyModuleBulkScheduleFromExplicitOrder(order, opts = {}) {
+    const dryRun = opts.dryRun === true;
+    const ready = module.exports.ensureModuleCompletionReady();
+    if (ready.error) return { error: ready.error };
+
+    const raw = Array.isArray(order) ? order : [];
+    if (!raw.length) return { error: 'Order list is empty' };
+
+    const allZones = all(
+      `SELECT z.id, z.name, z.tower, d.name AS drawing_name
+       FROM zones z JOIN drawings d ON d.id = z.drawing_id WHERE d.tab = ?`,
+      [mbs.MODULE_HANDOVER_TAB]
+    );
+    const byKey = new Map();
+    for (const z of allZones) {
+      const tw = String(z.tower || '').trim().toUpperCase();
+      const nm = String(z.name || '').trim();
+      byKey.set(`${tw}|${nm}`.toUpperCase(), z);
+      byKey.set(nm.toUpperCase(), z);
+    }
+
+    const resolved = [];
+    const notFound = [];
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i];
+      let tw = '';
+      let nm = '';
+      if (item && typeof item === 'object') {
+        tw = String(item.tower || '').trim().toUpperCase();
+        nm = String(item.name || '').trim();
+      } else {
+        const s = String(item || '').trim();
+        const m = /^((?:T[1-4]))\s+(.+)$/i.exec(s);
+        if (m) {
+          tw = m[1].toUpperCase();
+          nm = m[2].trim();
+        } else {
+          nm = s;
+        }
+      }
+      const z =
+        (tw ? byKey.get(`${tw}|${nm}`.toUpperCase()) : null) || byKey.get(nm.toUpperCase());
+      if (!z) {
+        notFound.push({ order: i + 1, input: item });
+        continue;
+      }
+      resolved.push({
+        order: i + 1,
+        zone_id: Number(z.id),
+        tower: String(z.tower || '').trim(),
+        name: String(z.name || '').trim(),
+        drawing_name: String(z.drawing_name || '').trim(),
+      });
+    }
+    if (!resolved.length) {
+      return { error: 'No modules matched in database', not_found: notFound.slice(0, 30) };
+    }
+    if (notFound.length && !opts.skipMissing) {
+      return {
+        error: `Could not find ${notFound.length} module(s) in database`,
+        not_found: notFound.slice(0, 30),
+        matched: resolved.length,
+      };
+    }
+
+    const startDates = mbs.assignModuleStartDates(resolved.length, {
+      startDate: opts.startDate || mbs.DEFAULT_BULK_START,
+      modulesPerDay: opts.modulesPerDay || mbs.DEFAULT_MODULES_PER_DAY,
+    });
+    const list = resolved.map((r, i) => ({ ...r, start_date: startDates[i] || null }));
+
+    if (dryRun) {
+      return { ok: true, dry_run: true, total: list.length, ordered: list };
+    }
+
+    const tid = ready.template_id;
+    const errors = [];
+    let applied = 0;
+    for (const row of list) {
+      const out = module.exports.scheduleZoneFromTemplateStart(row.zone_id, tid, row.start_date, {
+        startStageIndex: 0,
+        calendar: 'module',
+      });
+      if (out.error) {
+        errors.push({ zone_id: row.zone_id, label: `${row.tower} ${row.name}`, error: out.error });
+        continue;
+      }
+      applied += 1;
+    }
+    return {
+      ok: true,
+      applied,
+      total: list.length,
+      matched: resolved.length,
+      skipped: notFound.length,
+      not_found: notFound.length ? notFound.slice(0, 30) : [],
+      errors,
+      last_start_date: startDates[startDates.length - 1] || null,
+    };
+  },
+
+  /** Apply Levels 1–5 module order from moduleOrderL1L5.js */
+  applyModuleOrderL1L5(opts = {}) {
+    const { MODULE_ORDER_L1_L5 } = require('./moduleOrderL1L5');
+    return module.exports.applyModuleBulkScheduleFromExplicitOrder(MODULE_ORDER_L1_L5, {
+      startDate: opts.startDate,
+      modulesPerDay: opts.modulesPerDay,
+      dryRun: opts.dryRun,
+      skipMissing: opts.skipMissing !== false,
+    });
+  },
+
   /** Programme items for all module_handover zones — for Handover Progress mirror. */
   getModuleProgrammeItemsGrouped() {
     const rows = all(

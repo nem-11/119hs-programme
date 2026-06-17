@@ -26,6 +26,9 @@ npm run dev
 | DBs | DBs | ground1 | GW Viewer |
 | IKEW | IKEW | Ikew1 | INT Viewer |
 | Board | board | board119 | Viewer |
+| 119HS (shared) | 119hs | site119 | Programme view only |
+
+The **119hs** login is for handing out to trades on site: **Plan view only**, all programme tabs, no ticking or editing.
 
 ## Features
 
