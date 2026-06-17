@@ -209,20 +209,20 @@ export function asCompletionsMap(x) {
   return x;
 }
 
-/** True when Update tick exists for this day or programme row status is done. */
+/** True when this programme column day has its own Update tick (or frozen template row status is done). */
 export function isProgrammeItemDoneOnDay(row, dayKey, comp) {
   if (!row) return false;
-  if (String(row.status || '').toLowerCase() === 'done') return true;
-  const ck = completionKeyFromProgrammeRow(row);
   const dk = String(dayKey || '').trim();
-  if (!ck || !dk) return false;
-  return !!comp?.[dk]?.[ck];
+  if (!dk || !dayKeyInItemRange(dk, row.start_date, row.end_date)) return false;
+  const ck = completionKeyFromProgrammeRow(row);
+  if (ck && comp?.[dk]?.[ck]) return true;
+  if (String(row.status || '').toLowerCase() === 'done') return true;
+  return false;
 }
 
 /**
- * Set of completion keys that are ticked on ANY day. Completions are stored per
- * (day, key), but ticks are activity-level ("activities carry the ticks"), so for
- * display an activity is done if it has a tick on any day in the completions map.
+ * Set of completion keys ticked on at least one day. Use isProgrammeItemDoneOnDay for
+ * per-day Plan grid cells; use this set only when you need activity-level "any day ticked".
  */
 export function completionDoneKeySet(comp) {
   const s = new Set();
@@ -250,6 +250,27 @@ export function completionInfoForRow(row, comp) {
     if (entry) return { date: dk, by: entry.by || '', at: entry.at || '' };
   }
   return null;
+}
+
+/** Completion record for a specific programme day column (Plan grid / chip modal). */
+export function completionInfoForRowOnDay(row, dayKey, comp) {
+  const ck = completionKeyFromProgrammeRow(row);
+  const dk = String(dayKey || '').trim();
+  if (!ck || !dk || !comp || typeof comp !== 'object') return null;
+  const entry = comp[dk]?.[ck];
+  if (!entry) return null;
+  return { date: dk, by: entry.by || '', at: entry.at || '' };
+}
+
+/** All scheduled days in the item span carry a tick (or programme row status is done). */
+export function isProgrammeRowFullyDone(row, comp) {
+  if (!row) return false;
+  if (String(row.status || '').toLowerCase() === 'done') return true;
+  const ck = completionKeyFromProgrammeRow(row);
+  if (!ck || !comp || typeof comp !== 'object') return false;
+  const days = scheduleDateKeysBetween(row.start_date, row.end_date);
+  if (!days.length) return false;
+  return days.every((dk) => !!comp[dk]?.[ck]);
 }
 
 /**

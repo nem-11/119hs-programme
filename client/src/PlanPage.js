@@ -18,9 +18,8 @@ import {
   endOfScheduleableSpan,
   nextScheduleableDayKey,
   asCompletionsMap,
-  isProgrammeRowDone,
-  completionDoneKeySet,
-  completionInfoForRow,
+  isProgrammeItemDoneOnDay,
+  completionInfoForRowOnDay,
 } from './planUtils';
 import { parseZoneGeometry, geomBBox } from './zoneGeom';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
@@ -425,9 +424,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     });
   }, [rowsForScope, towerWhitelist, floorWhitelist]);
 
-  /** Activity-level tick set — a tick on any day marks the activity done everywhere. */
-  const doneKeys = useMemo(() => completionDoneKeySet(comp), [comp]);
-
   const towersInView = useMemo(() => {
     const s = new Set();
     rowsForScope.forEach((r) => {
@@ -585,8 +581,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         by.set(id, r);
         continue;
       }
-      const curDone = isProgrammeRowDone(cur, comp, doneKeys);
-      const nextDone = isProgrammeRowDone(r, comp, doneKeys);
+      const curDone = isProgrammeItemDoneOnDay(cur, vizDate, comp);
+      const nextDone = isProgrammeItemDoneOnDay(r, vizDate, comp);
       if (curDone && !nextDone) {
         by.set(id, r);
         continue;
@@ -594,7 +590,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       if (String(r.start_date) < String(cur.start_date)) by.set(id, r);
     }
     return by;
-  }, [filteredRows, vizDate, comp, doneKeys]);
+  }, [filteredRows, vizDate, comp]);
 
   /** One row per zone on this drawing with programme that day: tower + zone - activity. */
   const drawingDayLegendEntries = useMemo(() => {
@@ -609,12 +605,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       const zn = String(z?.name ?? r.zone_name ?? '').trim();
       const zonePart = [tw, zn].filter(Boolean).join(' ');
       const label = zonePart ? `${zonePart} - ${r.activity_name}` : String(r.activity_name);
-      const done = isProgrammeRowDone(r, comp, doneKeys);
+      const done = isProgrammeItemDoneOnDay(r, vizDate, comp);
       out.push({ key: zid, label, activity_name: r.activity_name, done });
     });
     out.sort((a, b) => a.label.localeCompare(b.label));
     return out;
-  }, [zoneDayActivity, drawZones, vizDate, comp, doneKeys]);
+  }, [zoneDayActivity, drawZones, vizDate, comp]);
 
   const drawingZoneColorMeta = useMemo(() => {
     const sorted = [...drawZones].sort((a, b) => Number(a.id) - Number(b.id));
@@ -1457,10 +1453,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                               >
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
                                   {hits.map((it) => {
-                                    const done = isProgrammeRowDone(it, comp, doneKeys);
+                                    const done = isProgrammeItemDoneOnDay(it, dk, comp);
                                     const label = abbrevActivity(it.activity_name);
                                     const zLab = zoneRowLabel(z);
-                                    const compInfo = done ? completionInfoForRow(it, comp) : null;
+                                    const compInfo = done ? completionInfoForRowOnDay(it, dk, comp) : null;
                                     return (
                                       <PlanActivityChip
                                         key={it.id}
@@ -1521,7 +1517,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               emptyMessage="No drawing selected for current scope."
               styleForZone={(z) => {
                 const hit = zoneDayActivity.get(Number(z.id));
-                const done = isProgrammeRowDone(hit, comp, doneKeys);
+                const done = isProgrammeItemDoneOnDay(hit, vizDate, comp);
                 const zi = drawingZoneColorMeta.byId.get(Number(z.id)) ?? 0;
                 return planZoneDrawingStyles(zi, { done, active: !!hit });
               }}

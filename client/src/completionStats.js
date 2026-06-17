@@ -1,14 +1,12 @@
-import { completionKeyFromProgrammeRow } from './planUtils';
+import { completionKeyFromProgrammeRow, scheduleDateKeysBetween } from './planUtils';
 
 function normaliseDayKey(dayKey) {
   return String(dayKey || '').trim();
 }
 
 /**
- * Activity-level "done as of a date": the activity is done if its status is done, or it
- * carries a completion tick on any day on or before asOf. Ticks are stored per (day, key),
- * but a tick on any day marks the activity complete — we do not require the tick to fall
- * inside the activity's scheduled window, so ticked activities always register.
+ * Activity fully done as of a date: status done, or every scheduled day in the span
+ * (on or before asOf) has its own completion tick.
  */
 function rowDoneAsOf(row, asOfDate, comp) {
   if (!row) return false;
@@ -16,11 +14,11 @@ function rowDoneAsOf(row, asOfDate, comp) {
   const ck = completionKeyFromProgrammeRow(row);
   if (!ck || !comp || typeof comp !== 'object') return false;
   const asOf = normaliseDayKey(asOfDate);
-  for (const dk of Object.keys(comp)) {
-    if (!comp[dk]?.[ck]) continue;
-    if (!asOf || normaliseDayKey(dk) <= asOf) return true;
-  }
-  return false;
+  const days = scheduleDateKeysBetween(row.start_date, row.end_date).filter(
+    (dk) => !asOf || normaliseDayKey(dk) <= asOf
+  );
+  if (!days.length) return false;
+  return days.every((dk) => !!comp[dk]?.[ck]);
 }
 
 export function zoneCompletionsAsOf(date, zones, programmeRows, comp) {

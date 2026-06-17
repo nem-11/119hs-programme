@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import * as api from './api';
 import { T, S } from './uiTheme';
 import { formatShort } from './constants';
-import { completionKeyFromProgrammeRow, isProgrammeRowDone } from './planUtils';
+import { completionKeyFromProgrammeRow, isProgrammeItemDoneOnDay } from './planUtils';
 
 function formatPlanDate(key) {
   const k = String(key || '').trim();
@@ -196,7 +196,7 @@ export default function ActivityChipEditModal({
   const [compBusy, setCompBusy] = useState(false);
 
   const itemId = row ? Number(row.id) : null;
-  const isComplete = isProgrammeRowDone(row, comp);
+  const isComplete = isProgrammeItemDoneOnDay(row, completionDayKey, comp);
 
   useEffect(() => {
     if (!open) return;
@@ -336,17 +336,8 @@ export default function ActivityChipEditModal({
     setErr('');
     try {
       if (isComplete) {
-        // Activity-level untick: clear every day that carries a tick for this activity.
-        const days = comp && typeof comp === 'object'
-          ? Object.keys(comp).filter((d) => comp[d] && comp[d][ck])
-          : [];
-        if (days.length) {
-          for (const d of days) {
-            await api.toggleCompletion(d, ck, userName || '');
-          }
-        } else if (dk) {
-          await api.toggleCompletion(dk, ck, userName || '');
-        }
+        if (!dk) return;
+        await api.toggleCompletion(dk, ck, userName || '');
       } else {
         if (!dk) return;
         await api.toggleCompletion(dk, ck, userName || '');
@@ -467,7 +458,7 @@ export default function ActivityChipEditModal({
               onChange={() => void toggleComplete()}
               style={{ width: 18, height: 18, flexShrink: 0 }}
             />
-            Mark as complete
+            Mark this day complete
           </label>
         )}
 

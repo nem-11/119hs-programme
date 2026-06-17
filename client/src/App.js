@@ -27,7 +27,7 @@ import { zoneCompletionsAsOf } from './completionStats';
 import { MODULE_STAGES, MODULE_SEQUENCE, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
-import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey, isProgrammeRowDone } from './planUtils';
+import { calendarDaysBetween, scheduleDateKeysBetween, isNonWorkingPlanDayKey, normalizeScheduleStartKey, isProgrammeRowFullyDone } from './planUtils';
 import NonWorkingAnchorDateWarning from './NonWorkingAnchorDateWarning';
 
 /** API returns `{ error }` with HTTP 4xx/5xx instead of throwing; treat as empty payload. */
@@ -303,7 +303,7 @@ function overallProjectCompletion(gw, int_s, project_s, comp) {
 }
 
 /** Activity-level completion from the Plan programme: one unit per scheduled activity,
- *  done when ticked on any day (or status done). Matches the Plan tick model. */
+ *  done when every scheduled day in the span is ticked (or status done). Matches Plan. */
 function activityCompletionForTab(planRows, comp, drawingTab) {
   let total = 0,
     done = 0;
@@ -315,7 +315,7 @@ function activityCompletionForTab(planRows, comp, drawingTab) {
     if (!tw || !zn || !act) continue;
     if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
     total++;
-    if (isProgrammeRowDone(r, comp)) done++;
+    if (isProgrammeRowFullyDone(r, comp)) done++;
   }
   return { total, done };
 }
@@ -333,7 +333,7 @@ function towerCompletionForTab(planRows, comp, drawingTab) {
     if (!byTower.has(tw)) byTower.set(tw, { tower: tw, total: 0, done: 0 });
     const e = byTower.get(tw);
     e.total++;
-    if (isProgrammeRowDone(r, comp)) e.done++;
+    if (isProgrammeRowFullyDone(r, comp)) e.done++;
   }
   return [...byTower.values()]
     .map((e) => ({ ...e, pct: e.total > 0 ? Math.round((e.done / e.total) * 100) : 0 }))
@@ -1553,7 +1553,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
       if(!endK)continue;
       const endOrd=milestoneDayOrd(endK);
       if(endOrd==null)continue;
-      const complete=isProgrammeRowDone(r,comp);
+      const complete=isProgrammeRowFullyDone(r,comp);
       const daysUntil=endOrd-todayOrd;
       let severity=null;
       let kind='';
@@ -1613,7 +1613,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         const endK = String(r.end_date || '').trim();
         if (!endK || endK > todayK) continue;
         expectedDone++;
-        if (isProgrammeRowDone(r, comp)) actualDone++;
+        if (isProgrammeRowFullyDone(r, comp)) actualDone++;
       }
       const delta = actualDone - expectedDone;
       return { expectedDone, actualDone, delta };
