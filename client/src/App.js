@@ -320,6 +320,23 @@ function activityCompletionForTab(planRows, comp, drawingTab) {
   return { total, done };
 }
 
+/** Module programme rows use module_handover drawings but module_programme scope. */
+function activityCompletionForScope(planRows, comp, scopeTab) {
+  let total = 0,
+    done = 0;
+  for (const r of planRows || []) {
+    if (!r || scopeForRow(r) !== scopeTab) continue;
+    const tw = String(r.tower || '').trim();
+    const zn = String(r.zone_name || '').trim();
+    const act = String(r.activity_name || '').trim();
+    if (!tw || !zn || !act) continue;
+    if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
+    total++;
+    if (isProgrammeRowFullyDone(r, comp)) done++;
+  }
+  return { total, done };
+}
+
 /** Per-tower activity completion for one programme tab (same tick model as activityCompletionForTab). */
 function towerCompletionForTab(planRows, comp, drawingTab) {
   const byTower = new Map();
@@ -344,10 +361,11 @@ function overallActivityCompletion(planRows, comp) {
   const g = activityCompletionForTab(planRows, comp, 'groundworks');
   const i = activityCompletionForTab(planRows, comp, 'internals');
   const p = activityCompletionForTab(planRows, comp, PROJECT_PROGRAMME_TAB);
-  const total = g.total + i.total + p.total;
-  const done = g.done + i.done + p.done;
+  const m = activityCompletionForScope(planRows, comp, MODULE_PROGRAMME_TAB);
+  const total = g.total + i.total + p.total + m.total;
+  const done = g.done + i.done + p.done + m.done;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  return { total, done, pct, gw: g, int: i, project: p };
+  return { total, done, pct, gw: g, int: i, project: p, module: m };
 }
 /** Human-readable zone line for Update screen section headers (field context). */
 function zoneSubtitleForSection(sec,seq,tab){
@@ -390,7 +408,7 @@ function CompletionRing({pct,done,total}){
       <div style={{fontSize:11,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:6}}>Overall progress</div>
       <div style={{fontSize:17,fontWeight:700,color:T.text,marginBottom:8,letterSpacing:'-0.02em',lineHeight:1.25}}>Programme completion</div>
       <div style={{fontSize:13,color:T.muted,lineHeight:1.55,maxWidth:340}}>
-        {total>0?`${done} of ${total} scheduled activities are ticked off across Groundworks, Internals, and Project programme (matches Plan).`:'Once activities are scheduled on site days, overall completion appears here.'}
+        {total>0?`${done} of ${total} scheduled activities are ticked off across Groundworks, Internals, Project programme, and Modules (matches Plan).`:'Once activities are scheduled on site days, overall completion appears here.'}
       </div>
       {total===0&&<div style={{fontSize:12,color:T.faint,marginTop:10,lineHeight:1.45}}>Use <strong style={{color:T.muted,fontWeight:600}}>Update</strong> after programme data is in place.</div>}
       {total>0&&<div style={{marginTop:14,height:4,borderRadius:4,background:'rgba(26,26,46,0.06)',overflow:'hidden',maxWidth:280}}>
@@ -1380,7 +1398,7 @@ function DashboardModuleSection(){
   );
 }
 
-function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataErr}){
+function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActivate,liveDataErr}){
   const today=new Date();
   const[metricPlanRows,setMetricPlanRows]=useState([]);
   const[milestones,setMilestones]=useState([]);
@@ -1540,6 +1558,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   const gwRem=Math.max(0,ov.gw.total-ov.gw.done);
   const intRem=Math.max(0,ov.int.total-ov.int.done);
   const projRem=Math.max(0,ov.project.total-ov.project.done);
+  const modRem=Math.max(0,ov.module.total-ov.module.done);
 
   const riskList=useMemo(()=>{
     const tk=dateKey(new Date());
@@ -1601,10 +1620,11 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
   const gwPct = ov.gw.total > 0 ? Math.round((ov.gw.done / ov.gw.total) * 100) : 0;
   const intPct = ov.int.total > 0 ? Math.round((ov.int.done / ov.int.total) * 100) : 0;
   const projPct = ov.project.total > 0 ? Math.round((ov.project.done / ov.project.total) * 100) : 0;
+  const modPct = ov.module.total > 0 ? Math.round((ov.module.done / ov.module.total) * 100) : 0;
 
   const sectionPace = useMemo(() => {
     const todayK = dateKey(new Date());
-    function calcPace(tab) {
+    function calcPaceDrawingTab(tab) {
       let expectedDone = 0, actualDone = 0;
       for (const r of metricPlanRows) {
         if (String(r.drawing_tab || '') !== tab) continue;
@@ -1620,10 +1640,27 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
       const delta = actualDone - expectedDone;
       return { expectedDone, actualDone, delta };
     }
+    function calcPaceScope(scopeTab) {
+      let expectedDone = 0, actualDone = 0;
+      for (const r of metricPlanRows) {
+        if (scopeForRow(r) !== scopeTab) continue;
+        const tw = String(r.tower || '').trim();
+        const zn = String(r.zone_name || '').trim();
+        const act = String(r.activity_name || '').trim();
+        if (!tw || !zn || !act) continue;
+        const endK = String(r.end_date || '').trim();
+        if (!endK || endK > todayK) continue;
+        expectedDone++;
+        if (isProgrammeRowFullyDone(r, comp)) actualDone++;
+      }
+      const delta = actualDone - expectedDone;
+      return { expectedDone, actualDone, delta };
+    }
     return {
-      gw: calcPace('groundworks'),
-      int: calcPace('internals'),
-      project: calcPace(PROJECT_PROGRAMME_TAB),
+      gw: calcPaceDrawingTab('groundworks'),
+      int: calcPaceDrawingTab('internals'),
+      project: calcPaceDrawingTab(PROJECT_PROGRAMME_TAB),
+      module: calcPaceScope(MODULE_PROGRAMME_TAB),
     };
   }, [metricPlanRows, comp]);
 
@@ -1637,6 +1674,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
     {k:'gw',glyph:'◇',label:'Groundworks (remaining)',sub:`${ov.gw.done} of ${ov.gw.total} GW activities ticked · ${gwPct}% complete`,value:String(gwRem),accent:'66,133,244',bg:'rgba(66,133,244,0.06)'},
     {k:'int',glyph:'◆',label:'Internals (remaining)',sub:`${ov.int.done} of ${ov.int.total} INT activities ticked · ${intPct}% complete`,value:String(intRem),accent:'142,68,173',bg:'rgba(142,68,173,0.07)'},
     {k:'proj',glyph:'▣',label:'Project programme (remaining)',sub:`${ov.project.done} of ${ov.project.total} project activities ticked · ${projPct}% complete`,value:String(projRem),accent:'230,126,34',bg:'rgba(230,126,34,0.07)'},
+    {k:'mod',glyph:'▦',label:'Modules (remaining)',sub:`${ov.module.done} of ${ov.module.total} module activities ticked · ${modPct}% complete`,value:String(modRem),accent:'46,178,96',bg:'rgba(46,178,96,0.07)'},
   ];
   return<div className="dashboard-page-root" style={{
     flex:1,
@@ -1773,6 +1811,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
           {key:'gw',label:'Groundworks',pct:gwPct,done:ov.gw.done,total:ov.gw.total,pace:sectionPace.gw,accent:'66,133,244'},
           {key:'int',label:'Internals',pct:intPct,done:ov.int.done,total:ov.int.total,pace:sectionPace.int,accent:'142,68,173'},
           {key:'proj',label:'Project programme',pct:projPct,done:ov.project.done,total:ov.project.total,pace:sectionPace.project,accent:'230,126,34'},
+          {key:'mod',label:'Modules',pct:modPct,done:ov.module.done,total:ov.module.total,pace:sectionPace.module,accent:'46,178,96'},
         ].map((sec)=>{
           const {delta,expectedDone,actualDone}=sec.pace;
           const paceLabel=expectedDone===0?null:delta<0?`${Math.abs(delta)} behind plan`:delta>0?`${delta} ahead of plan`:'On plan';
@@ -1832,6 +1871,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
         )}
       </section>
 
+      {!isBoardViewer && (
       <section style={{
         marginBottom:18,
         padding:'16px 18px 14px',
@@ -1895,6 +1935,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
           </div>
         )}
       </section>
+      )}
 
       <section style={{
         padding:'18px 20px',
@@ -2060,7 +2101,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,userTabs,onActivate,liveDataE
 
       <DashboardModuleSection />
     </div>
-    <PageFooterHint>Programme snapshot — completion across Groundworks, Internals, and Project programme.</PageFooterHint>
+    <PageFooterHint>Programme snapshot — completion across Groundworks, Internals, Project programme, and Modules.</PageFooterHint>
   </div>;
 }
 
@@ -2944,7 +2985,7 @@ function MainApp({user,onLogout,onUserUpdate}){
       <button onClick={()=>nav(-1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>←</button><div style={{fontSize:15,fontWeight:700,color:T.text}}>{formatDate(date)}</div><button onClick={()=>nav(1)} style={{...S.btn,fontSize:16,padding:'8px 18px'}}>→</button>
     </div>}
     <div className="app-main-content">
-      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} userTabs={user.tabs} onActivate={loadData} liveDataErr={liveDataErr}/>}
+      {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)} userTabs={user.tabs} onActivate={loadData} liveDataErr={liveDataErr}/>}
       {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
       {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
