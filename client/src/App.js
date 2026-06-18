@@ -1937,6 +1937,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
       </section>
       )}
 
+      {!isBoardViewer && (
       <section style={{
         padding:'18px 20px',
         borderRadius:16,
@@ -2091,6 +2092,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
           </div>
         </>}
       </section>
+      )}
 
       <DashboardCompletionSection
         userTabs={userTabs}
