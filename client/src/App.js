@@ -23,7 +23,7 @@ import PlanPage from './PlanPage';
 import ModuleHandoverPage from './ModuleHandoverPage';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
-import { zoneCompletionsAsOf } from './completionStats';
+import { zoneCompletionsAsOf, programmeCompletionBreakdown } from './completionStats';
 import { MODULE_STAGES, MODULE_SEQUENCE, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
@@ -337,24 +337,32 @@ function activityCompletionForScope(planRows, comp, scopeTab) {
   return { total, done };
 }
 
-/** Per-tower activity completion for one programme tab (same tick model as activityCompletionForTab). */
-function towerCompletionForTab(planRows, comp, drawingTab) {
-  const byTower = new Map();
-  for (const r of planRows || []) {
-    if (!r || String(r.drawing_tab || '') !== drawingTab) continue;
-    const tw = String(r.tower || '').trim();
-    const zn = String(r.zone_name || '').trim();
-    const act = String(r.activity_name || '').trim();
-    if (!tw || !zn || !act) continue;
-    if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
-    if (!byTower.has(tw)) byTower.set(tw, { tower: tw, total: 0, done: 0 });
-    const e = byTower.get(tw);
-    e.total++;
-    if (isProgrammeRowFullyDone(r, comp)) e.done++;
+({ items, accent }) {
+  if (!items?.length) {
+    return <p style={{ margin: 0, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>No programme activities yet.</p>;
   }
-  return [...byTower.values()]
-    .map((e) => ({ ...e, pct: e.total > 0 ? Math.round((e.done / e.total) * 100) : 0 }))
-    .sort((a, b) => a.tower.localeCompare(b.tower, undefined, { numeric: true, sensitivity: 'base' }));
+  return items.map((row) => (
+    <div key={row.label} style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: T.text }}>{row.label}</span>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: `rgba(${accent},0.95)` }}>{row.pct}%</span>
+          <span style={{ fontSize: 10, color: T.muted }}>{row.done}/{row.total}</span>
+        </div>
+      </div>
+      <div style={{ height: 6, borderRadius: 3, background: 'rgba(26,26,46,0.07)', overflow: 'hidden' }}>
+        <div
+          style={{
+            height: '100%',
+            borderRadius: 3,
+            width: `${row.pct}%`,
+            background: `rgba(${accent},0.75)`,
+            transition: 'width 0.4s ease',
+          }}
+        />
+      </div>
+    </div>
+  ));
 }
 
 function overallActivityCompletion(planRows, comp) {
@@ -1664,9 +1672,33 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
     };
   }, [metricPlanRows, comp]);
 
-  /** Per-tower completion for the internals programme. */
-  const intTowerStats = useMemo(
-    () => towerCompletionForTab(metricPlanRows, comp, 'internals'),
+  const sectionBreakdowns = useMemo(
+    () => [
+      {
+        key: 'gw',
+        label: 'Groundworks',
+        accent: '66,133,244',
+        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => String(r.drawing_tab || '') === 'groundworks'),
+      },
+      {
+        key: 'int',
+        label: 'Internals',
+        accent: '142,68,173',
+        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => String(r.drawing_tab || '') === 'internals'),
+      },
+      {
+        key: 'proj',
+        label: 'Project programme',
+        accent: '230,126,34',
+        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => String(r.drawing_tab || '') === PROJECT_PROGRAMME_TAB),
+      },
+      {
+        key: 'mod',
+        label: 'Modules',
+        accent: '46,178,96',
+        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => scopeForRow(r) === MODULE_PROGRAMME_TAB),
+      },
+    ],
     [metricPlanRows, comp]
   );
 
@@ -1848,27 +1880,21 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
         boxShadow:shadowCard,
       }}>
         <div style={{marginBottom:12}}>
-          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>Internals</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by tower</div>
+          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>By tower &amp; floor</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by zone level</div>
+          <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.45}}>
+            Each zone is 100% when every activity in that zone is ticked. Adding activities later extends the finish line and updates these figures automatically.
+          </div>
         </div>
-        {intTowerStats.length===0?(
-          <p style={{margin:0,fontSize:12,color:T.muted,lineHeight:1.5}}>No internals programme activities to report yet.</p>
-        ):(
-          intTowerStats.map((tw)=>(
-            <div key={tw.tower} style={{marginBottom:12}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5}}>
-                <span style={{fontSize:12,fontWeight:700,color:T.text}}>{tw.tower}</span>
-                <div style={{display:'flex',gap:10,alignItems:'center'}}>
-                  <span style={{fontSize:12,fontWeight:800,color:'rgba(142,68,173,0.95)'}}>{tw.pct}%</span>
-                  <span style={{fontSize:10,color:T.muted}}>{tw.done}/{tw.total}</span>
-                </div>
-              </div>
-              <div style={{height:6,borderRadius:3,background:'rgba(26,26,46,0.07)',overflow:'hidden'}}>
-                <div style={{height:'100%',borderRadius:3,width:`${tw.pct}%`,background:'rgba(142,68,173,0.75)',transition:'width 0.4s ease'}}/>
-              </div>
-            </div>
-          ))
-        )}
+        {sectionBreakdowns.map((sec, idx)=>(
+          <div key={sec.key} style={{marginBottom:idx<sectionBreakdowns.length-1?18:0,paddingBottom:idx<sectionBreakdowns.length-1?14:0,borderBottom:idx<sectionBreakdowns.length-1?`1px solid rgba(26,26,46,0.07)`:'none'}}>
+            <div style={{fontSize:11,fontWeight:800,color:`rgba(${sec.accent},0.92)`,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:10}}>{sec.label}</div>
+            <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:6}}>By tower</div>
+            <DashboardBreakdownBars items={sec.towers} accent={sec.accent}/>
+            <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.1em',margin:'12px 0 6px'}}>By floor</div>
+            <DashboardBreakdownBars items={sec.floors} accent={sec.accent}/>
+          </div>
+        ))}
       </section>
 
       {!isBoardViewer && (
