@@ -21,6 +21,7 @@ export default function PlanActivityChip({
   coarsePointer,
   label,
   zoneLabel,
+  compact = false,
   setDragState,
   setInspect,
   onOpenEdit,
@@ -91,10 +92,12 @@ export default function PlanActivityChip({
 
   return (
     <div
-      title={coarsePointer ? undefined : it.activity_name}
-      draggable={isAdmin && !done}
+      className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
+      title={coarsePointer || compact ? it.activity_name : undefined}
+      draggable={isAdmin && !done && !compact}
       onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
       onDoubleClick={(e) => {
+        if (compact) return;
         e.preventDefault();
         clearClickTimer();
         onOpenEdit({
@@ -121,21 +124,22 @@ export default function PlanActivityChip({
         background: actColor(it.activity_name, done ? 0.35 : 0.88),
         color: '#1a1a2e',
         fontWeight: 700,
-        fontSize: isMobile ? 9 : 10,
-        lineHeight: 1.15,
-        padding: '4px 5px',
-        borderRadius: 4,
+        fontSize: compact ? undefined : isMobile ? 9 : 10,
+        lineHeight: compact ? 1 : 1.15,
+        padding: compact ? undefined : '4px 5px',
+        borderRadius: compact ? 2 : 4,
         opacity: done ? 0.72 : 1,
         display: 'flex',
         alignItems: 'center',
-        gap: 4,
+        gap: compact ? 0 : 4,
         WebkitPrintColorAdjust: 'exact',
         printColorAdjust: 'exact',
-        cursor: coarsePointer ? 'pointer' : isAdmin ? (done ? 'pointer' : 'grab') : 'default',
+        cursor: compact ? 'default' : coarsePointer ? 'pointer' : isAdmin ? (done ? 'pointer' : 'grab') : 'default',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}
       onClick={async (e) => {
+        if (compact) return;
         if (longPressTriggeredRef.current) {
           longPressTriggeredRef.current = false;
           e.preventDefault();
@@ -162,6 +166,9 @@ export default function PlanActivityChip({
         }, CLICK_DELAY_MS);
       }}
     >
+      {compact ? (
+        <span className="plan-activity-chip__abbrev">{label}</span>
+      ) : (
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {done && (
@@ -184,6 +191,7 @@ export default function PlanActivityChip({
           </span>
         )}
       </div>
+      )}
     </div>
   );
 }

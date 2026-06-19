@@ -106,12 +106,12 @@ const PDF_PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
  * print geometry — not getBoundingClientRect. Row height matches the rendered
  * grid cell (36px) so capacity tracks what actually fits per sheet.
  */
-const PRINT_ROW_PX = 36;
-const PRINT_TABLE_HEAD_PX = mmToPrintPx(11);
-const PRINT_PAGE_TITLE_PX = mmToPrintPx(18);
-const PRINT_LEGEND_PX = mmToPrintPx(10);
-const PRINT_ZONE_COL_PX = mmToPrintPx(34);
-const PRINT_DAY_COL_PX = mmToPrintPx(11);
+const PRINT_ROW_PX = 28;
+const PRINT_TABLE_HEAD_PX = mmToPrintPx(9);
+const PRINT_PAGE_TITLE_PX = mmToPrintPx(14);
+const PRINT_LEGEND_PX = mmToPrintPx(14);
+const PRINT_ZONE_COL_PX = mmToPrintPx(32);
+const PRINT_DAY_COL_PX = mmToPrintPx(9);
 
 /**
  * Derive how many zone rows and day columns fit on one sheet from the physical
@@ -125,6 +125,26 @@ function paperCapacity(paper, orientation, { includeHeader = true, includeLegend
   const cols = Math.max(1, Math.floor((widthPx - PRINT_ZONE_COL_PX) / PRINT_DAY_COL_PX));
   const rows = Math.max(1, Math.floor((heightPx - overheadPx) / PRINT_ROW_PX));
   return { rows, cols };
+}
+
+/** Uniform cell sizes for a chosen rows × columns layout on the printable area. */
+function printGridGeometry(
+  paper,
+  orientation,
+  rowsPerPage,
+  colsPerPage,
+  { includeHeader = true, includeLegend = true } = {}
+) {
+  const { widthPx, heightPx } = printableAreaPx(paper, orientation);
+  let overheadPx = PRINT_TABLE_HEAD_PX;
+  if (includeHeader) overheadPx += PRINT_PAGE_TITLE_PX;
+  if (includeLegend) overheadPx += PRINT_LEGEND_PX;
+  const rows = Math.max(1, sanitizePerPage(rowsPerPage, 1));
+  const cols = Math.max(1, sanitizePerPage(colsPerPage, 1));
+  const rowPx = Math.max(16, Math.floor((heightPx - overheadPx) / rows));
+  const zoneColPx = PRINT_ZONE_COL_PX;
+  const dayColPx = Math.max(10, Math.floor((widthPx - zoneColPx) / cols));
+  return { rowPx, zoneColPx, dayColPx, rows, cols };
 }
 
 function sanitizePerPage(value, fallback) {
@@ -144,6 +164,24 @@ function chunkArray(items, size) {
     chunks.push(items.slice(i, i + n));
   }
   return chunks.length ? chunks : [[]];
+}
+
+function formatPrintDayHeader(dayKey) {
+  const d = new Date(dayKey + 'T12:00:00');
+  const D = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+  return `${D[d.getDay()]} ${d.getDate()}`;
+}
+
+function legendActsForPage(pageRows, pageCols) {
+  const names = new Set();
+  for (const z of pageRows) {
+    for (const dk of pageCols) {
+      for (const it of z.cells[dk] || []) {
+        if (it.activity_name) names.add(it.activity_name);
+      }
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
 }
 
 function csvEscape(v) {
@@ -326,20 +364,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     window.addEventListener('afterprint', afterPrint);
     return () => window.removeEventListener('afterprint', afterPrint);
   }, []);
-
-  /** Wait for paginated DOM before opening the print dialog (single rAF races React commit). */
-  useEffect(() => {
-    if (!printLayout || !printPendingRef.current) return undefined;
-    printPendingRef.current = false;
-    let innerId = 0;
-    const outerId = requestAnimationFrame(() => {
-      innerId = requestAnimationFrame(() => window.print());
-    });
-    return () => {
-      cancelAnimationFrame(outerId);
-      cancelAnimationFrame(innerId);
-    };
-  }, [printLayout]);
 
   const permittedTabs = useMemo(
     () => buildPermittedScopeTabs({ userTabs, planRows: rows, isAdmin }),
@@ -845,6 +869,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     });
     const rowsPerPage = pdfOpts.fit_to_paper ? cap.rows : sanitizePerPage(pdfOpts.rows_per_page, cap.rows);
     const colsPerPage = pdfOpts.fit_to_paper ? cap.cols : sanitizePerPage(pdfOpts.cols_per_page, cap.cols);
+    const geometry = printGridGeometry(pdfOpts.paper, pdfOpts.orientation, rowsPerPage, colsPerPage, {
+      includeHeader: pdfOpts.header,
+      includeLegend: pdfOpts.legend,
+    });
     return {
       showWeekends: pdfOpts.showWeekends,
       legend: pdfOpts.legend,
@@ -853,11 +881,17 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       orientation: pdfOpts.orientation,
       rowsPerPage,
       colsPerPage,
+      geometry,
       ...extra,
     };
   }
 
   function handlePrintClick() {
+    setPdfOpen(true);
+  }
+
+  function confirmPrint() {
+    setPdfOpen(false);
     runPrint(printLayoutFromOpts({ emptyZones: false }));
   }
 
@@ -915,6 +949,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   });
   const activeRowsPerPage = sanitizePerPage(printLayout?.rowsPerPage ?? pdfOpts.rows_per_page, autoCapacity.rows);
   const activeColsPerPage = sanitizePerPage(printLayout?.colsPerPage ?? pdfOpts.cols_per_page, autoCapacity.cols);
+  const printGeometry =
+    printLayout?.geometry ||
+    printGridGeometry(pdfOpts.paper, pdfOpts.orientation, activeRowsPerPage, activeColsPerPage, {
+      includeHeader: pdfOpts.header,
+      includeLegend: pdfOpts.legend,
+    });
   /**
    * Each printed sheet is a (row-chunk × column-chunk) tile so neither zones
    * nor day columns ever overflow a page. On screen (no printLayout) the whole
@@ -932,6 +972,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     }
     return pages.length ? pages : [{ rows: zoneBlocks, cols: dayColumns }];
   }, [zoneBlocks, dayColumns, printLayout, activeRowsPerPage, activeColsPerPage]);
+
+  /** Wait for paginated DOM before opening the print dialog. */
+  useEffect(() => {
+    if (!printLayout || !printPendingRef.current) return undefined;
+    printPendingRef.current = false;
+    const id = window.setTimeout(() => window.print(), 350);
+    return () => window.clearTimeout(id);
+  }, [printLayout, printPages.length]);
+
   const clash = useMemo(() => detectClash(rows), [rows]);
 
   const headerSummaryChips = useMemo(() => {
@@ -1254,11 +1303,29 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
             {printPages.map((page, pageIndex, pages) => {
               const pageRows = page.rows;
               const pageCols = page.cols;
+              const pageLegendActs = printLayout ? legendActsForPage(pageRows, pageCols) : legendActs;
               const isLastPrintPage = pageIndex === pages.length - 1;
+              const pageRowLabel =
+                printLayout && pageRows.length
+                  ? `${zoneRowLabel(pageRows[0])} – ${zoneRowLabel(pageRows[pageRows.length - 1])}`
+                  : '';
+              const pageColLabel =
+                printLayout && pageCols.length
+                  ? `${formatPrintDayHeader(pageCols[0])} – ${formatPrintDayHeader(pageCols[pageCols.length - 1])}`
+                  : '';
               return (
                 <div
                   key={`plan-print-page-${pageIndex}`}
                   className={printLayout ? `plan-print-page${isLastPrintPage ? ' plan-print-page--last' : ''}` : undefined}
+                  style={
+                    printLayout
+                      ? {
+                          '--plan-print-row-px': `${printGeometry.rowPx}px`,
+                          '--plan-print-day-col-px': `${printGeometry.dayColPx}px`,
+                          '--plan-print-zone-col-px': `${printGeometry.zoneColPx}px`,
+                        }
+                      : undefined
+                  }
                 >
                   {printLayout && printLayout.header && (
                     <div className="plan-print-page-header" style={{ padding: '0 0 6px' }}>
@@ -1267,8 +1334,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                         {formatShort(new Date(endDate + 'T12:00:00'))} {new Date(endDate + 'T12:00:00').getFullYear()}
                       </div>
                       <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
-                        Printed {formatShort(new Date())} {new Date().getFullYear()} · {dayColumns.length} day column(s)
+                        Printed {formatShort(new Date())} {new Date().getFullYear()}
                         {pages.length > 1 ? ` · Sheet ${pageIndex + 1} of ${pages.length}` : ''}
+                        {pageRowLabel ? ` · ${pageRows.length} zone(s): ${pageRowLabel}` : ''}
+                        {pageColLabel ? ` · ${pageColLabel}` : ''}
                       </div>
                     </div>
                   )}
@@ -1278,27 +1347,37 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                       borderCollapse: 'separate',
                       borderSpacing: 0,
                       fontSize: isMobile ? 10 : 11,
-                      minWidth: 480,
+                      minWidth: printLayout ? '100%' : 480,
+                      width: printLayout ? '100%' : undefined,
+                      tableLayout: printLayout ? 'fixed' : undefined,
                       background: T.surface,
                       border: `1px solid ${T.hairline}`,
                       borderRadius: 8,
                     }}
                   >
+                    {printLayout && (
+                      <colgroup>
+                        <col className="plan-print-zone-col" />
+                        {pageCols.map((dk) => (
+                          <col key={dk} className="plan-print-day-col" />
+                        ))}
+                      </colgroup>
+                    )}
                     <thead className="plan-date-head">
                       <tr>
                         <th
                           className="plan-zone-col plan-zone-col--head"
                           style={{
                             textAlign: 'left',
-                            padding: '8px 10px',
+                            padding: printLayout ? '2px 4px' : '8px 10px',
                             borderBottom: `1px solid ${T.hairline}`,
                             borderRight: `1px solid ${T.hairline}`,
                             background: T.surface,
                             fontWeight: 700,
                             color: T.text,
-                            minWidth: 140,
-                            maxWidth: 220,
-                            width: 180,
+                            minWidth: printLayout ? undefined : 140,
+                            maxWidth: printLayout ? undefined : 220,
+                            width: printLayout ? undefined : 180,
                           }}
                         >
                           Zone
@@ -1311,33 +1390,41 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                             <th
                               key={dk}
                               className="plan-date-col"
-                              role="button"
-                              tabIndex={0}
-                              title="Jump date range to start on this day (same number of columns)"
-                              onClick={() => jumpGridToDayColumn(dk)}
-                              onKeyDown={(ev) => {
-                                if (ev.key === 'Enter' || ev.key === ' ') {
-                                  ev.preventDefault();
-                                  jumpGridToDayColumn(dk);
-                                }
-                              }}
+                              role={printLayout ? undefined : 'button'}
+                              tabIndex={printLayout ? undefined : 0}
+                              title={printLayout ? formatShort(d) : 'Jump date range to start on this day (same number of columns)'}
+                              onClick={printLayout ? undefined : () => jumpGridToDayColumn(dk)}
+                              onKeyDown={
+                                printLayout
+                                  ? undefined
+                                  : (ev) => {
+                                      if (ev.key === 'Enter' || ev.key === ' ') {
+                                        ev.preventDefault();
+                                        jumpGridToDayColumn(dk);
+                                      }
+                                    }
+                              }
                               style={{
-                                padding: '8px 6px',
+                                padding: printLayout ? '2px 1px' : '8px 6px',
                                 borderBottom: `1px solid ${T.hairline}`,
                                 borderLeft: `1px solid ${T.hairline}`,
                                 fontWeight: 700,
                                 color: T.text,
                                 textAlign: 'center',
-                                minWidth: 56,
-                                maxWidth: 72,
+                                minWidth: printLayout ? undefined : 56,
+                                maxWidth: printLayout ? undefined : 72,
                                 background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
-                                boxShadow: isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
-                                cursor: 'pointer',
+                                boxShadow: !printLayout && isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
+                                cursor: printLayout ? 'default' : 'pointer',
                                 userSelect: 'none',
                               }}
                             >
-                              <div>{formatShort(d)}</div>
-                              <div style={{ fontSize: 9, fontWeight: 600, color: T.faint }}>{d.getDate()}</div>
+                              {printLayout ? formatPrintDayHeader(dk) : (
+                                <>
+                                  <div>{formatShort(d)}</div>
+                                  <div style={{ fontSize: 9, fontWeight: 600, color: T.faint }}>{d.getDate()}</div>
+                                </>
+                              )}
                             </th>
                           );
                         })}
@@ -1349,18 +1436,31 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                           <td
                             className="plan-zone-col"
                             style={{
-                              padding: '8px 10px',
+                              padding: printLayout ? '2px 4px' : '8px 10px',
                               borderTop: `1px solid ${T.hairline}`,
                               borderRight: `1px solid ${T.hairline}`,
                               fontWeight: 600,
                               color: T.text,
-                              verticalAlign: 'top',
+                              verticalAlign: 'middle',
                               background: T.surface,
-                              lineHeight: 1.25,
+                              lineHeight: 1.2,
+                              height: printLayout ? printGeometry.rowPx : undefined,
+                              maxHeight: printLayout ? printGeometry.rowPx : undefined,
+                              overflow: printLayout ? 'hidden' : undefined,
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                              <span>{zoneRowLabel(z)}</span>
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 6,
+                                overflow: printLayout ? 'hidden' : undefined,
+                                whiteSpace: printLayout ? 'nowrap' : undefined,
+                                textOverflow: printLayout ? 'ellipsis' : undefined,
+                              }}
+                            >
+                              <span title={printLayout ? zoneRowLabel(z) : undefined}>{zoneRowLabel(z)}</span>
                               {isAdmin && !printLayout && (
                                 <span style={{ display: 'flex', gap: 4 }}>
                                   <button
@@ -1404,13 +1504,16 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                             return (
                               <td
                                 key={dk}
+                                className={printLayout ? 'plan-print-day-cell' : undefined}
                                 style={{
                                   borderTop: `1px solid ${T.hairline}`,
                                   borderLeft: `1px solid ${T.hairline}`,
-                                  padding: 2,
-                                  verticalAlign: 'top',
-                                  minHeight: 36,
-                                  height: 36,
+                                  padding: printLayout ? 1 : 2,
+                                  verticalAlign: 'middle',
+                                  height: printLayout ? printGeometry.rowPx : 36,
+                                  maxHeight: printLayout ? printGeometry.rowPx : 36,
+                                  minHeight: printLayout ? printGeometry.rowPx : 36,
+                                  overflow: printLayout ? 'hidden' : undefined,
                                   background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
                                 }}
                                 onDragOver={(e) => {
@@ -1451,7 +1554,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                   }
                                 }}
                               >
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
+                                <div className={printLayout ? 'plan-print-cell-inner' : undefined} style={printLayout ? undefined : { display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
                                   {hits.map((it) => {
                                     const done = isProgrammeItemDoneOnDay(it, dk, comp);
                                     const label = abbrevActivity(it.activity_name);
@@ -1465,12 +1568,13 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                         dk={dk}
                                         isAdmin={isAdmin}
                                         done={done}
-                                        completionAt={compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
+                                        completionAt={printLayout ? undefined : compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
                                         isMobile={isMobile}
                                         coarsePointer={coarsePointer}
                                         label={label}
                                         zoneLabel={zLab}
-                                        hasDependency={dependencyLinkedKeys.has(`programme_item:${it.id}`)}
+                                        compact={!!printLayout}
+                                        hasDependency={printLayout ? false : dependencyLinkedKeys.has(`programme_item:${it.id}`)}
                                         setDragState={setDragState}
                                         setInspect={setInspect}
                                         onOpenEdit={setChipEdit}
@@ -1486,16 +1590,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                       ))}
                     </tbody>
                   </table>
-                  {printLayout && legendVisible && legendActs.length > 0 && (
-                    <div className="plan-print-compact-key" style={{ marginTop: 8, padding: '6px 8px', background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                        <span style={{ flex: '0 0 auto', fontSize: 8, fontWeight: 800, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                          Key
-                        </span>
-                        {legendActs.map((name) => (
-                          <span key={name} title={`${name} (${abbrevActivity(name)})`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, minWidth: 0, fontSize: 8, color: T.text, fontWeight: 700 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: actColor(name, 0.88), flex: '0 0 auto', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} />
+                  {printLayout && legendVisible && pageLegendActs.length > 0 && (
+                    <div className="plan-print-compact-key" style={{ marginTop: 6, padding: '5px 6px', background: T.surface, border: `1px solid ${T.hairline}`, borderRadius: 4 }}>
+                      <div className="plan-print-compact-key__items">
+                        <span className="plan-print-compact-key__title">Key</span>
+                        {pageLegendActs.map((name) => (
+                          <span key={name} title={name} className="plan-print-compact-key__item">
+                            <span className="plan-print-compact-key__swatch" style={{ background: actColor(name, 0.88) }} />
                             <span>{abbrevActivity(name)}</span>
+                            <span className="plan-print-compact-key__full"> — {name}</span>
                           </span>
                         ))}
                       </div>
@@ -1659,7 +1762,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         >
           <div style={{ width: 'min(460px,100%)', background: T.surface, borderRadius: 14, border: `1px solid ${T.hairline}`, padding: 18, boxShadow: '0 12px 40px rgba(26,26,46,0.15)' }}>
             <div id="plan-pdf-title" style={{ fontSize: 16, fontWeight: 800, color: T.text, marginBottom: 12 }}>
-              Export Programme to PDF
+              Print &amp; export options
             </div>
             <p style={{ fontSize: 12, color: T.muted, margin: '0 0 12px', lineHeight: 1.45 }}>
               Date range:{' '}
@@ -1669,6 +1772,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </strong>
               <br />
               Days shown: {calendarDaysBetween(startDate, endDate).length}
+              <br />
+              Print uses initials and colours only (see key on every sheet). Turn on <strong>Background graphics</strong> in the print dialog so colours print correctly.
             </p>
             <div style={{ fontSize: 12, color: T.text, marginBottom: 10 }}>Include:</div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12, color: T.text, cursor: 'pointer' }}>
@@ -1744,11 +1849,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                 <p style={{ fontSize: 11, color: T.faint, margin: '6px 0 0', lineHeight: 1.4 }}>
                   {pdfOpts.paper} {pdfOpts.orientation} fits about{' '}
                   <strong style={{ color: T.muted }}>{autoCapacity.rows} rows</strong> ×{' '}
-                  <strong style={{ color: T.muted }}>{autoCapacity.cols} day columns</strong> per sheet. Larger
-                  paper fits more, so the grid is never squashed.
+                  <strong style={{ color: T.muted }}>{autoCapacity.cols} day columns</strong> per sheet (~
+                  {printGridGeometry(pdfOpts.paper, pdfOpts.orientation, autoCapacity.rows, autoCapacity.cols, {
+                    includeHeader: pdfOpts.header,
+                    includeLegend: pdfOpts.legend,
+                  }).rowPx}
+                  px tall cells).
                 </p>
               ) : (
-                <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
                   <label style={{ fontSize: 11, color: T.muted }}>
                     Rows per page
                     <input
@@ -1773,6 +1882,9 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                       aria-label="Columns per page"
                     />
                   </label>
+                  <p style={{ fontSize: 11, color: T.faint, margin: '4px 0 0', lineHeight: 1.4, width: '100%' }}>
+                    Fewer rows or columns = larger uniform cells on each sheet.
+                  </p>
                 </div>
               )}
             </div>
@@ -1780,12 +1892,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               Uses your browser print dialog → choose “Save as PDF”. Suggested filename:{' '}
               <code style={{ fontSize: 10 }}>119HS_Programme_{startDate}_{endDate}.pdf</code>
             </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button type="button" onClick={() => setPdfOpen(false)} style={{ ...S.btn, padding: '10px 16px' }}>
                 Cancel
               </button>
-              <button type="button" onClick={confirmPdfExport} style={{ ...S.btn, ...S.btnPrimary, padding: '10px 16px' }}>
-                Export
+              <button type="button" onClick={confirmPrint} style={{ ...S.btn, ...S.btnPrimary, padding: '10px 16px' }}>
+                Print
+              </button>
+              <button type="button" onClick={confirmPdfExport} style={{ ...S.btn, padding: '10px 16px' }}>
+                Export PDF
               </button>
             </div>
           </div>

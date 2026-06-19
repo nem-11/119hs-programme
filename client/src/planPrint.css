@@ -136,7 +136,157 @@ body.plan-print-mode {
 
 /* @page size for Plan is injected at print time via printPage.js */
 
+/* Uniform print/export grid — applies on screen preview and on paper */
+body.plan-print-mode .plan-grid-table {
+  width: 100% !important;
+  max-width: none !important;
+  table-layout: fixed !important;
+}
+
+body.plan-print-mode col.plan-print-zone-col {
+  width: var(--plan-print-zone-col-px, 34px) !important;
+}
+
+body.plan-print-mode col.plan-print-day-col {
+  width: var(--plan-print-day-col-px, 11px) !important;
+}
+
+body.plan-print-mode .plan-grid-table thead th,
+body.plan-print-mode .plan-grid-table tbody td {
+  padding: 1px 2px !important;
+  overflow: hidden;
+  vertical-align: middle !important;
+}
+
+body.plan-print-mode .plan-grid-table thead th {
+  font-size: 8px !important;
+  line-height: 1.1 !important;
+}
+
+body.plan-print-mode .plan-grid-table tbody tr {
+  height: var(--plan-print-row-px, 36px) !important;
+}
+
+body.plan-print-mode .plan-grid-table tbody td {
+  height: var(--plan-print-row-px, 36px) !important;
+  max-height: var(--plan-print-row-px, 36px) !important;
+  min-height: var(--plan-print-row-px, 36px) !important;
+}
+
+body.plan-print-mode .plan-zone-col {
+  font-size: 8px !important;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+body.plan-print-mode .plan-print-cell-inner {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 1px;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+body.plan-print-mode .plan-activity-chip--compact {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
+  padding: 0 1px !important;
+  font-size: clamp(5px, calc(var(--plan-print-row-px, 36px) * 0.32), 9px) !important;
+  line-height: 1 !important;
+  border-radius: 2px !important;
+  justify-content: center;
+  overflow: hidden;
+}
+
+body.plan-print-mode .plan-activity-chip__abbrev {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+body.plan-print-mode .plan-print-compact-key__items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+}
+
+body.plan-print-mode .plan-print-compact-key__title {
+  flex: 0 0 auto;
+  font-size: 7px;
+  font-weight: 800;
+  color: rgba(26, 26, 46, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+body.plan-print-mode .plan-print-compact-key__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 7px;
+  font-weight: 700;
+  color: rgba(26, 26, 46, 0.82);
+  line-height: 1.2;
+}
+
+body.plan-print-mode .plan-print-compact-key__swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body.plan-print-mode .plan-print-compact-key__full {
+  font-weight: 500;
+  color: rgba(26, 26, 46, 0.55);
+}
+
+body.plan-print-mode .plan-grid-area {
+  overflow: visible !important;
+  flex: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+body.plan-print-mode .plan-print-page {
+  display: block;
+  width: 100%;
+  overflow: visible;
+  box-sizing: border-box;
+  break-after: page;
+  page-break-after: always;
+}
+
+body.plan-print-mode .plan-print-page--last {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+body.plan-print-mode .plan-grid-table thead {
+  display: table-header-group;
+}
+
 @media print {
+  body.plan-print-mode .app-root-shell,
+  body.plan-print-mode .app-main-content {
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    display: block !important;
+  }
+
   body.plan-print-mode {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -175,21 +325,22 @@ body.plan-print-mode {
   body.plan-print-mode .plan-print-root table {
     width: 100% !important;
     max-width: none !important;
-    table-layout: fixed;
-    font-size: 9px;
+    table-layout: fixed !important;
+    font-size: 8px;
     border-collapse: collapse;
   }
 
   body.plan-print-mode .plan-print-root th,
   body.plan-print-mode .plan-print-root td {
-    padding: 2px 3px !important;
+    padding: 1px 2px !important;
     overflow: hidden;
-    word-break: break-word;
+    word-break: normal;
   }
 
   body.plan-print-mode .plan-print-root tbody td {
-    height: 36px !important;
-    min-height: 36px !important;
+    height: var(--plan-print-row-px, 36px) !important;
+    min-height: var(--plan-print-row-px, 36px) !important;
+    max-height: var(--plan-print-row-px, 36px) !important;
   }
 
   body.plan-print-mode .plan-print-root tbody tr {
@@ -197,21 +348,18 @@ body.plan-print-mode {
     page-break-inside: avoid;
   }
 
-  body.plan-print-mode .plan-print-page-header {
+  body.plan-print-mode .plan-print-page-header,
+  body.plan-print-mode .plan-grid-table thead {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  body.plan-print-mode .plan-print-root colgroup,
-  body.plan-print-mode .plan-print-root col {
-    width: auto !important;
   }
 
   body.plan-print-mode .plan-print-page {
     break-after: page;
     page-break-after: always;
-    break-inside: avoid;
-    page-break-inside: avoid;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
   }
 
   body.plan-print-mode .plan-print-page--last {
