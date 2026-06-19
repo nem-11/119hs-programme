@@ -337,7 +337,7 @@ function activityCompletionForScope(planRows, comp, scopeTab) {
   return { total, done };
 }
 
-({ items, accent }) {
+function DashboardBreakdownBars({ items, accent }) {
   if (!items?.length) {
     return <p style={{ margin: 0, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>No programme activities yet.</p>;
   }
