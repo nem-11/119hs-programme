@@ -1095,6 +1095,9 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           if (!chipEdit) return;
           await deleteActivityFromZone(chipEdit.zoneId, chipEdit.zoneItems, chipEdit.row.id);
         }}
+        onSaveSchedule={async (row, patch) => {
+          await patchProgrammeItem(row, patch, 'Revert last activity schedule edit');
+        }}
       />
       <PlanAddActivityModal
         open={Boolean(addActivityZone)}
@@ -1662,8 +1665,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           setDragState={setDragState}
                                           setInspect={setInspect}
                                           onOpenEdit={setChipEdit}
-                                          applyZoneRows={applyZoneRows}
-                                          onPatchItem={patchProgrammeItem}
                                         />
                                       );
                                     })}
@@ -1825,7 +1826,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: double-click to edit; drag to move (Day/Night column sets shift). Moves affect one activity only — add dependency links manually when ready.' : ''}
+          {isAdmin ? ' Admin: double-click (long press on mobile) to edit dates and shift; drag to move (Day/Night column sets shift). Moves affect one activity only.' : ''}
         </PageFooterHint>
       )}
       </div>

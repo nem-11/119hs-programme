@@ -1,14 +1,7 @@
 import React, { useRef } from 'react';
 import { actColor } from './constants';
-import {
-  countScheduleableDaysInclusive,
-  normalizeScheduleStartKey,
-  endOfScheduleableSpan,
-  nextScheduleableDayKey,
-} from './planUtils';
 
 const LONG_PRESS_MS = 500;
-const CLICK_DELAY_MS = 300;
 
 export default function PlanActivityChip({
   it,
@@ -25,22 +18,12 @@ export default function PlanActivityChip({
   setDragState,
   setInspect,
   onOpenEdit,
-  applyZoneRows,
-  onPatchItem,
   hasDependency,
 }) {
-  const clickTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
   const pointerDragRef = useRef(null);
   const DRAG_THRESHOLD_PX = 8;
-
-  function clearClickTimer() {
-    if (clickTimerRef.current) {
-      clearTimeout(clickTimerRef.current);
-      clickTimerRef.current = null;
-    }
-  }
 
   function clearLongPressTimer() {
     if (longPressTimerRef.current) {
@@ -59,48 +42,6 @@ export default function PlanActivityChip({
     });
   }
 
-  async function runPromptEdit(action) {
-    if (!action) return;
-    const items = [...z.items]
-      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-      .map((x) => ({ ...x }));
-    const idx = items.findIndex((x) => Number(x.id) === Number(it.id));
-    if (idx < 0) return;
-    const cmd = action.trim().toLowerCase();
-    if (cmd === 'delete') {
-      items.splice(idx, 1);
-    } else if (cmd.startsWith('move ')) {
-      const nk = normalizeScheduleStartKey(action.slice(5).trim());
-      const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-      if (!onPatchItem) return;
-      await onPatchItem(it, {
-        start_date: nk,
-        end_date: endOfScheduleableSpan(nk, dur),
-      });
-      return;
-    } else if (cmd.startsWith('duration ')) {
-      const d = Math.max(1, Number(action.slice(9).trim()) || 1);
-      if (!onPatchItem) return;
-      await onPatchItem(it, {
-        end_date: endOfScheduleableSpan(items[idx].start_date, d),
-      });
-      return;
-    } else {
-      window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
-      return;
-    }
-    let from = Math.max(0, idx);
-    if (idx > 0) from = idx;
-    let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
-    for (let i = from; i < items.length; i++) {
-      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-      items[i].start_date = normalizeScheduleStartKey(cursor);
-      items[i].end_date = endOfScheduleableSpan(items[i].start_date, dur);
-      cursor = nextScheduleableDayKey(items[i].end_date);
-    }
-    await applyZoneRows(z.zone_id, z.items, items);
-  }
-
   return (
     <div
       className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
@@ -109,7 +50,6 @@ export default function PlanActivityChip({
         if (compact || !isAdmin) return;
         e.preventDefault();
         e.stopPropagation();
-        clearClickTimer();
         openEditModal();
       }}
       onPointerDown={(e) => {
@@ -132,7 +72,7 @@ export default function PlanActivityChip({
         pointerDragRef.current = null;
       }}
       onTouchStart={() => {
-        if (!coarsePointer) return;
+        if (!coarsePointer || !isAdmin || compact) return;
         longPressTriggeredRef.current = false;
         clearLongPressTimer();
         longPressTimerRef.current = setTimeout(() => {
@@ -161,7 +101,7 @@ export default function PlanActivityChip({
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}
-      onClick={async (e) => {
+      onClick={(e) => {
         if (compact) return;
         if (longPressTriggeredRef.current) {
           longPressTriggeredRef.current = false;
@@ -171,22 +111,7 @@ export default function PlanActivityChip({
         if (coarsePointer) {
           e.preventDefault();
           setInspect({ row: it, zoneLabel });
-          return;
         }
-        if (!isAdmin || done) return;
-        clearClickTimer();
-        clickTimerRef.current = setTimeout(async () => {
-          clickTimerRef.current = null;
-          const action = window.prompt(
-            `Edit ${it.activity_name}\nType:\n- move YYYY-MM-DD\n- duration N\n- delete`,
-            ''
-          );
-          try {
-            await runPromptEdit(action);
-          } catch (err) {
-            window.alert(err?.message || 'Edit failed');
-          }
-        }, CLICK_DELAY_MS);
       }}
     >
       {compact ? (

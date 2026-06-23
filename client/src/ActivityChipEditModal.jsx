@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import * as api from './api';
 import { T, S } from './uiTheme';
-import { formatShort } from './constants';
-import { completionKeyFromProgrammeRow, isProgrammeItemDoneOnDay } from './planUtils';
+import { formatShort, toHtmlDateInputValue } from './constants';
+import { completionKeyFromProgrammeRow, isProgrammeItemDoneOnDay, programmeItemShift } from './planUtils';
 
 function formatPlanDate(key) {
   const k = String(key || '').trim();
@@ -182,6 +182,7 @@ export default function ActivityChipEditModal({
   canTick,
   userName,
   onDelete,
+  onSaveSchedule,
   isAdmin,
   pickerOptions,
   onDependenciesChange,
@@ -194,9 +195,27 @@ export default function ActivityChipEditModal({
   const [depsLoading, setDepsLoading] = useState(false);
   const [depBusy, setDepBusy] = useState(false);
   const [compBusy, setCompBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+  const [editShift, setEditShift] = useState('day');
 
   const itemId = row ? Number(row.id) : null;
   const isComplete = isProgrammeItemDoneOnDay(row, completionDayKey, comp);
+  const scheduleDirty = useMemo(() => {
+    if (!row || !isAdmin) return false;
+    const sd = String(row.start_date || '').trim();
+    const ed = String(row.end_date || '').trim();
+    return editStart !== sd || editEnd !== ed || editShift !== programmeItemShift(row);
+  }, [row, isAdmin, editStart, editEnd, editShift]);
+
+  useEffect(() => {
+    if (!open || !row) return;
+    setEditStart(String(row.start_date || '').trim());
+    setEditEnd(String(row.end_date || '').trim());
+    setEditShift(programmeItemShift(row));
+    setSaveBusy(false);
+  }, [open, row]);
 
   useEffect(() => {
     if (!open) return;
@@ -204,11 +223,11 @@ export default function ActivityChipEditModal({
     setDeleting(false);
     setErr('');
     const onKey = (e) => {
-      if (e.key === 'Escape' && !deleting && !depBusy && !compBusy) onClose();
+      if (e.key === 'Escape' && !deleting && !depBusy && !compBusy && !saveBusy) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, deleting, depBusy, compBusy]);
+  }, [open, onClose, deleting, depBusy, compBusy, saveBusy]);
 
   useEffect(() => {
     if (!open || !itemId) {
@@ -350,6 +369,34 @@ export default function ActivityChipEditModal({
     }
   }
 
+  async function handleSaveSchedule() {
+    if (!isAdmin || !onSaveSchedule || !row) return;
+    const start = String(editStart || '').trim();
+    const end = String(editEnd || '').trim();
+    if (!start || !end) {
+      setErr('Start and end dates are required.');
+      return;
+    }
+    if (start > end) {
+      setErr('Start date must be on or before end date.');
+      return;
+    }
+    setSaveBusy(true);
+    setErr('');
+    try {
+      await onSaveSchedule(row, {
+        start_date: start,
+        end_date: end,
+        shift: editShift,
+      });
+      onClose();
+    } catch (e) {
+      setErr(e?.message || 'Could not save dates');
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
   if (!open || !row) return null;
 
   async function handleDeleteClick() {
@@ -372,6 +419,7 @@ export default function ActivityChipEditModal({
 
   const sd = String(row.start_date || '').trim();
   const ed = String(row.end_date || '').trim();
+  const busy = deleting || depBusy || compBusy || saveBusy;
   const btnBase = {
     ...S.btn,
     minHeight: 44,
@@ -387,7 +435,7 @@ export default function ActivityChipEditModal({
       aria-modal="true"
       aria-label="Edit activity"
       onClick={() => {
-        if (!deleting && !depBusy && !compBusy) onClose();
+        if (!busy) onClose();
       }}
       style={{
         position: 'fixed',
@@ -423,16 +471,83 @@ export default function ActivityChipEditModal({
           {zoneLabel && <div style={{ fontSize: 13, color: T.muted, marginTop: 6 }}>{zoneLabel}</div>}
         </div>
 
-        <dl style={{ margin: '0 0 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 13 }}>
-          <div>
-            <dt style={{ fontSize: 10, color: T.faint, fontWeight: 700, textTransform: 'uppercase' }}>Start</dt>
-            <dd style={{ margin: '4px 0 0', color: T.text, fontWeight: 600 }}>{formatPlanDate(sd)}</dd>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+            Schedule
           </div>
-          <div>
-            <dt style={{ fontSize: 10, color: T.faint, fontWeight: 700, textTransform: 'uppercase' }}>End</dt>
-            <dd style={{ margin: '4px 0 0', color: T.text, fontWeight: 600 }}>{formatPlanDate(ed)}</dd>
-          </div>
-        </dl>
+          {isAdmin && onSaveSchedule ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: T.muted, fontWeight: 600 }}>
+                  Start
+                  <input
+                    type="date"
+                    value={toHtmlDateInputValue(editStart)}
+                    disabled={busy}
+                    onChange={(e) => setEditStart(e.target.value)}
+                    style={{ ...S.input, display: 'block', width: '100%', marginTop: 4, fontSize: 13, padding: '8px 10px' }}
+                  />
+                </label>
+                <label style={{ fontSize: 11, color: T.muted, fontWeight: 600 }}>
+                  End
+                  <input
+                    type="date"
+                    value={toHtmlDateInputValue(editEnd)}
+                    disabled={busy}
+                    onChange={(e) => setEditEnd(e.target.value)}
+                    style={{ ...S.input, display: 'block', width: '100%', marginTop: 4, fontSize: 13, padding: '8px 10px' }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, marginBottom: 6 }}>Shift</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {['day', 'night'].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setEditShift(s)}
+                      style={{
+                        ...S.btn,
+                        ...(editShift === s ? S.btnAct : {}),
+                        flex: 1,
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={busy || !scheduleDirty}
+                onClick={() => void handleSaveSchedule()}
+                style={{ ...btnBase, ...S.btnPrimary, opacity: scheduleDirty ? 1 : 0.5 }}
+              >
+                {saveBusy ? 'Saving…' : 'Save schedule'}
+              </button>
+              <p style={{ fontSize: 11, color: T.muted, margin: '8px 0 0', lineHeight: 1.4 }}>
+                Updates this activity only — other rows in the zone are not moved.
+              </p>
+            </>
+          ) : (
+            <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 13 }}>
+              <div>
+                <dt style={{ fontSize: 10, color: T.faint, fontWeight: 700, textTransform: 'uppercase' }}>Start</dt>
+                <dd style={{ margin: '4px 0 0', color: T.text, fontWeight: 600 }}>{formatPlanDate(sd)}</dd>
+              </div>
+              <div>
+                <dt style={{ fontSize: 10, color: T.faint, fontWeight: 700, textTransform: 'uppercase' }}>End</dt>
+                <dd style={{ margin: '4px 0 0', color: T.text, fontWeight: 600 }}>{formatPlanDate(ed)}</dd>
+              </div>
+            </dl>
+          )}
+        </div>
 
         {canTick && completionDayKey && (
           <label
@@ -454,7 +569,7 @@ export default function ActivityChipEditModal({
             <input
               type="checkbox"
               checked={isComplete}
-              disabled={compBusy || depBusy || deleting}
+              disabled={compBusy || depBusy || deleting || saveBusy}
               onChange={() => void toggleComplete()}
               style={{ width: 18, height: 18, flexShrink: 0 }}
             />
@@ -518,7 +633,7 @@ export default function ActivityChipEditModal({
           {isAdmin && (
             <button
               type="button"
-              disabled={deleting || depBusy || compBusy}
+              disabled={deleting || depBusy || compBusy || saveBusy}
               onClick={handleDeleteClick}
               style={{
                 ...btnBase,
@@ -531,7 +646,7 @@ export default function ActivityChipEditModal({
           )}
           <button
             type="button"
-            disabled={deleting || depBusy || compBusy}
+            disabled={busy}
             onClick={onClose}
             style={btnBase}
           >
