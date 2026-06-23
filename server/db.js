@@ -606,6 +606,7 @@ async function getDb() {
   migrateShiftColumn();
   migrateProjectProgrammeItems();
   migrateActivityDependencies();
+  migrateClearAutoProgrammeDependencies();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -789,6 +790,24 @@ function migrateProgrammeItemsClampScheduleableV2() {
       changed,
       'programme row(s) for Mon–Fri scheduleable rules (Saturdays excluded from auto spans); schedule updated.'
     );
+  }
+}
+
+/** One-time: remove auto-wired consecutive programme dependencies (Plan moves are manual). */
+function migrateClearAutoProgrammeDependencies() {
+  try {
+    db.run('CREATE TABLE IF NOT EXISTS _119hs_migrations (name TEXT PRIMARY KEY NOT NULL)');
+    save();
+  } catch (_) {}
+  const ran = get("SELECT name FROM _119hs_migrations WHERE name='clear_auto_programme_dependencies_v1' LIMIT 1");
+  if (ran) return;
+  const before = get("SELECT COUNT(*) AS c FROM activity_dependencies WHERE created_by='system'");
+  runNoSave("DELETE FROM activity_dependencies WHERE created_by='system'");
+  runNoSave("INSERT INTO _119hs_migrations (name) VALUES ('clear_auto_programme_dependencies_v1')");
+  save();
+  const removed = before ? Number(before.c) : 0;
+  if (removed > 0) {
+    console.log('[119HS] Migration: removed', removed, 'auto-wired programme dependency link(s). Add dependencies manually in Plan.');
   }
 }
 
@@ -2145,7 +2164,6 @@ module.exports = {
     if (!newItems.length) return { error: 'Could not store programme rows — check anchor date' };
 
     newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
-    createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
 
     const anchorMetadataWarning =
       'Programme saved — anchor metadata could not be updated.';
@@ -2751,7 +2769,6 @@ module.exports = {
     if (!newItems.length) return { error: 'Could not store programme rows — check start date' };
 
     newItems.sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
-    createConsecutiveProgrammeItemDependencies(newItems.map((pi) => pi.id), 'system');
 
     const anchorActId = rows[startStageIndex]?.activity_id ?? rows[0]?.activity_id;
     const anchorDate = rows[startStageIndex]?.start_date ?? rows[0]?.start_date;

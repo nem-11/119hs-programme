@@ -1819,7 +1819,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: ＋ add, drag to move (day/night column sets shift), click to toggle shift, double-click (long-press) to edit.' : ''}
+          {isAdmin ? ' Admin: drag moves one activity only (day/night column sets shift); other rows stay put. Generate programme / templates still sequence in line; add dependency links manually via double-click.' : ''}
         </PageFooterHint>
       )}
       </div>
