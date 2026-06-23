@@ -28,12 +28,12 @@ export default function PlanActivityChip({
   applyZoneRows,
   onPatchItem,
   hasDependency,
-  onShiftToggle,
 }) {
   const clickTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
-  const draggedRef = useRef(false);
+  const pointerDragRef = useRef(null);
+  const DRAG_THRESHOLD_PX = 8;
 
   function clearClickTimer() {
     if (clickTimerRef.current) {
@@ -105,28 +105,31 @@ export default function PlanActivityChip({
     <div
       className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
       title={coarsePointer || compact ? it.activity_name : undefined}
-      draggable={isAdmin && !done && !compact}
-      onDragStart={(e) => {
-        draggedRef.current = true;
-        e.dataTransfer.effectAllowed = 'move';
+      onDoubleClick={(e) => {
+        if (compact || !isAdmin) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearClickTimer();
+        openEditModal();
+      }}
+      onPointerDown={(e) => {
+        if (!isAdmin || done || compact || e.button !== 0) return;
+        pointerDragRef.current = { startX: e.clientX, startY: e.clientY, active: false };
+      }}
+      onPointerMove={(e) => {
+        const p = pointerDragRef.current;
+        if (!p || p.active) return;
+        const dx = e.clientX - p.startX;
+        const dy = e.clientY - p.startY;
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+        p.active = true;
         setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it });
       }}
-      onDragEnd={() => {
-        window.setTimeout(() => {
-          draggedRef.current = false;
-        }, 100);
+      onPointerUp={() => {
+        pointerDragRef.current = null;
       }}
-      onDoubleClick={(e) => {
-        if (compact) return;
-        e.preventDefault();
-        clearClickTimer();
-        onOpenEdit({
-          row: it,
-          zoneId: z.zone_id,
-          zoneItems: z.items,
-          zoneLabel,
-          dayKey: dk,
-        });
+      onPointerCancel={() => {
+        pointerDragRef.current = null;
       }}
       onTouchStart={() => {
         if (!coarsePointer) return;
@@ -160,23 +163,9 @@ export default function PlanActivityChip({
       }}
       onClick={async (e) => {
         if (compact) return;
-        if (draggedRef.current) {
-          e.preventDefault();
-          return;
-        }
         if (longPressTriggeredRef.current) {
           longPressTriggeredRef.current = false;
           e.preventDefault();
-          return;
-        }
-        if (onShiftToggle && isAdmin) {
-          e.preventDefault();
-          clearClickTimer();
-          try {
-            await onShiftToggle(it);
-          } catch (err) {
-            window.alert(err?.message || 'Shift update failed');
-          }
           return;
         }
         if (coarsePointer) {

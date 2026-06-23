@@ -784,22 +784,58 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     await load();
   }
 
-  const toggleItemShift = useCallback(async (it) => {
-    const prev = programmeItemShift(it);
-    const next = prev === 'night' ? 'day' : 'night';
-    setRows((prevRows) =>
-      prevRows.map((r) => (Number(r.id) === Number(it.id) ? { ...r, shift: next } : r))
-    );
-    try {
-      const out = await api.updateProgrammeItem(it.id, { shift: next });
-      if (out?.error) throw new Error(out.error);
-    } catch (e) {
-      setRows((prevRows) =>
-        prevRows.map((r) => (Number(r.id) === Number(it.id) ? { ...r, shift: prev } : r))
-      );
-      window.alert(e?.message || 'Shift update failed');
+  async function commitPlanActivityDrop(moved, dk, shiftKey) {
+    if (isSundayOrBankHolidayKey(dk)) {
+      window.alert('Bank holidays are non-working — drop on another day.');
+      return;
     }
-  }, []);
+    if (String(moved.status || '').toLowerCase() === 'done') return;
+    const shiftLabel = shiftKey === 'night' ? 'night' : 'day';
+    if (
+      !window.confirm(
+        `Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?\nOther activities in this zone will stay where they are.`
+      )
+    ) {
+      return;
+    }
+    const dur = countScheduleableDaysInclusive(moved.start_date, moved.end_date);
+    const nextStart = normalizeScheduleStartKey(dk);
+    await patchProgrammeItem(moved, {
+      start_date: nextStart,
+      end_date: endOfScheduleableSpan(nextStart, dur),
+      shift: shiftKey,
+    });
+  }
+
+  useEffect(() => {
+    if (!dragState || !isAdmin) return undefined;
+
+    async function onPointerUp(e) {
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      const cell = target?.closest?.('[data-plan-drop-cell]');
+      if (!cell) {
+        setDragState(null);
+        return;
+      }
+      const dk = cell.getAttribute('data-plan-day');
+      const shiftKey = cell.getAttribute('data-plan-shift') || 'day';
+      const zoneId = Number(cell.getAttribute('data-plan-zone-id'));
+      if (!dk || Number(dragState.zoneId) !== zoneId) {
+        setDragState(null);
+        return;
+      }
+      try {
+        await commitPlanActivityDrop(dragState.item, dk, shiftKey);
+      } catch (err) {
+        window.alert(err?.message || 'Move failed');
+      } finally {
+        setDragState(null);
+      }
+    }
+
+    window.addEventListener('pointerup', onPointerUp);
+    return () => window.removeEventListener('pointerup', onPointerUp);
+  }, [dragState, isAdmin]);
 
   const catalogueActivities = useMemo(
     () => activities.filter((a) => String(a.type || '') === String(tab || '')),
@@ -1581,6 +1617,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                 <td
                                   key={`${dk}-${shiftKey}`}
                                   className={cellClass || undefined}
+                                  data-plan-drop-cell=""
+                                  data-plan-day={dk}
+                                  data-plan-shift={shiftKey}
+                                  data-plan-zone-id={z.zone_id}
                                   style={{
                                     borderTop: `1px solid ${T.hairline}`,
                                     borderLeft: `1px solid ${T.hairline}`,
@@ -1593,39 +1633,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                     background: baseBg,
                                     WebkitPrintColorAdjust: 'exact',
                                     printColorAdjust: 'exact',
-                                  }}
-                                  onDragOver={(e) => {
-                                    if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
-                                  }}
-                                  onDrop={async (e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    if (!isAdmin || !dragState) return;
-                                    if (isSundayOrBankHolidayKey(dk)) {
-                                      window.alert('Bank holidays are non-working — drop on another day.');
-                                      setDragState(null);
-                                      return;
-                                    }
-                                    try {
-                                      const moved = dragState.item;
-                                      if (String(moved.status || '').toLowerCase() === 'done') return;
-                                      const shiftLabel = shiftKey === 'night' ? 'night' : 'day';
-                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?\nOther activities in this zone will stay where they are.`)) {
-                                        setDragState(null);
-                                        return;
-                                      }
-                                      const dur = countScheduleableDaysInclusive(moved.start_date, moved.end_date);
-                                      const nextStart = normalizeScheduleStartKey(dk);
-                                      await patchProgrammeItem(moved, {
-                                        start_date: nextStart,
-                                        end_date: endOfScheduleableSpan(nextStart, dur),
-                                        shift: shiftKey,
-                                      });
-                                    } catch (err) {
-                                      window.alert(err?.message || 'Move failed');
-                                    } finally {
-                                      setDragState(null);
-                                    }
                                   }}
                                 >
                                   <div
@@ -1657,7 +1664,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           onOpenEdit={setChipEdit}
                                           applyZoneRows={applyZoneRows}
                                           onPatchItem={patchProgrammeItem}
-                                          onShiftToggle={isAdmin && !printLayout ? toggleItemShift : undefined}
                                         />
                                       );
                                     })}
@@ -1819,7 +1825,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: drag moves one activity only (day/night column sets shift); other rows stay put. Generate programme / templates still sequence in line; add dependency links manually via double-click.' : ''}
+          {isAdmin ? ' Admin: double-click to edit; drag to move (Day/Night column sets shift). Moves affect one activity only — add dependency links manually when ready.' : ''}
         </PageFooterHint>
       )}
       </div>

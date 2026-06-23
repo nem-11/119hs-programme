@@ -607,6 +607,7 @@ async function getDb() {
   migrateProjectProgrammeItems();
   migrateActivityDependencies();
   migrateClearAutoProgrammeDependencies();
+  migrateClearAllProgrammeItemDependencies();
   bootstrapEmptyDatabase();
   ensureStandardProgrammeUsers();
   ensureDefaultTemplates();
@@ -808,6 +809,28 @@ function migrateClearAutoProgrammeDependencies() {
   const removed = before ? Number(before.c) : 0;
   if (removed > 0) {
     console.log('[119HS] Migration: removed', removed, 'auto-wired programme dependency link(s). Add dependencies manually in Plan.');
+  }
+}
+
+/** One-time: strip all programme-item dependency links so Plan moves are fully manual. */
+function migrateClearAllProgrammeItemDependencies() {
+  try {
+    db.run('CREATE TABLE IF NOT EXISTS _119hs_migrations (name TEXT PRIMARY KEY NOT NULL)');
+    save();
+  } catch (_) {}
+  const ran = get("SELECT name FROM _119hs_migrations WHERE name='clear_all_programme_item_dependencies_v1' LIMIT 1");
+  if (ran) return;
+  const before = get(
+    "SELECT COUNT(*) AS c FROM activity_dependencies WHERE predecessor_type='programme_item' OR successor_type='programme_item'"
+  );
+  runNoSave(
+    "DELETE FROM activity_dependencies WHERE predecessor_type='programme_item' OR successor_type='programme_item'"
+  );
+  runNoSave("INSERT INTO _119hs_migrations (name) VALUES ('clear_all_programme_item_dependencies_v1')");
+  save();
+  const removed = before ? Number(before.c) : 0;
+  if (removed > 0) {
+    console.log('[119HS] Migration: cleared', removed, 'programme-item dependency link(s). Re-add manually in Plan when ready.');
   }
 }
 
