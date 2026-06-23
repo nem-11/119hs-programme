@@ -36,26 +36,25 @@ export function isBankHolidayKey(dayKey) {
   return bankHolidaySet.has(String(dayKey).trim());
 }
 
-/** Saturday, Sunday, or England & Wales bank holiday — excluded from default programme scheduling and site schedule slots. */
+/** England & Wales bank holiday — excluded from default programme scheduling and site schedule slots. Saturdays and Sundays are allowed. */
 export function isNonWorkingPlanDayKey(dayKey) {
-  return isSaturdayKey(dayKey) || isSundayKey(dayKey) || isBankHolidayKey(dayKey);
+  return isBankHolidayKey(dayKey);
 }
 
-/** Sunday or bank holiday only — Plan grid hides chips here and blocks drops; Saturday stays available for manual moves. */
+/** Bank holiday only — Plan grid hides chips here and blocks drops. */
 export function isSundayOrBankHolidayKey(dayKey) {
-  return isSundayKey(dayKey) || isBankHolidayKey(dayKey);
+  return isBankHolidayKey(dayKey);
 }
 
-/** Programme / schedule day keys between bounds (excludes Sat, Sun, and bank holidays). */
+/** Programme / schedule day keys between bounds (excludes bank holidays only). */
 export function scheduleDateKeysBetween(startStr, endStr) {
   return calendarDaysBetween(startStr, endStr).filter((k) => !isNonWorkingPlanDayKey(k));
 }
 
 /**
  * Snap programme item bounds to scheduleable days only. Uses the longest contiguous
- * run of scheduleable calendar days inside [start, end], so a bar cannot "bridge"
- * across a weekend or bank holiday (e.g. Mon–Fri only when Sat–Sun fall inside the window).
- * If the window has no scheduleable day, falls back to a single-day span from the
+ * run of calendar days inside [start, end], skipping bank holidays only.
+ * If the window has no valid day, falls back to a single-day span from the
  * next scheduleable start.
  */
 export function clampProgrammeItemToScheduleableRange(startStr, endStr) {

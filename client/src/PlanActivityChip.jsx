@@ -32,6 +32,7 @@ export default function PlanActivityChip({
   const clickTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
+  const draggedRef = useRef(false);
 
   function clearClickTimer() {
     if (clickTimerRef.current) {
@@ -72,15 +73,19 @@ export default function PlanActivityChip({
       const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
       items[idx].start_date = nk;
       items[idx].end_date = endOfScheduleableSpan(nk, dur);
+      await applyZoneRows(z.zone_id, z.items, items);
+      return;
     } else if (cmd.startsWith('duration ')) {
       const d = Math.max(1, Number(action.slice(9).trim()) || 1);
       items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, d);
+      await applyZoneRows(z.zone_id, z.items, items);
+      return;
     } else {
       window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
       return;
     }
-    let from = Math.max(0, idx + (cmd === 'delete' ? 0 : 1));
-    if (cmd === 'delete' && idx > 0) from = idx;
+    let from = Math.max(0, idx);
+    if (idx > 0) from = idx;
     let cursor = from === 0 ? items[0]?.start_date : nextScheduleableDayKey(items[from - 1].end_date);
     for (let i = from; i < items.length; i++) {
       const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
@@ -96,7 +101,15 @@ export default function PlanActivityChip({
       className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
       title={coarsePointer || compact ? it.activity_name : undefined}
       draggable={isAdmin && !done && !compact}
-      onDragStart={() => setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it })}
+      onDragStart={() => {
+        draggedRef.current = true;
+        setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it });
+      }}
+      onDragEnd={() => {
+        window.setTimeout(() => {
+          draggedRef.current = false;
+        }, 100);
+      }}
       onDoubleClick={(e) => {
         if (compact) return;
         e.preventDefault();
@@ -147,6 +160,7 @@ export default function PlanActivityChip({
           return;
         }
         if (onShiftToggle && isAdmin) {
+          if (draggedRef.current) return;
           e.preventDefault();
           clearClickTimer();
           try {

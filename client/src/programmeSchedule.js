@@ -70,7 +70,7 @@ export function isWeekendDate(d) {
   return wd === 0 || wd === 6;
 }
 
-/** Last scheduleable day on or before this calendar date (Saturdays, Sundays, and EW bank holidays excluded from work). */
+/** Last scheduleable day on or before this calendar date (bank holidays excluded; Sat/Sun allowed). */
 export function snapToPrevWeekday(d) {
   return parseYMD(lastScheduleableDayOnOrBefore(formatYMD(d)));
 }

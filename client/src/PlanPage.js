@@ -270,7 +270,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   const [inspect, setInspect] = useState(null);
   const [chipEdit, setChipEdit] = useState(null);
   const [addActivityZone, setAddActivityZone] = useState(null);
-  const [allDependencies, setAllDependencies] = useState([]);
   const [projectProgrammeItems, setProjectProgrammeItems] = useState([]);
   const [coarsePointer, setCoarsePointer] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
@@ -281,15 +280,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     fn();
     mq.addEventListener('change', fn);
     return () => mq.removeEventListener('change', fn);
-  }, []);
-
-  const loadDependencies = useCallback(async () => {
-    try {
-      const data = await api.getDependencies();
-      setAllDependencies(Array.isArray(data) ? data : []);
-    } catch (_) {
-      setAllDependencies([]);
-    }
   }, []);
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -311,7 +301,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       }
       setRows(Array.isArray(data) ? data : []);
       setComp(asCompletionsMap(completionsRaw));
-      await loadDependencies();
       setLastRefreshed(new Date());
     } catch (e) {
       if (!silent) {
@@ -319,7 +308,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         setRows([]);
       }
     }
-  }, [isAdmin, loadDependencies]);
+  }, [isAdmin]);
 
   const reloadCompletions = useCallback(async () => {
     try {
@@ -382,15 +371,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   }, [permittedTabs, onSelectedTabsChange]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
-
-  const dependencyLinkedKeys = useMemo(() => {
-    const s = new Set();
-    for (const d of allDependencies) {
-      s.add(`${d.predecessor_type}:${d.predecessor_id}`);
-      s.add(`${d.successor_type}:${d.successor_id}`);
-    }
-    return s;
-  }, [allDependencies]);
 
   const dependencyPickerOptions = useMemo(() => {
     const opts = [];
@@ -1034,7 +1014,6 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         userName={userName}
         isAdmin={isAdmin}
         pickerOptions={dependencyPickerOptions}
-        onDependenciesChange={loadDependencies}
         onCompletionChange={reloadCompletions}
         onDelete={async () => {
           if (!chipEdit) return;
@@ -1593,14 +1572,15 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                   onDrop={async () => {
                                     if (!isAdmin || !dragState) return;
                                     if (isSundayOrBankHolidayKey(dk)) {
-                                      window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
+                                      window.alert('Bank holidays are non-working — drop on another day.');
                                       setDragState(null);
                                       return;
                                     }
                                     try {
                                       const moved = dragState.item;
                                       if (String(moved.status || '').toLowerCase() === 'done') return;
-                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
+                                      const shiftLabel = shiftKey === 'night' ? 'night' : 'day';
+                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?`)) {
                                         setDragState(null);
                                         return;
                                       }
@@ -1610,13 +1590,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                       const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
                                       items[idx].start_date = normalizeScheduleStartKey(dk);
                                       items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
-                                      let cursor = nextScheduleableDayKey(items[idx].end_date);
-                                      for (let i = idx + 1; i < items.length; i++) {
-                                        const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                                        items[i].start_date = normalizeScheduleStartKey(cursor);
-                                        items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
-                                        cursor = nextScheduleableDayKey(items[i].end_date);
-                                      }
+                                      items[idx].shift = shiftKey;
                                       await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
                                     } catch (e) {
                                       window.alert(e?.message || 'Move failed');
@@ -1648,7 +1622,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           label={label}
                                           zoneLabel={zLab}
                                           compact={!!printLayout}
-                                          hasDependency={printLayout ? false : dependencyLinkedKeys.has(`programme_item:${it.id}`)}
+                                          hasDependency={false}
                                           setDragState={setDragState}
                                           setInspect={setInspect}
                                           onOpenEdit={setChipEdit}
@@ -1811,11 +1785,11 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
 
       {!printLayout && (
         <PageFooterHint>
-          Mon–Fri = scheduleable days; grey = weekends &amp; bank holidays.
+          Grey = bank holidays; Sat/Sun are available for programme work.
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: ＋ add, drag to move, click to toggle day/night, double-click (long-press) to edit.' : ''}
+          {isAdmin ? ' Admin: ＋ add, drag to move (day/night column sets shift), click to toggle shift, double-click (long-press) to edit.' : ''}
         </PageFooterHint>
       )}
       </div>

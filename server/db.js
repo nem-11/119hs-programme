@@ -140,7 +140,7 @@ function shrinkScheduleForItem(pi, opts) {
   });
 }
 
-/** Stored programme_items dates may only cover scheduleable days (no Sat / Sun / EW bank holidays). */
+/** Stored programme_items dates may only cover scheduleable days (bank holidays excluded; Sat/Sun allowed). */
 function clampProgrammeItemDates(start, end) {
   return pw.clampProgrammeItemToScheduleableRange(start, end);
 }
@@ -946,7 +946,11 @@ function isPredecessorIncomplete(type, info) {
   return true;
 }
 
+/** Set true when §4.12 dependency enforcement should block earlier moves on the Plan page. */
+const ENFORCE_PROGRAMME_DEPENDENCIES = false;
+
 function checkDependencyViolationForEarlierStart(successorType, successorId, newStartDate, oldStartDate) {
+  if (!ENFORCE_PROGRAMME_DEPENDENCIES) return null;
   const nextStart = String(newStartDate || '').trim();
   const prevStart = String(oldStartDate || '').trim();
   if (!nextStart || !prevStart || nextStart >= prevStart) return null;
@@ -1014,6 +1018,7 @@ function deleteDependenciesForProgrammeItemIds(piIds, opts) {
 }
 
 function createConsecutiveProgrammeItemDependencies(itemIdsOrdered, createdBy, opts) {
+  if (!ENFORCE_PROGRAMME_DEPENDENCIES) return;
   const ids = itemIdsOrdered || [];
   const deferSave = opts && opts.deferSave;
   const by = String(createdBy || 'system');
