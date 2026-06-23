@@ -221,6 +221,15 @@ function useIsMobile() {
   return m;
 }
 
+/** Which programme scope tab owns a plan zone (for activity catalogue filtering). */
+function zoneScopeTab(z, fallbackTab) {
+  if (!z) return fallbackTab || 'groundworks';
+  if (Array.isArray(z.items) && z.items.length) return scopeForRow(z.items[0]);
+  const dt = String(z.drawing_tab || '').trim();
+  if (dt) return scopeForRow({ drawing_tab: dt });
+  return fallbackTab || 'groundworks';
+}
+
 export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, selectedTabs, onSelectedTabsChange }) {
   const [rows, setRows] = useState([]);
   const [comp, setComp] = useState({});
@@ -837,21 +846,44 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     return () => window.removeEventListener('pointerup', onPointerUp);
   }, [dragState, isAdmin]);
 
+  const addActivityScopeTab = useMemo(
+    () => zoneScopeTab(addActivityZone, selectedTabs[0] || tab),
+    [addActivityZone, selectedTabs, tab]
+  );
+
   const catalogueActivities = useMemo(
-    () => activities.filter((a) => String(a.type || '') === String(tab || '')),
-    [activities, tab]
+    () => activities.filter((a) => String(a.type || '') === String(addActivityScopeTab || '')),
+    [activities, addActivityScopeTab]
   );
 
   async function addActivityToZone(z, { activityKey, customName, startDate: startInput, duration, insertAfter }) {
+    const scopeTab = zoneScopeTab(z, selectedTabs[0] || tab);
     let act;
     if (activityKey === '__custom__') {
       const name = String(customName || '').trim();
       if (!name) throw new Error('Activity name is required');
-      act = activities.find((a) => String(a.name).toLowerCase() === name.toLowerCase());
+      const lower = name.toLowerCase();
+      act =
+        activities.find(
+          (a) => String(a.type || '') === String(scopeTab) && String(a.name).toLowerCase() === lower
+        ) || activities.find((a) => String(a.name).toLowerCase() === lower);
+      if (!act) {
+        throw new Error(
+          `"${name}" was not found in the ${drawingTabLabel(scopeTab)} activity catalogue. Add it under Programme or Settings first.`
+        );
+      }
+      if (String(act.type || '') !== String(scopeTab)) {
+        throw new Error(
+          `"${act.name}" is in ${drawingTabLabel(act.type)}, not ${drawingTabLabel(scopeTab)}. Use the matching scope or add it to this catalogue.`
+        );
+      }
     } else {
       act = activities.find((a) => Number(a.id) === Number(activityKey));
+      if (!act) throw new Error('Activity not found');
+      if (String(act.type || '') !== String(scopeTab)) {
+        throw new Error(`Selected activity is not in the ${drawingTabLabel(scopeTab)} catalogue.`);
+      }
     }
-    if (!act) throw new Error('Activity not found');
     const start = normalizeScheduleStartKey(startInput);
     const durationDays = Math.max(1, Number(duration) || 1);
     const items = [...z.items]
@@ -1103,6 +1135,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         open={Boolean(addActivityZone)}
         onClose={() => setAddActivityZone(null)}
         zoneLabel={addActivityZone ? zoneRowLabel(addActivityZone) : ''}
+        scopeLabel={drawingTabLabel(addActivityScopeTab)}
         zoneItems={addActivityZone?.items || []}
         catalogueActivities={catalogueActivities}
         defaultStartDate={dayColumns[0] || startDate}

@@ -36,6 +36,7 @@ export default function PlanAddActivityModal({
   open,
   onClose,
   zoneLabel,
+  scopeLabel,
   zoneItems,
   catalogueActivities,
   defaultStartDate,
@@ -137,6 +138,11 @@ export default function PlanAddActivityModal({
         <h3 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 800, color: T.text, lineHeight: 1.25 }}>
           Add activity to {zoneLabel}
         </h3>
+        {scopeLabel && (
+          <p style={{ margin: '-8px 0 14px', fontSize: 12, color: T.muted, lineHeight: 1.4 }}>
+            Showing {scopeLabel} catalogue for this zone.
+          </p>
+        )}
 
         <div style={{ marginBottom: 14 }}>
           <label style={fieldLabel} htmlFor="plan-add-activity">
@@ -149,6 +155,11 @@ export default function PlanAddActivityModal({
             onChange={(e) => setActivityKey(e.target.value)}
             style={fieldInput}
           >
+            {catalogueActivities.length === 0 && (
+              <option value="" disabled>
+                No activities in this scope — use Custom…
+              </option>
+            )}
             {catalogueActivities.map((a) => (
               <option key={a.id} value={String(a.id)}>
                 {a.name}
@@ -161,7 +172,11 @@ export default function PlanAddActivityModal({
               type="text"
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
-              placeholder="Activity name (must match catalogue)"
+              placeholder={
+                scopeLabel
+                  ? `Exact name from ${scopeLabel} catalogue`
+                  : 'Activity name (must match catalogue)'
+              }
               required
               style={{ ...fieldInput, marginTop: 8 }}
             />
