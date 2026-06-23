@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { T, S } from './uiTheme';
-import { toHtmlDateInputValue } from './constants';
+import { drawingTabLabel, toHtmlDateInputValue } from './constants';
 
 const CUSTOM_VALUE = '__custom__';
 
@@ -36,12 +36,14 @@ export default function PlanAddActivityModal({
   open,
   onClose,
   zoneLabel,
-  scopeLabel,
+  scopeOptions,
+  defaultScopeTab,
+  activities,
   zoneItems,
-  catalogueActivities,
   defaultStartDate,
   onConfirm,
 }) {
+  const [scopeTab, setScopeTab] = useState('');
   const [activityKey, setActivityKey] = useState('');
   const [customName, setCustomName] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -49,6 +51,13 @@ export default function PlanAddActivityModal({
   const [insertAfter, setInsertAfter] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
+
+  const scopeLabel = scopeTab ? drawingTabLabel(scopeTab) : '';
+
+  const catalogueActivities = useMemo(
+    () => (activities || []).filter((a) => String(a.type || '') === String(scopeTab || '')),
+    [activities, scopeTab]
+  );
 
   const insertOptions = useMemo(() => {
     const sorted = [...(zoneItems || [])].sort((a, b) =>
@@ -62,7 +71,8 @@ export default function PlanAddActivityModal({
 
   useEffect(() => {
     if (!open) return;
-    setActivityKey(catalogueActivities[0] ? String(catalogueActivities[0].id) : CUSTOM_VALUE);
+    const scope = defaultScopeTab || scopeOptions?.[0] || 'groundworks';
+    setScopeTab(scope);
     setCustomName('');
     setStartDate(defaultStartDate || '');
     setDuration('1');
@@ -74,7 +84,12 @@ export default function PlanAddActivityModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, defaultStartDate, catalogueActivities, onClose, submitting]);
+  }, [open, defaultStartDate, defaultScopeTab, onClose, submitting, scopeOptions]);
+
+  useEffect(() => {
+    if (!open) return;
+    setActivityKey(catalogueActivities[0] ? String(catalogueActivities[0].id) : CUSTOM_VALUE);
+  }, [open, scopeTab, catalogueActivities]);
 
   if (!open) return null;
 
@@ -83,7 +98,7 @@ export default function PlanAddActivityModal({
 
   async function handleConfirm(e) {
     e.preventDefault();
-    if (!activityValid || !startDate.trim()) return;
+    if (!activityValid || !startDate.trim() || !scopeTab) return;
     setSubmitting(true);
     setErr('');
     try {
@@ -93,6 +108,7 @@ export default function PlanAddActivityModal({
         startDate: startDate.trim(),
         duration: Math.max(1, Number(duration) || 1),
         insertAfter: insertAfter.trim(),
+        scopeTab,
       });
       onClose();
     } catch (ex) {
@@ -138,11 +154,31 @@ export default function PlanAddActivityModal({
         <h3 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 800, color: T.text, lineHeight: 1.25 }}>
           Add activity to {zoneLabel}
         </h3>
-        {scopeLabel && (
-          <p style={{ margin: '-8px 0 14px', fontSize: 12, color: T.muted, lineHeight: 1.4 }}>
-            Showing {scopeLabel} catalogue for this zone.
-          </p>
-        )}
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={fieldLabel} htmlFor="plan-add-scope">
+            Programme scope <span style={{ color: '#c0392b' }}>*</span>
+          </label>
+          {scopeOptions?.length > 1 ? (
+            <select
+              id="plan-add-scope"
+              required
+              value={scopeTab}
+              onChange={(e) => setScopeTab(e.target.value)}
+              style={fieldInput}
+            >
+              {scopeOptions.map((t) => (
+                <option key={t} value={t}>
+                  {drawingTabLabel(t)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ ...fieldInput, display: 'flex', alignItems: 'center', background: 'rgba(26,26,46,0.03)' }}>
+              {scopeLabel || '—'}
+            </div>
+          )}
+        </div>
 
         <div style={{ marginBottom: 14 }}>
           <label style={fieldLabel} htmlFor="plan-add-activity">
@@ -172,14 +208,15 @@ export default function PlanAddActivityModal({
               type="text"
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
-              placeholder={
-                scopeLabel
-                  ? `Exact name from ${scopeLabel} catalogue`
-                  : 'Activity name (must match catalogue)'
-              }
+              placeholder={scopeLabel ? `New or existing ${scopeLabel} activity name` : 'Activity name'}
               required
               style={{ ...fieldInput, marginTop: 8 }}
             />
+          )}
+          {isCustom && (
+            <p style={{ fontSize: 11, color: T.muted, margin: '8px 0 0', lineHeight: 1.4 }}>
+              Custom names are added to the {scopeLabel || 'selected'} catalogue if they do not exist yet.
+            </p>
           )}
         </div>
 
@@ -215,7 +252,7 @@ export default function PlanAddActivityModal({
 
         <div style={{ marginBottom: 16 }}>
           <label style={fieldLabel} htmlFor="plan-add-after">
-            Insert after
+            Insert after (reference only)
           </label>
           <select
             id="plan-add-after"
@@ -230,6 +267,9 @@ export default function PlanAddActivityModal({
               </option>
             ))}
           </select>
+          <p style={{ fontSize: 11, color: T.muted, margin: '8px 0 0', lineHeight: 1.4 }}>
+            Other activities in the zone are not moved — dates above are used as-is.
+          </p>
         </div>
 
         {err && (
@@ -239,11 +279,11 @@ export default function PlanAddActivityModal({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button
             type="submit"
-            disabled={submitting || !activityValid || !startDate.trim()}
+            disabled={submitting || !activityValid || !startDate.trim() || !scopeTab}
             style={{
               ...btnBase,
               ...S.btnPrimary,
-              opacity: submitting || !activityValid || !startDate.trim() ? 0.55 : 1,
+              opacity: submitting || !activityValid || !startDate.trim() || !scopeTab ? 0.55 : 1,
             }}
           >
             {submitting ? 'Adding…' : 'Add activity'}

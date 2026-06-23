@@ -1928,11 +1928,13 @@ module.exports = {
       [zoneId]
     ),
   getProgrammeItemById: (id) => get('SELECT * FROM programme_items WHERE id=?', [id]),
-  addProgrammeItem: (zone_id, activity_id, start_date, end_date, status, notes) => {
+  addProgrammeItem: (zone_id, activity_id, start_date, end_date, status, notes, shift) => {
     const { start_date: sd, end_date: ed } = clampProgrammeItemDates(start_date, end_date);
+    const shiftRaw = shift != null ? shift : 'day';
+    const shiftVal = String(shiftRaw).trim().toLowerCase() === 'night' ? 'night' : 'day';
     run(
-      'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
-      [zone_id, activity_id, sd, ed, status || 'planned', notes || '']
+      'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes,shift) VALUES (?,?,?,?,?,?,?)',
+      [zone_id, activity_id, sd, ed, status || 'planned', notes || '', shiftVal]
     );
     const id = get('SELECT last_insert_rowid() as id').id;
     const pi = get('SELECT * FROM programme_items WHERE id=?', [id]);

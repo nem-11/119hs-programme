@@ -135,6 +135,20 @@ export function dayKeyInItemRange(dayKey, startStr, endStr) {
   return dayKey >= String(startStr) && dayKey <= String(endStr);
 }
 
+/** Split a programme item at one scheduleable day (for per-day drag / shift moves). */
+export function splitProgrammeItemAtDay(item, dayKey) {
+  const dk = normalizeScheduleStartKey(dayKey);
+  const days = scheduleDateKeysBetween(item.start_date, item.end_date);
+  const idx = days.indexOf(dk);
+  if (idx < 0) return null;
+  return {
+    before: idx > 0 ? { start_date: days[0], end_date: days[idx - 1] } : null,
+    after: idx < days.length - 1 ? { start_date: days[idx + 1], end_date: days[days.length - 1] } : null,
+    isOnlyDay: days.length === 1,
+    sourceDay: dk,
+  };
+}
+
 const ABBREV_MAP = {
   'Reinforcement - Shuttering': 'REIN-SHUT',
   'Corridor Ceiling Stitch': 'C.CEIL',

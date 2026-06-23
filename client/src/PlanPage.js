@@ -21,6 +21,7 @@ import {
   isProgrammeItemDoneOnDay,
   completionInfoForRowOnDay,
   programmeItemShift,
+  splitProgrammeItemAtDay,
 } from './planUtils';
 import { parseZoneGeometry, geomBBox } from './zoneGeom';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
@@ -221,11 +222,19 @@ function useIsMobile() {
   return m;
 }
 
-/** Which programme scope tab owns a plan zone (for activity catalogue filtering). */
-function zoneScopeTab(z, fallbackTab) {
-  if (!z) return fallbackTab || 'groundworks';
-  if (Array.isArray(z.items) && z.items.length) return scopeForRow(z.items[0]);
-  const dt = String(z.drawing_tab || '').trim();
+/** Programme scope tab for activity catalogue (uses activity_type, not header tab). */
+function zoneCatalogueScope(z, selectedTabs, fallbackTab) {
+  if (Array.isArray(z?.items) && z.items.length) {
+    const typeCounts = {};
+    for (const it of z.items) {
+      const t = String(it.activity_type || scopeForRow(it) || '').trim();
+      if (t) typeCounts[t] = (typeCounts[t] || 0) + 1;
+    }
+    const ranked = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+    if (ranked.length) return ranked[0][0];
+  }
+  if (Array.isArray(selectedTabs) && selectedTabs.length === 1) return selectedTabs[0];
+  const dt = String(z?.drawing_tab || '').trim();
   if (dt) return scopeForRow({ drawing_tab: dt });
   return fallbackTab || 'groundworks';
 }
@@ -271,6 +280,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   const [printLayout, setPrintLayout] = useState(null);
   const printPendingRef = useRef(false);
   const [dragState, setDragState] = useState(null);
+  const [dragHover, setDragHover] = useState(null);
+  const [dragPointer, setDragPointer] = useState(null);
   const [undoState, setUndoState] = useState(null);
   const [dismissedClashKey, setDismissedClashKey] = useState('');
 
@@ -793,37 +804,140 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     await load();
   }
 
-  async function commitPlanActivityDrop(moved, dk, shiftKey) {
-    if (isSundayOrBankHolidayKey(dk)) {
+  async function splitAndApplyDayMove(item, sourceDay, targetDay, targetShift) {
+    const split = splitProgrammeItemAtDay(item, sourceDay);
+    if (!split) throw new Error('That day is not part of this activity.');
+    const zoneId = Number(item.zone_id);
+    const activityId = Number(item.activity_id);
+    const origShift = programmeItemShift(item);
+    const status = item.status || 'planned';
+    const notes = item.notes || '';
+    const tgtStart = normalizeScheduleStartKey(targetDay);
+    const tgtEnd = endOfScheduleableSpan(tgtStart, 1);
+    const createdIds = [];
+
+    try {
+      if (split.before) {
+        const r = await api.createProgrammeItem(
+          zoneId,
+          activityId,
+          split.before.start_date,
+          split.before.end_date,
+          status,
+          notes,
+          origShift
+        );
+        if (r?.error) throw new Error(r.message || r.error);
+        createdIds.push(r.id);
+      }
+      const rMoved = await api.createProgrammeItem(zoneId, activityId, tgtStart, tgtEnd, status, notes, targetShift);
+      if (rMoved?.error) throw new Error(rMoved.message || rMoved.error);
+      createdIds.push(rMoved.id);
+      if (split.after) {
+        const r = await api.createProgrammeItem(
+          zoneId,
+          activityId,
+          split.after.start_date,
+          split.after.end_date,
+          status,
+          notes,
+          origShift
+        );
+        if (r?.error) throw new Error(r.message || r.error);
+        createdIds.push(r.id);
+      }
+      await api.deleteProgrammeItem(item.id);
+      setUndoState({
+        type: 'item_patch',
+        itemId: Number(item.id),
+        label: 'Revert last per-day activity move',
+        at: new Date().toISOString(),
+        before: {
+          start_date: String(item.start_date),
+          end_date: String(item.end_date),
+          shift: origShift,
+        },
+      });
+      await load();
+    } catch (e) {
+      for (const id of createdIds) {
+        try {
+          await api.deleteProgrammeItem(id);
+        } catch (_) {}
+      }
+      await load();
+      throw e;
+    }
+  }
+
+  async function commitPlanActivityDrop(moved, sourceDay, sourceShift, targetDay, targetShift) {
+    if (isSundayOrBankHolidayKey(targetDay)) {
       window.alert('Bank holidays are non-working — drop on another day.');
       return;
     }
     if (String(moved.status || '').toLowerCase() === 'done') return;
-    const shiftLabel = shiftKey === 'night' ? 'night' : 'day';
-    if (
-      !window.confirm(
-        `Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?\nOther activities in this zone will stay where they are.`
-      )
-    ) {
+
+    const src = normalizeScheduleStartKey(sourceDay);
+    const tgt = normalizeScheduleStartKey(targetDay);
+    const srcShift = sourceShift === 'night' ? 'night' : 'day';
+    const tgtShift = targetShift === 'night' ? 'night' : 'day';
+    if (src === tgt && srcShift === tgtShift) return;
+
+    const split = splitProgrammeItemAtDay(moved, src);
+    const shiftLabel = tgtShift === 'night' ? 'night' : 'day';
+    const dayOnly = split?.isOnlyDay;
+    const action =
+      src === tgt
+        ? `Move ${moved.activity_name} on ${tgt} to ${shiftLabel} shift only?`
+        : dayOnly
+          ? `Move ${moved.activity_name} to ${tgt} (${shiftLabel} shift)?`
+          : `Move one day of ${moved.activity_name} (${src}) to ${tgt} (${shiftLabel} shift)?\nOther days of this activity stay where they are.`;
+
+    if (!window.confirm(`${action}\nOther activities in this zone will not move.`)) return;
+
+    if (dayOnly) {
+      await patchProgrammeItem(moved, {
+        start_date: tgt,
+        end_date: endOfScheduleableSpan(tgt, 1),
+        shift: tgtShift,
+      });
       return;
     }
-    const dur = countScheduleableDaysInclusive(moved.start_date, moved.end_date);
-    const nextStart = normalizeScheduleStartKey(dk);
-    await patchProgrammeItem(moved, {
-      start_date: nextStart,
-      end_date: endOfScheduleableSpan(nextStart, dur),
-      shift: shiftKey,
-    });
+
+    await splitAndApplyDayMove(moved, src, tgt, tgtShift);
   }
 
   useEffect(() => {
-    if (!dragState || !isAdmin) return undefined;
+    if (!dragState || !isAdmin) {
+      setDragHover(null);
+      setDragPointer(null);
+      return undefined;
+    }
+
+    function onPointerMove(e) {
+      setDragPointer({ x: e.clientX, y: e.clientY });
+      const cell = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-plan-drop-cell]');
+      if (!cell) {
+        setDragHover(null);
+        return;
+      }
+      const dk = cell.getAttribute('data-plan-day');
+      const shiftKey = cell.getAttribute('data-plan-shift') || 'day';
+      const zoneId = Number(cell.getAttribute('data-plan-zone-id'));
+      if (!dk || Number(dragState.zoneId) !== zoneId) {
+        setDragHover(null);
+        return;
+      }
+      setDragHover({ day: dk, shift: shiftKey, zoneId });
+    }
 
     async function onPointerUp(e) {
       const target = document.elementFromPoint(e.clientX, e.clientY);
       const cell = target?.closest?.('[data-plan-drop-cell]');
       if (!cell) {
         setDragState(null);
+        setDragHover(null);
+        setDragPointer(null);
         return;
       }
       const dk = cell.getAttribute('data-plan-day');
@@ -831,50 +945,73 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       const zoneId = Number(cell.getAttribute('data-plan-zone-id'));
       if (!dk || Number(dragState.zoneId) !== zoneId) {
         setDragState(null);
+        setDragHover(null);
+        setDragPointer(null);
         return;
       }
       try {
-        await commitPlanActivityDrop(dragState.item, dk, shiftKey);
+        await commitPlanActivityDrop(
+          dragState.item,
+          dragState.sourceDay,
+          dragState.sourceShift,
+          dk,
+          shiftKey
+        );
       } catch (err) {
         window.alert(err?.message || 'Move failed');
       } finally {
         setDragState(null);
+        setDragHover(null);
+        setDragPointer(null);
       }
     }
 
+    window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-    return () => window.removeEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
   }, [dragState, isAdmin]);
 
-  const addActivityScopeTab = useMemo(
-    () => zoneScopeTab(addActivityZone, selectedTabs[0] || tab),
+  const addScopeOptions = useMemo(() => {
+    const fromSelected = [...selectedTabs].filter((t) => permittedTabs.includes(t));
+    return fromSelected.length ? fromSelected : [...permittedTabs];
+  }, [selectedTabs, permittedTabs]);
+
+  const defaultAddScopeTab = useMemo(
+    () => zoneCatalogueScope(addActivityZone, selectedTabs, tab),
     [addActivityZone, selectedTabs, tab]
   );
 
-  const catalogueActivities = useMemo(
-    () => activities.filter((a) => String(a.type || '') === String(addActivityScopeTab || '')),
-    [activities, addActivityScopeTab]
-  );
-
-  async function addActivityToZone(z, { activityKey, customName, startDate: startInput, duration, insertAfter }) {
-    const scopeTab = zoneScopeTab(z, selectedTabs[0] || tab);
+  async function resolveActivityForScope(scopeTab, activityKey, customName) {
     let act;
     if (activityKey === '__custom__') {
       const name = String(customName || '').trim();
       if (!name) throw new Error('Activity name is required');
       const lower = name.toLowerCase();
-      act =
-        activities.find(
-          (a) => String(a.type || '') === String(scopeTab) && String(a.name).toLowerCase() === lower
-        ) || activities.find((a) => String(a.name).toLowerCase() === lower);
+      act = activities.find(
+        (a) => String(a.type || '') === String(scopeTab) && String(a.name).toLowerCase() === lower
+      );
       if (!act) {
-        throw new Error(
-          `"${name}" was not found in the ${drawingTabLabel(scopeTab)} activity catalogue. Add it under Programme or Settings first.`
-        );
+        const res = await api.createActivity(name, scopeTab);
+        if (res?.error && res.error !== 'Activity already exists') {
+          throw new Error(res.message || res.error);
+        }
+        const refreshed = await api.getActivities();
+        const list = Array.isArray(refreshed) ? refreshed : [];
+        setActivities(list);
+        act =
+          list.find(
+            (a) => String(a.type || '') === String(scopeTab) && String(a.name).toLowerCase() === lower
+          ) || list.find((a) => String(a.name).toLowerCase() === lower);
+      }
+      if (!act) {
+        throw new Error(`Could not add "${name}" to the ${drawingTabLabel(scopeTab)} catalogue.`);
       }
       if (String(act.type || '') !== String(scopeTab)) {
         throw new Error(
-          `"${act.name}" is in ${drawingTabLabel(act.type)}, not ${drawingTabLabel(scopeTab)}. Use the matching scope or add it to this catalogue.`
+          `"${act.name}" is in ${drawingTabLabel(act.type)}, not ${drawingTabLabel(scopeTab)}. Pick another name or scope.`
         );
       }
     } else {
@@ -884,40 +1021,26 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         throw new Error(`Selected activity is not in the ${drawingTabLabel(scopeTab)} catalogue.`);
       }
     }
+    return act;
+  }
+
+  async function addActivityToZone(z, { activityKey, customName, startDate: startInput, duration, scopeTab }) {
+    const scope = scopeTab || zoneCatalogueScope(z, selectedTabs, tab);
+    const act = await resolveActivityForScope(scope, activityKey, customName);
     const start = normalizeScheduleStartKey(startInput);
     const durationDays = Math.max(1, Number(duration) || 1);
-    const items = [...z.items]
-      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-      .map((x) => ({ ...x }));
-    let idx = items.length;
-    if (insertAfter) {
-      const afterIdx = items.findIndex(
-        (it) => String(it.activity_name).toLowerCase() === String(insertAfter).trim().toLowerCase()
-      );
-      idx = afterIdx >= 0 ? afterIdx + 1 : items.length;
-    }
     const end = endOfScheduleableSpan(start, durationDays);
-    items.splice(idx, 0, {
-      id: `tmp_${Date.now()}`,
-      zone_id: z.zone_id,
-      activity_id: Number(act.id),
-      activity_name: act.name,
-      start_date: start,
-      end_date: end,
-      status: 'planned',
-      notes: '',
-    });
-    let cursor = idx === 0 ? items[0].start_date : nextScheduleableDayKey(items[idx - 1].end_date);
-    for (let i = idx; i < items.length; i++) {
-      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-      items[i] = {
-        ...items[i],
-        start_date: normalizeScheduleStartKey(cursor),
-        end_date: endOfScheduleableSpan(normalizeScheduleStartKey(cursor), dur),
-      };
-      cursor = nextScheduleableDayKey(items[i].end_date);
-    }
-    await applyZoneRows(z.zone_id, z.items, items);
+    const out = await api.createProgrammeItem(
+      z.zone_id,
+      Number(act.id),
+      start,
+      end,
+      'planned',
+      '',
+      'day'
+    );
+    if (out?.error) throw new Error(out.message || out.error);
+    await load();
   }
 
   async function deleteActivityFromZone(zoneId, zoneItems, itemId) {
@@ -1135,15 +1258,45 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         open={Boolean(addActivityZone)}
         onClose={() => setAddActivityZone(null)}
         zoneLabel={addActivityZone ? zoneRowLabel(addActivityZone) : ''}
-        scopeLabel={drawingTabLabel(addActivityScopeTab)}
+        scopeOptions={addScopeOptions}
+        defaultScopeTab={defaultAddScopeTab}
+        activities={activities}
         zoneItems={addActivityZone?.items || []}
-        catalogueActivities={catalogueActivities}
         defaultStartDate={dayColumns[0] || startDate}
         onConfirm={async (form) => {
           if (!addActivityZone) return;
           await addActivityToZone(addActivityZone, form);
         }}
       />
+      {dragState && dragPointer && !printLayout && (
+        <div
+          className="plan-no-print"
+          aria-hidden
+          style={{
+            position: 'fixed',
+            left: dragPointer.x + 12,
+            top: dragPointer.y + 12,
+            zIndex: 2200,
+            pointerEvents: 'none',
+            background: actColor(dragState.item.activity_name, 0.92),
+            color: '#1a1a2e',
+            fontWeight: 700,
+            fontSize: 11,
+            padding: '6px 10px',
+            borderRadius: 6,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+            maxWidth: 180,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {abbrevActivity(dragState.item.activity_name)}
+          {dragHover
+            ? ` → ${formatShort(new Date(dragHover.day + 'T12:00:00'))} (${dragHover.shift})`
+            : ''}
+        </div>
+      )}
       <PageHeader
         className="plan-no-print page-header--plan"
         collapsible
@@ -1644,11 +1797,18 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                               ]
                                 .filter(Boolean)
                                 .join(' ');
+                              const isDropHover =
+                                dragHover &&
+                                dragHover.zoneId === z.zone_id &&
+                                dragHover.day === dk &&
+                                dragHover.shift === shiftKey;
                               const baseBg = colGrey
                                 ? 'rgba(26,26,46,0.04)'
-                                : isNight
-                                  ? 'rgba(0,0,0,0.08)'
-                                  : 'rgba(26,26,46,0.02)';
+                                : isDropHover
+                                  ? 'rgba(52, 152, 219, 0.28)'
+                                  : isNight
+                                    ? 'rgba(0,0,0,0.08)'
+                                    : 'rgba(26,26,46,0.02)';
                               return (
                                 <td
                                   key={`${dk}-${shiftKey}`}
@@ -1682,10 +1842,11 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                       const compInfo = done ? completionInfoForRowOnDay(it, dk, comp) : null;
                                       return (
                                         <PlanActivityChip
-                                          key={it.id}
+                                          key={`${it.id}-${dk}-${shiftKey}`}
                                           it={it}
                                           z={z}
                                           dk={dk}
+                                          shiftKey={shiftKey}
                                           isAdmin={isAdmin}
                                           done={done}
                                           completionAt={printLayout ? undefined : compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
@@ -1695,6 +1856,12 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           zoneLabel={zLab}
                                           compact={!!printLayout}
                                           hasDependency={false}
+                                          isDragging={
+                                            dragState &&
+                                            Number(dragState.item.id) === Number(it.id) &&
+                                            dragState.sourceDay === dk &&
+                                            dragState.sourceShift === shiftKey
+                                          }
                                           setDragState={setDragState}
                                           setInspect={setInspect}
                                           onOpenEdit={setChipEdit}
@@ -1859,7 +2026,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: double-click (long press on mobile) to edit dates and shift; drag to move (Day/Night column sets shift). Moves affect one activity only.' : ''}
+          {isAdmin ? ' Admin: drag one day at a time — drop target highlights in blue; Day/Night column sets shift. Double-click (long press) to edit dates. Add (+) picks scope (Internals/Groundworks). Other rows stay put.' : ''}
         </PageFooterHint>
       )}
       </div>

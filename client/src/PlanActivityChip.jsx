@@ -7,6 +7,7 @@ export default function PlanActivityChip({
   it,
   z,
   dk,
+  shiftKey = 'day',
   isAdmin,
   done,
   completionAt,
@@ -15,6 +16,7 @@ export default function PlanActivityChip({
   label,
   zoneLabel,
   compact = false,
+  isDragging = false,
   setDragState,
   setInspect,
   onOpenEdit,
@@ -63,7 +65,13 @@ export default function PlanActivityChip({
         const dy = e.clientY - p.startY;
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
         p.active = true;
-        setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it });
+        setDragState({
+          zoneId: z.zone_id,
+          zoneItems: z.items,
+          item: it,
+          sourceDay: dk,
+          sourceShift: shiftKey,
+        });
       }}
       onPointerUp={() => {
         pointerDragRef.current = null;
@@ -91,7 +99,7 @@ export default function PlanActivityChip({
         lineHeight: compact ? 1 : 1.15,
         padding: compact ? undefined : '4px 5px',
         borderRadius: compact ? 2 : 4,
-        opacity: done ? 0.72 : 1,
+        opacity: isDragging ? 0.35 : done ? 0.72 : 1,
         display: 'flex',
         alignItems: 'center',
         gap: compact ? 0 : 4,

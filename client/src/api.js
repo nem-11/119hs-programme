@@ -137,7 +137,7 @@ export const resequenceAllZones=()=>api('POST','/api/admin/resequence-all-zones'
 export const setZoneAnchors=(entries)=>api('POST','/api/admin/set-zone-anchors',{entries});
 export const getProgrammeItemsByDrawing=(drawingId)=>api('GET',`/api/programme-items/drawing/${drawingId}`);
 export const getProgrammeItemsByZone=(zoneId)=>api('GET',`/api/programme-items/zone/${zoneId}`);
-export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes});
+export const createProgrammeItem=(zone_id,activity_id,start_date,end_date,status,notes,shift)=>api('POST','/api/programme-items',{zone_id,activity_id,start_date,end_date,status,notes,shift});
 export const updateProgrammeItem=(id,patch)=>api('PUT',`/api/programme-items/${id}`,patch);
 export const deleteProgrammeItem=(id)=>api('DELETE',`/api/programme-items/${id}`);
 export const getDependencies=(itemType,itemId)=>{

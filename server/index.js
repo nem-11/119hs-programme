@@ -565,11 +565,11 @@ app.get('/api/programme-items/zone/:zid', auth, perm.programmeItemsReader, (req,
   res.json(db.getProgrammeItemsByZone(req.params.zid));
 });
 app.post('/api/programme-items', auth, programmeEditor, (req, res) => {
-  const { zone_id, activity_id, start_date, end_date, status, notes } = req.body;
+  const { zone_id, activity_id, start_date, end_date, status, notes, shift } = req.body;
   if (!zone_id || !activity_id || !start_date || !end_date) return res.status(400).json({ error: 'Missing fields' });
   const zchk = perm.assertZoneTabAllowed(db, req.user, zone_id);
   if (!zchk.ok) return res.status(403).json({ error: 'Zone not permitted' });
-  const r = db.addProgrammeItem(zone_id, activity_id, start_date, end_date, status, notes);
+  const r = db.addProgrammeItem(zone_id, activity_id, start_date, end_date, status, notes, shift);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
 app.put('/api/programme-items/:id', auth, programmeEditor, (req, res) => {
