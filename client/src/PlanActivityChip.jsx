@@ -26,6 +26,7 @@ export default function PlanActivityChip({
   setInspect,
   onOpenEdit,
   applyZoneRows,
+  onPatchItem,
   hasDependency,
   onShiftToggle,
 }) {
@@ -71,14 +72,18 @@ export default function PlanActivityChip({
     } else if (cmd.startsWith('move ')) {
       const nk = normalizeScheduleStartKey(action.slice(5).trim());
       const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-      items[idx].start_date = nk;
-      items[idx].end_date = endOfScheduleableSpan(nk, dur);
-      await applyZoneRows(z.zone_id, z.items, items);
+      if (!onPatchItem) return;
+      await onPatchItem(it, {
+        start_date: nk,
+        end_date: endOfScheduleableSpan(nk, dur),
+      });
       return;
     } else if (cmd.startsWith('duration ')) {
       const d = Math.max(1, Number(action.slice(9).trim()) || 1);
-      items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, d);
-      await applyZoneRows(z.zone_id, z.items, items);
+      if (!onPatchItem) return;
+      await onPatchItem(it, {
+        end_date: endOfScheduleableSpan(items[idx].start_date, d),
+      });
       return;
     } else {
       window.alert('Unknown command. Use move YYYY-MM-DD, duration N, or delete.');
@@ -101,8 +106,9 @@ export default function PlanActivityChip({
       className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
       title={coarsePointer || compact ? it.activity_name : undefined}
       draggable={isAdmin && !done && !compact}
-      onDragStart={() => {
+      onDragStart={(e) => {
         draggedRef.current = true;
+        e.dataTransfer.effectAllowed = 'move';
         setDragState({ zoneId: z.zone_id, zoneItems: z.items, item: it });
       }}
       onDragEnd={() => {
@@ -154,13 +160,16 @@ export default function PlanActivityChip({
       }}
       onClick={async (e) => {
         if (compact) return;
+        if (draggedRef.current) {
+          e.preventDefault();
+          return;
+        }
         if (longPressTriggeredRef.current) {
           longPressTriggeredRef.current = false;
           e.preventDefault();
           return;
         }
         if (onShiftToggle && isAdmin) {
-          if (draggedRef.current) return;
           e.preventDefault();
           clearClickTimer();
           try {

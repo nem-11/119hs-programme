@@ -711,7 +711,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     onSelectedTabsChange([...permittedTabs]);
   }
 
-  async function applyZoneRows(zoneId, zoneItems, nextItems) {
+  async function applyZoneRows(zoneId, zoneItems, nextItems, undoLabel = 'Revert last activity add/delete in selected zone') {
     const payload = (nextItems || []).map((r) => {
       const c = clampProgrammeItemToScheduleableRange(r.start_date, r.end_date);
       return {
@@ -730,7 +730,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     setUndoState({
       type: 'zone_rows',
       zoneId,
-      label: 'Revert last activity edit/move/add/delete in selected zone',
+      label: undoLabel,
       at: new Date().toISOString(),
       rowsBefore: zoneItems.map((r) => ({
         activity_id: Number(r.activity_id),
@@ -741,6 +741,46 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         shift: programmeItemShift(r),
       })),
     });
+    await load();
+  }
+
+  /** Move or resize one programme row without touching other activities in the zone. */
+  async function patchProgrammeItem(it, patch, undoLabel = 'Revert last activity move/edit in selected zone') {
+    const before = {
+      start_date: String(it.start_date),
+      end_date: String(it.end_date),
+      shift: programmeItemShift(it),
+    };
+    const nextStart = patch.start_date != null ? patch.start_date : it.start_date;
+    const nextEnd = patch.end_date != null ? patch.end_date : it.end_date;
+    const c = clampProgrammeItemToScheduleableRange(nextStart, nextEnd);
+    const payload = {
+      start_date: c.start_date,
+      end_date: c.end_date,
+    };
+    if (patch.shift != null) payload.shift = patch.shift;
+    const out = await api.updateProgrammeItem(it.id, payload);
+    if (out?.error) throw new Error(out.message || out.error);
+    setUndoState({
+      type: 'item_patch',
+      itemId: Number(it.id),
+      label: undoLabel,
+      at: new Date().toISOString(),
+      before,
+    });
+    await load();
+  }
+
+  async function runUndo() {
+    if (!undoState) return;
+    if (undoState.type === 'zone_rows') {
+      await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
+    } else if (undoState.type === 'item_patch') {
+      await api.updateProgrammeItem(undoState.itemId, undoState.before);
+    } else if (undoState.type === 'delete_zone') {
+      await api.restorePlanZone(undoState.snapshot);
+    }
+    setUndoState(null);
     await load();
   }
 
@@ -1071,13 +1111,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                 type="button"
                 onClick={async () => {
                   try {
-                    if (undoState.type === 'zone_rows') {
-                      await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
-                    } else if (undoState.type === 'delete_zone') {
-                      await api.restorePlanZone(undoState.snapshot);
-                    }
-                    setUndoState(null);
-                    await load();
+                    await runUndo();
                   } catch (e) {
                     window.alert(e?.message || 'Undo failed');
                   }
@@ -1259,13 +1293,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                   onClick={async () => {
                     if (!undoState) return;
                     try {
-                      if (undoState.type === 'zone_rows') {
-                        await api.replacePlanZoneItems(undoState.zoneId, undoState.rowsBefore);
-                      } else if (undoState.type === 'delete_zone') {
-                        await api.restorePlanZone(undoState.snapshot);
-                      }
-                      setUndoState(null);
-                      await load();
+                      await runUndo();
                     } catch (e) {
                       window.alert(e?.message || 'Undo failed');
                     }
@@ -1569,7 +1597,9 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                   onDragOver={(e) => {
                                     if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
                                   }}
-                                  onDrop={async () => {
+                                  onDrop={async (e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
                                     if (!isAdmin || !dragState) return;
                                     if (isSundayOrBankHolidayKey(dk)) {
                                       window.alert('Bank holidays are non-working — drop on another day.');
@@ -1580,20 +1610,19 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                       const moved = dragState.item;
                                       if (String(moved.status || '').toLowerCase() === 'done') return;
                                       const shiftLabel = shiftKey === 'night' ? 'night' : 'day';
-                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?`)) {
+                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk} (${shiftLabel} shift)?\nOther activities in this zone will stay where they are.`)) {
                                         setDragState(null);
                                         return;
                                       }
-                                      const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
-                                      const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
-                                      if (idx < 0) return;
-                                      const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-                                      items[idx].start_date = normalizeScheduleStartKey(dk);
-                                      items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
-                                      items[idx].shift = shiftKey;
-                                      await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
-                                    } catch (e) {
-                                      window.alert(e?.message || 'Move failed');
+                                      const dur = countScheduleableDaysInclusive(moved.start_date, moved.end_date);
+                                      const nextStart = normalizeScheduleStartKey(dk);
+                                      await patchProgrammeItem(moved, {
+                                        start_date: nextStart,
+                                        end_date: endOfScheduleableSpan(nextStart, dur),
+                                        shift: shiftKey,
+                                      });
+                                    } catch (err) {
+                                      window.alert(err?.message || 'Move failed');
                                     } finally {
                                       setDragState(null);
                                     }
@@ -1627,6 +1656,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           setInspect={setInspect}
                                           onOpenEdit={setChipEdit}
                                           applyZoneRows={applyZoneRows}
+                                          onPatchItem={patchProgrammeItem}
                                           onShiftToggle={isAdmin && !printLayout ? toggleItemShift : undefined}
                                         />
                                       );
