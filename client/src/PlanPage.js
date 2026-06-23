@@ -22,6 +22,8 @@ import {
   completionInfoForRowOnDay,
   programmeItemShift,
   splitProgrammeItemAtDay,
+  scheduleableDayDelta,
+  shiftScheduleableDayKey,
 } from './planUtils';
 import { parseZoneGeometry, geomBBox } from './zoneGeom';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
@@ -29,6 +31,7 @@ import './planPrint.css';
 import ActivityInspectModal from './ActivityInspectModal';
 import ActivityChipEditModal from './ActivityChipEditModal';
 import PlanAddActivityModal from './PlanAddActivityModal';
+import PlanMoveChoiceModal from './PlanMoveChoiceModal';
 import PlanActivityChip from './PlanActivityChip';
 import { clearPrintPageSize, setPrintPageSize, mmToPrintPx, printableAreaPx } from './printPage';
 
@@ -282,6 +285,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   const [dragState, setDragState] = useState(null);
   const [dragHover, setDragHover] = useState(null);
   const [dragPointer, setDragPointer] = useState(null);
+  const [moveChoice, setMoveChoice] = useState(null);
+  const [moveChoiceBusy, setMoveChoiceBusy] = useState(false);
   const [undoState, setUndoState] = useState(null);
   const [dismissedClashKey, setDismissedClashKey] = useState('');
 
@@ -870,7 +875,58 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     }
   }
 
-  async function commitPlanActivityDrop(moved, sourceDay, sourceShift, targetDay, targetShift) {
+  async function applySingleItemMove(moved, sourceDay, sourceShift, targetDay, targetShift) {
+    const src = normalizeScheduleStartKey(sourceDay);
+    const tgt = normalizeScheduleStartKey(targetDay);
+    const tgtShift = targetShift === 'night' ? 'night' : 'day';
+    const split = splitProgrammeItemAtDay(moved, src);
+    const dayOnly = split?.isOnlyDay;
+
+    if (dayOnly) {
+      await patchProgrammeItem(moved, {
+        start_date: tgt,
+        end_date: endOfScheduleableSpan(tgt, 1),
+        shift: tgtShift,
+      });
+      return;
+    }
+
+    await splitAndApplyDayMove(moved, src, tgt, tgtShift);
+  }
+
+  async function applyProgrammeShiftMove(moved, sourceDay, targetDay, targetShift, zoneItems) {
+    const tgtShift = targetShift === 'night' ? 'night' : 'day';
+    const delta = scheduleableDayDelta(sourceDay, targetDay);
+    const newStart = shiftScheduleableDayKey(moved.start_date, delta);
+    const newEnd = shiftScheduleableDayKey(moved.end_date, delta);
+    const items = [...zoneItems]
+      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+      .map((x) => ({ ...x }));
+    const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
+    if (idx < 0) throw new Error('Activity not found');
+
+    items[idx] = {
+      ...items[idx],
+      start_date: newStart,
+      end_date: newEnd,
+      shift: tgtShift,
+    };
+
+    let cursor = nextScheduleableDayKey(items[idx].end_date);
+    for (let i = idx + 1; i < items.length; i++) {
+      const dur = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+      items[i] = {
+        ...items[i],
+        start_date: normalizeScheduleStartKey(cursor),
+        end_date: endOfScheduleableSpan(normalizeScheduleStartKey(cursor), dur),
+      };
+      cursor = nextScheduleableDayKey(items[i].end_date);
+    }
+
+    await applyZoneRows(Number(moved.zone_id), zoneItems, items, 'Revert programme shift move');
+  }
+
+  function openMoveChoice(moved, sourceDay, sourceShift, targetDay, targetShift, zoneItems) {
     if (isSundayOrBankHolidayKey(targetDay)) {
       window.alert('Bank holidays are non-working — drop on another day.');
       return;
@@ -883,28 +939,40 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
     const tgtShift = targetShift === 'night' ? 'night' : 'day';
     if (src === tgt && srcShift === tgtShift) return;
 
-    const split = splitProgrammeItemAtDay(moved, src);
-    const shiftLabel = tgtShift === 'night' ? 'night' : 'day';
-    const dayOnly = split?.isOnlyDay;
-    const action =
-      src === tgt
-        ? `Move ${moved.activity_name} on ${tgt} to ${shiftLabel} shift only?`
-        : dayOnly
-          ? `Move ${moved.activity_name} to ${tgt} (${shiftLabel} shift)?`
-          : `Move one day of ${moved.activity_name} (${src}) to ${tgt} (${shiftLabel} shift)?\nOther days of this activity stay where they are.`;
+    setMoveChoice({ moved, sourceDay: src, sourceShift: srcShift, targetDay: tgt, targetShift: tgtShift, zoneItems });
+  }
 
-    if (!window.confirm(`${action}\nOther activities in this zone will not move.`)) return;
-
-    if (dayOnly) {
-      await patchProgrammeItem(moved, {
-        start_date: tgt,
-        end_date: endOfScheduleableSpan(tgt, 1),
-        shift: tgtShift,
-      });
-      return;
+  async function confirmMoveChoice(mode) {
+    if (!moveChoice || moveChoiceBusy) return;
+    setMoveChoiceBusy(true);
+    try {
+      if (mode === 'single') {
+        await applySingleItemMove(
+          moveChoice.moved,
+          moveChoice.sourceDay,
+          moveChoice.sourceShift,
+          moveChoice.targetDay,
+          moveChoice.targetShift
+        );
+      } else {
+        await applyProgrammeShiftMove(
+          moveChoice.moved,
+          moveChoice.sourceDay,
+          moveChoice.targetDay,
+          moveChoice.targetShift,
+          moveChoice.zoneItems
+        );
+      }
+      setMoveChoice(null);
+    } catch (err) {
+      window.alert(err?.message || 'Move failed');
+    } finally {
+      setMoveChoiceBusy(false);
     }
+  }
 
-    await splitAndApplyDayMove(moved, src, tgt, tgtShift);
+  async function commitPlanActivityDrop(moved, sourceDay, sourceShift, targetDay, targetShift, zoneItems) {
+    openMoveChoice(moved, sourceDay, sourceShift, targetDay, targetShift, zoneItems);
   }
 
   useEffect(() => {
@@ -955,7 +1023,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           dragState.sourceDay,
           dragState.sourceShift,
           dk,
-          shiftKey
+          shiftKey,
+          dragState.zoneItems
         );
       } catch (err) {
         window.alert(err?.message || 'Move failed');
@@ -1252,6 +1321,18 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         }}
         onSaveSchedule={async (row, patch) => {
           await patchProgrammeItem(row, patch, 'Revert last activity schedule edit');
+        }}
+      />
+      <PlanMoveChoiceModal
+        open={Boolean(moveChoice)}
+        activityName={moveChoice?.moved?.activity_name || ''}
+        targetDay={moveChoice?.targetDay || ''}
+        targetShift={moveChoice?.targetShift || 'day'}
+        busy={moveChoiceBusy}
+        onSingle={() => confirmMoveChoice('single')}
+        onProgramme={() => confirmMoveChoice('programme')}
+        onCancel={() => {
+          if (!moveChoiceBusy) setMoveChoice(null);
         }}
       />
       <PlanAddActivityModal
@@ -2026,7 +2107,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: drag one day at a time — drop target highlights in blue; Day/Night column sets shift. Double-click (long press) to edit dates. Add (+) picks scope (Internals/Groundworks). Other rows stay put.' : ''}
+          {isAdmin ? ' Admin: on drop, choose one item only or shift programme. Drag target highlights in blue. Double-click (long press) to edit. Add (+) picks scope.' : ''}
         </PageFooterHint>
       )}
       </div>

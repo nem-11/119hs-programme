@@ -98,6 +98,40 @@ export function nextScheduleableDayKey(dayKey) {
   return dateKey(d);
 }
 
+/** Signed scheduleable-day offset from one day key to another. */
+export function scheduleableDayDelta(fromKey, toKey) {
+  const a = normalizeScheduleStartKey(fromKey);
+  const b = normalizeScheduleStartKey(toKey);
+  if (a === b) return 0;
+  if (a < b) {
+    let cur = a;
+    let n = 0;
+    while (cur < b) {
+      cur = nextScheduleableDayKey(cur);
+      n++;
+    }
+    return n;
+  }
+  let cur = a;
+  let n = 0;
+  while (cur > b) {
+    cur = prevScheduleableDayBefore(cur);
+    n--;
+  }
+  return n;
+}
+
+/** Move a day key forward/back by N scheduleable days. */
+export function shiftScheduleableDayKey(dayKey, delta) {
+  let cur = normalizeScheduleStartKey(dayKey);
+  if (delta > 0) {
+    for (let i = 0; i < delta; i++) cur = nextScheduleableDayKey(cur);
+  } else if (delta < 0) {
+    for (let i = 0; i < -delta; i++) cur = prevScheduleableDayBefore(cur);
+  }
+  return cur;
+}
+
 /** Last scheduleable day on or before this calendar day (for anchor end dates). */
 export function lastScheduleableDayOnOrBefore(dayKey) {
   let d = new Date(String(dayKey).trim() + 'T12:00:00');
