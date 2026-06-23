@@ -61,6 +61,24 @@ body.plan-print-mode {
   box-shadow: 0 1px 0 rgba(26, 26, 46, 0.1);
 }
 
+.plan-grid-table thead.plan-date-head tr.plan-shift-head th {
+  top: 38px;
+  z-index: 2;
+}
+
+.plan-day-cell--night,
+.plan-shift-col--night {
+  background: rgba(0, 0, 0, 0.08);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body.plan-print-mode .plan-day-cell--night,
+body.plan-print-mode .plan-shift-col--night {
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
 .plan-grid-table thead th.plan-zone-col--head {
   left: 0;
   z-index: 4;

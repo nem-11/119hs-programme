@@ -20,6 +20,7 @@ import {
   asCompletionsMap,
   isProgrammeItemDoneOnDay,
   completionInfoForRowOnDay,
+  programmeItemShift,
 } from './planUtils';
 import { parseZoneGeometry, geomBBox } from './zoneGeom';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
@@ -107,7 +108,7 @@ const PDF_PAPER_SIZES = ['A4', 'A3', 'A2', 'A1', 'A0'];
  * grid cell (36px) so capacity tracks what actually fits per sheet.
  */
 const PRINT_ROW_PX = 28;
-const PRINT_TABLE_HEAD_PX = mmToPrintPx(9);
+const PRINT_TABLE_HEAD_PX = mmToPrintPx(13);
 const PRINT_PAGE_TITLE_PX = mmToPrintPx(14);
 const PRINT_LEGEND_PX = mmToPrintPx(14);
 const PRINT_ZONE_COL_PX = mmToPrintPx(32);
@@ -122,7 +123,7 @@ function paperCapacity(paper, orientation, { includeHeader = true, includeLegend
   let overheadPx = PRINT_TABLE_HEAD_PX;
   if (includeHeader) overheadPx += PRINT_PAGE_TITLE_PX;
   if (includeLegend) overheadPx += PRINT_LEGEND_PX;
-  const cols = Math.max(1, Math.floor((widthPx - PRINT_ZONE_COL_PX) / PRINT_DAY_COL_PX));
+  const cols = Math.max(1, Math.floor((widthPx - PRINT_ZONE_COL_PX) / (PRINT_DAY_COL_PX * 2)));
   const rows = Math.max(1, Math.floor((heightPx - overheadPx) / PRINT_ROW_PX));
   return { rows, cols };
 }
@@ -143,7 +144,7 @@ function printGridGeometry(
   const cols = Math.max(1, sanitizePerPage(colsPerPage, 1));
   const rowPx = Math.max(16, Math.floor((heightPx - overheadPx) / rows));
   const zoneColPx = PRINT_ZONE_COL_PX;
-  const dayColPx = Math.max(10, Math.floor((widthPx - zoneColPx) / cols));
+  const dayColPx = Math.max(10, Math.floor((widthPx - zoneColPx) / (cols * 2)));
   return { rowPx, zoneColPx, dayColPx, rows, cols };
 }
 
@@ -739,6 +740,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         end_date: c.end_date,
         status: r.status || 'planned',
         notes: r.notes || '',
+        shift: programmeItemShift(r),
       };
     });
     const out = await api.replacePlanZoneItems(zoneId, payload);
@@ -756,10 +758,28 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         end_date: String(r.end_date),
         status: r.status || 'planned',
         notes: r.notes || '',
+        shift: programmeItemShift(r),
       })),
     });
     await load();
   }
+
+  const toggleItemShift = useCallback(async (it) => {
+    const prev = programmeItemShift(it);
+    const next = prev === 'night' ? 'day' : 'night';
+    setRows((prevRows) =>
+      prevRows.map((r) => (Number(r.id) === Number(it.id) ? { ...r, shift: next } : r))
+    );
+    try {
+      const out = await api.updateProgrammeItem(it.id, { shift: next });
+      if (out?.error) throw new Error(out.error);
+    } catch (e) {
+      setRows((prevRows) =>
+        prevRows.map((r) => (Number(r.id) === Number(it.id) ? { ...r, shift: prev } : r))
+      );
+      window.alert(e?.message || 'Shift update failed');
+    }
+  }, []);
 
   const catalogueActivities = useMemo(
     () => activities.filter((a) => String(a.type || '') === String(tab || '')),
@@ -1359,13 +1379,17 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                       <colgroup>
                         <col className="plan-print-zone-col" />
                         {pageCols.map((dk) => (
-                          <col key={dk} className="plan-print-day-col" />
+                          <React.Fragment key={dk}>
+                            <col className="plan-print-day-col plan-print-day-col--day" />
+                            <col className="plan-print-day-col plan-print-day-col--night" />
+                          </React.Fragment>
                         ))}
                       </colgroup>
                     )}
                     <thead className="plan-date-head">
                       <tr>
                         <th
+                          rowSpan={2}
                           className="plan-zone-col plan-zone-col--head"
                           style={{
                             textAlign: 'left',
@@ -1378,6 +1402,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                             minWidth: printLayout ? undefined : 140,
                             maxWidth: printLayout ? undefined : 220,
                             width: printLayout ? undefined : 180,
+                            verticalAlign: 'middle',
                           }}
                         >
                           Zone
@@ -1389,6 +1414,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                           return (
                             <th
                               key={dk}
+                              colSpan={2}
                               className="plan-date-col"
                               role={printLayout ? undefined : 'button'}
                               tabIndex={printLayout ? undefined : 0}
@@ -1411,8 +1437,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                 fontWeight: 700,
                                 color: T.text,
                                 textAlign: 'center',
-                                minWidth: printLayout ? undefined : 56,
-                                maxWidth: printLayout ? undefined : 72,
+                                minWidth: printLayout ? undefined : 112,
                                 background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
                                 boxShadow: !printLayout && isToday ? `inset 0 3px 0 0 rgba(66,133,244,0.85)` : undefined,
                                 cursor: printLayout ? 'default' : 'pointer',
@@ -1426,6 +1451,36 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                 </>
                               )}
                             </th>
+                          );
+                        })}
+                      </tr>
+                      <tr className="plan-shift-head">
+                        {pageCols.map((dk) => {
+                          const colGrey = isNonWorkingPlanDayKey(dk);
+                          const subHeadStyle = {
+                            padding: printLayout ? '1px 1px' : '3px 2px',
+                            borderBottom: `1px solid ${T.hairline}`,
+                            borderLeft: `1px solid ${T.hairline}`,
+                            fontWeight: 600,
+                            fontSize: printLayout ? 7 : 9,
+                            color: T.faint,
+                            textAlign: 'center',
+                            minWidth: printLayout ? undefined : 28,
+                            background: colGrey ? 'rgba(26,26,46,0.06)' : T.surface,
+                            userSelect: 'none',
+                          };
+                          return (
+                            <React.Fragment key={`${dk}-shift-head`}>
+                              <th className="plan-shift-col plan-shift-col--day" style={subHeadStyle}>
+                                Day
+                              </th>
+                              <th
+                                className="plan-shift-col plan-shift-col--night"
+                                style={{ ...subHeadStyle, background: colGrey ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.08)' }}
+                              >
+                                Night
+                              </th>
+                            </React.Fragment>
                           );
                         })}
                       </tr>
@@ -1498,93 +1553,115 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                               )}
                             </div>
                           </td>
-                          {pageCols.map((dk) => {
-                            const hits = z.cells[dk] || [];
+                          {pageCols.flatMap((dk) => {
+                            const allHits = z.cells[dk] || [];
                             const colGrey = isNonWorkingPlanDayKey(dk);
-                            return (
-                              <td
-                                key={dk}
-                                className={printLayout ? 'plan-print-day-cell' : undefined}
-                                style={{
-                                  borderTop: `1px solid ${T.hairline}`,
-                                  borderLeft: `1px solid ${T.hairline}`,
-                                  padding: printLayout ? 1 : 2,
-                                  verticalAlign: 'middle',
-                                  height: printLayout ? printGeometry.rowPx : 36,
-                                  maxHeight: printLayout ? printGeometry.rowPx : 36,
-                                  minHeight: printLayout ? printGeometry.rowPx : 36,
-                                  overflow: printLayout ? 'hidden' : undefined,
-                                  background: colGrey ? 'rgba(26,26,46,0.04)' : 'rgba(26,26,46,0.02)',
-                                }}
-                                onDragOver={(e) => {
-                                  if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
-                                }}
-                                onDrop={async () => {
-                                  if (!isAdmin || !dragState) return;
-                                  if (isSundayOrBankHolidayKey(dk)) {
-                                    window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
-                                    setDragState(null);
-                                    return;
-                                  }
-                                  try {
-                                    const moved = dragState.item;
-                                    if (String(moved.status || '').toLowerCase() === 'done') return;
-                                    if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
+                            const renderShiftCell = (shiftKey) => {
+                              const hits = allHits.filter((it) => programmeItemShift(it) === shiftKey);
+                              const isNight = shiftKey === 'night';
+                              const cellClass = [
+                                printLayout ? 'plan-print-day-cell' : '',
+                                isNight ? 'plan-day-cell--night' : 'plan-day-cell--day',
+                              ]
+                                .filter(Boolean)
+                                .join(' ');
+                              const baseBg = colGrey
+                                ? 'rgba(26,26,46,0.04)'
+                                : isNight
+                                  ? 'rgba(0,0,0,0.08)'
+                                  : 'rgba(26,26,46,0.02)';
+                              return (
+                                <td
+                                  key={`${dk}-${shiftKey}`}
+                                  className={cellClass || undefined}
+                                  style={{
+                                    borderTop: `1px solid ${T.hairline}`,
+                                    borderLeft: `1px solid ${T.hairline}`,
+                                    padding: printLayout ? 1 : 2,
+                                    verticalAlign: 'middle',
+                                    height: printLayout ? printGeometry.rowPx : 36,
+                                    maxHeight: printLayout ? printGeometry.rowPx : 36,
+                                    minHeight: printLayout ? printGeometry.rowPx : 36,
+                                    overflow: printLayout ? 'hidden' : undefined,
+                                    background: baseBg,
+                                    WebkitPrintColorAdjust: 'exact',
+                                    printColorAdjust: 'exact',
+                                  }}
+                                  onDragOver={(e) => {
+                                    if (isAdmin && dragState && !isSundayOrBankHolidayKey(dk)) e.preventDefault();
+                                  }}
+                                  onDrop={async () => {
+                                    if (!isAdmin || !dragState) return;
+                                    if (isSundayOrBankHolidayKey(dk)) {
+                                      window.alert('Sundays and bank holidays are non-working — drop on another day (Saturdays are allowed for manual placement).');
                                       setDragState(null);
                                       return;
                                     }
-                                    const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
-                                    const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
-                                    if (idx < 0) return;
-                                    const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
-                                    items[idx].start_date = normalizeScheduleStartKey(dk);
-                                    items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
-                                    let cursor = nextScheduleableDayKey(items[idx].end_date);
-                                    for (let i = idx + 1; i < items.length; i++) {
-                                      const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
-                                      items[i].start_date = normalizeScheduleStartKey(cursor);
-                                      items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
-                                      cursor = nextScheduleableDayKey(items[i].end_date);
+                                    try {
+                                      const moved = dragState.item;
+                                      if (String(moved.status || '').toLowerCase() === 'done') return;
+                                      if (!window.confirm(`Move ${moved.activity_name} to ${dk}? This will recalculate downstream activities.`)) {
+                                        setDragState(null);
+                                        return;
+                                      }
+                                      const items = [...dragState.zoneItems].sort((a, b) => String(a.start_date).localeCompare(String(b.start_date))).map((x) => ({ ...x }));
+                                      const idx = items.findIndex((x) => Number(x.id) === Number(moved.id));
+                                      if (idx < 0) return;
+                                      const dur = countScheduleableDaysInclusive(items[idx].start_date, items[idx].end_date);
+                                      items[idx].start_date = normalizeScheduleStartKey(dk);
+                                      items[idx].end_date = endOfScheduleableSpan(items[idx].start_date, dur);
+                                      let cursor = nextScheduleableDayKey(items[idx].end_date);
+                                      for (let i = idx + 1; i < items.length; i++) {
+                                        const d = countScheduleableDaysInclusive(items[i].start_date, items[i].end_date);
+                                        items[i].start_date = normalizeScheduleStartKey(cursor);
+                                        items[i].end_date = endOfScheduleableSpan(items[i].start_date, d);
+                                        cursor = nextScheduleableDayKey(items[i].end_date);
+                                      }
+                                      await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
+                                    } catch (e) {
+                                      window.alert(e?.message || 'Move failed');
+                                    } finally {
+                                      setDragState(null);
                                     }
-                                    await applyZoneRows(dragState.zoneId, dragState.zoneItems, items);
-                                  } catch (e) {
-                                    window.alert(e?.message || 'Move failed');
-                                  } finally {
-                                    setDragState(null);
-                                  }
-                                }}
-                              >
-                                <div className={printLayout ? 'plan-print-cell-inner' : undefined} style={printLayout ? undefined : { display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}>
-                                  {hits.map((it) => {
-                                    const done = isProgrammeItemDoneOnDay(it, dk, comp);
-                                    const label = abbrevActivity(it.activity_name);
-                                    const zLab = zoneRowLabel(z);
-                                    const compInfo = done ? completionInfoForRowOnDay(it, dk, comp) : null;
-                                    return (
-                                      <PlanActivityChip
-                                        key={it.id}
-                                        it={it}
-                                        z={z}
-                                        dk={dk}
-                                        isAdmin={isAdmin}
-                                        done={done}
-                                        completionAt={printLayout ? undefined : compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
-                                        isMobile={isMobile}
-                                        coarsePointer={coarsePointer}
-                                        label={label}
-                                        zoneLabel={zLab}
-                                        compact={!!printLayout}
-                                        hasDependency={printLayout ? false : dependencyLinkedKeys.has(`programme_item:${it.id}`)}
-                                        setDragState={setDragState}
-                                        setInspect={setInspect}
-                                        onOpenEdit={setChipEdit}
-                                        applyZoneRows={applyZoneRows}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              </td>
-                            );
+                                  }}
+                                >
+                                  <div
+                                    className={printLayout ? 'plan-print-cell-inner' : undefined}
+                                    style={printLayout ? undefined : { display: 'flex', flexDirection: 'column', gap: 2, minHeight: 32 }}
+                                  >
+                                    {hits.map((it) => {
+                                      const done = isProgrammeItemDoneOnDay(it, dk, comp);
+                                      const label = abbrevActivity(it.activity_name);
+                                      const zLab = zoneRowLabel(z);
+                                      const compInfo = done ? completionInfoForRowOnDay(it, dk, comp) : null;
+                                      return (
+                                        <PlanActivityChip
+                                          key={it.id}
+                                          it={it}
+                                          z={z}
+                                          dk={dk}
+                                          isAdmin={isAdmin}
+                                          done={done}
+                                          completionAt={printLayout ? undefined : compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
+                                          isMobile={isMobile}
+                                          coarsePointer={coarsePointer}
+                                          label={label}
+                                          zoneLabel={zLab}
+                                          compact={!!printLayout}
+                                          hasDependency={printLayout ? false : dependencyLinkedKeys.has(`programme_item:${it.id}`)}
+                                          setDragState={setDragState}
+                                          setInspect={setInspect}
+                                          onOpenEdit={setChipEdit}
+                                          applyZoneRows={applyZoneRows}
+                                          onShiftToggle={isAdmin && !printLayout ? toggleItemShift : undefined}
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                              );
+                            };
+                            return ['day', 'night'].map(renderShiftCell);
                           })}
                         </tr>
                       ))}
@@ -1738,7 +1815,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: ＋ add, drag to move, double-click (long-press) to delete.' : ''}
+          {isAdmin ? ' Admin: ＋ add, drag to move, click to toggle day/night, double-click (long-press) to edit.' : ''}
         </PageFooterHint>
       )}
       </div>

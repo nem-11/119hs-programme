@@ -27,6 +27,7 @@ export default function PlanActivityChip({
   onOpenEdit,
   applyZoneRows,
   hasDependency,
+  onShiftToggle,
 }) {
   const clickTimerRef = useRef(null);
   const longPressTimerRef = useRef(null);
@@ -143,6 +144,16 @@ export default function PlanActivityChip({
         if (longPressTriggeredRef.current) {
           longPressTriggeredRef.current = false;
           e.preventDefault();
+          return;
+        }
+        if (onShiftToggle && isAdmin) {
+          e.preventDefault();
+          clearClickTimer();
+          try {
+            await onShiftToggle(it);
+          } catch (err) {
+            window.alert(err?.message || 'Shift update failed');
+          }
           return;
         }
         if (coarsePointer) {

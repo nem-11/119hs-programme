@@ -290,3 +290,8 @@ export function isProgrammeRowDone(row, comp, doneKeys) {
   }
   return false;
 }
+
+/** Normalise programme item shift to 'day' or 'night'. */
+export function programmeItemShift(row) {
+  return String(row?.shift || 'day').trim().toLowerCase() === 'night' ? 'night' : 'day';
+}

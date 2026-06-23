@@ -1,0 +1,2 @@
+ALTER TABLE programme_items ADD COLUMN shift TEXT NOT NULL DEFAULT 'day';
+ALTER TABLE schedule ADD COLUMN shift TEXT NOT NULL DEFAULT 'day';

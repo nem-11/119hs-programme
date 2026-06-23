@@ -603,6 +603,7 @@ async function getDb() {
   migrateMilestonesProgrammeItemId();
   migrateProgrammeItemsClampScheduleable();
   migrateProgrammeItemsClampScheduleableV2();
+  migrateShiftColumn();
   migrateProjectProgrammeItems();
   migrateActivityDependencies();
   bootstrapEmptyDatabase();
@@ -742,6 +743,22 @@ function migrateProgrammeItemsClampScheduleable() {
       changed,
       'programme row(s) so dates do not bridge Sundays or England & Wales bank holidays; schedule table updated.'
     );
+  }
+}
+
+function migrateShiftColumn() {
+  const sqlPath = path.join(__dirname, 'sql', 'add-shift-column.sql');
+  if (!fs.existsSync(sqlPath)) return;
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+  const statements = sql
+    .split(';')
+    .map((s) => s.replace(/--[^\n]*/g, '').trim())
+    .filter(Boolean);
+  for (const stmt of statements) {
+    try {
+      db.run(stmt);
+      save();
+    } catch (_) {}
   }
 }
 
@@ -1821,7 +1838,7 @@ module.exports = {
   },
   /** All programme rows with zone + drawing tab for PLAN view and exports. Pass scope tabs or null for no filter. */
   getPlanProgrammeRows: (tabs) => {
-    const base = `SELECT pi.id, pi.zone_id, pi.activity_id, pi.start_date, pi.end_date, pi.status, pi.notes,
+    const base = `SELECT pi.id, pi.zone_id, pi.activity_id, pi.start_date, pi.end_date, pi.status, pi.notes, pi.shift,
               z.name AS zone_name, z.tower, z.drawing_id,
               d.tab AS drawing_tab, d.name AS drawing_name, d.floor AS drawing_floor,
               a.name AS activity_name, a.type AS activity_type
@@ -1892,10 +1909,13 @@ module.exports = {
     const end_date = patch.end_date != null ? patch.end_date : old.end_date;
     const status = patch.status != null ? patch.status : old.status;
     const notes = patch.notes !== undefined ? patch.notes : old.notes;
+    const shiftRaw = patch.shift != null ? patch.shift : old.shift || 'day';
+    const shift = String(shiftRaw).trim().toLowerCase();
+    if (shift !== 'day' && shift !== 'night') return { error: 'shift must be day or night' };
     const { start_date: sd, end_date: ed } = clampProgrammeItemDates(start_date, end_date);
     run(
-      'UPDATE programme_items SET zone_id=?, activity_id=?, start_date=?, end_date=?, status=?, notes=? WHERE id=?',
-      [zone_id, activity_id, sd, ed, status, notes || '', id]
+      'UPDATE programme_items SET zone_id=?, activity_id=?, start_date=?, end_date=?, status=?, notes=?, shift=? WHERE id=?',
+      [zone_id, activity_id, sd, ed, status, notes || '', shift, id]
     );
     const neu = get('SELECT * FROM programme_items WHERE id=?', [id]);
     expandScheduleForItem(neu);
@@ -1938,8 +1958,10 @@ module.exports = {
       const inserted = [];
       for (const r of rows || []) {
         const { start_date: sd, end_date: ed } = clampProgrammeItemDates(r.start_date, r.end_date);
+        const shiftRaw = r.shift != null ? r.shift : 'day';
+        const shift = String(shiftRaw).trim().toLowerCase() === 'night' ? 'night' : 'day';
         runNoSave(
-          'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes) VALUES (?,?,?,?,?,?)',
+          'INSERT INTO programme_items (zone_id,activity_id,start_date,end_date,status,notes,shift) VALUES (?,?,?,?,?,?,?)',
           [
             zid,
             Number(r.activity_id),
@@ -1947,6 +1969,7 @@ module.exports = {
             ed,
             r.status || 'planned',
             r.notes || '',
+            shift,
           ]
         );
         const nid = get('SELECT last_insert_rowid() as id').id;
