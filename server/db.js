@@ -429,6 +429,20 @@ function ensureStandardProgrammeUsers() {
       console.error('[119HS] Could not add user', row.username, e.message);
     }
   }
+  syncModulesEditorProfile();
+}
+
+/** Keep Ryan (modules-editor) role/tabs aligned if the row already exists from an older seed. */
+function syncModulesEditorProfile() {
+  const { DEFAULT_BOOTSTRAP_USERS } = require('./defaultUsers');
+  const row = DEFAULT_BOOTSTRAP_USERS.find((u) => u.username === 'ryan');
+  if (!row) return;
+  const existing = get('SELECT id, role, tabs, name FROM users WHERE username=?', ['ryan']);
+  if (!existing) return;
+  const tabsJson = JSON.stringify(row.tabs);
+  if (existing.role === row.role && existing.tabs === tabsJson && existing.name === row.name) return;
+  run('UPDATE users SET role=?, tabs=?, name=? WHERE username=?', [row.role, tabsJson, row.name, 'ryan']);
+  console.log('[119HS] Synced modules-editor profile for ryan');
 }
 
 /** First boot on an empty database: all standard programme users + starter templates (no demo schedule). */
