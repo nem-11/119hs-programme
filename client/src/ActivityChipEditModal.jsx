@@ -184,6 +184,7 @@ export default function ActivityChipEditModal({
   onDelete,
   onSaveSchedule,
   isAdmin,
+  canEditSchedule = false,
   pickerOptions,
   onDependenciesChange,
   onCompletionChange,
@@ -202,12 +203,13 @@ export default function ActivityChipEditModal({
 
   const itemId = row ? Number(row.id) : null;
   const isComplete = isProgrammeItemDoneOnDay(row, completionDayKey, comp);
+  const canEditDates = Boolean(canEditSchedule || isAdmin);
   const scheduleDirty = useMemo(() => {
-    if (!row || !isAdmin) return false;
+    if (!row || !canEditDates) return false;
     const sd = String(row.start_date || '').trim();
     const ed = String(row.end_date || '').trim();
     return editStart !== sd || editEnd !== ed || editShift !== programmeItemShift(row);
-  }, [row, isAdmin, editStart, editEnd, editShift]);
+  }, [row, canEditDates, editStart, editEnd, editShift]);
 
   useEffect(() => {
     if (!open || !row) return;
@@ -370,7 +372,7 @@ export default function ActivityChipEditModal({
   }
 
   async function handleSaveSchedule() {
-    if (!isAdmin || !onSaveSchedule || !row) return;
+    if (!canEditDates || !onSaveSchedule || !row) return;
     const start = String(editStart || '').trim();
     const end = String(editEnd || '').trim();
     if (!start || !end) {
@@ -475,7 +477,7 @@ export default function ActivityChipEditModal({
           <div style={{ fontSize: 10, fontWeight: 800, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
             Schedule
           </div>
-          {isAdmin && onSaveSchedule ? (
+          {canEditDates && onSaveSchedule ? (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <label style={{ fontSize: 11, color: T.muted, fontWeight: 600 }}>

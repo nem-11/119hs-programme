@@ -8,7 +8,7 @@ export default function PlanActivityChip({
   z,
   dk,
   shiftKey = 'day',
-  isAdmin,
+  canEditPlan = false,
   done,
   completionAt,
   isMobile,
@@ -49,13 +49,13 @@ export default function PlanActivityChip({
       className={compact ? 'plan-activity-chip plan-activity-chip--compact' : undefined}
       title={coarsePointer || compact ? it.activity_name : undefined}
       onDoubleClick={(e) => {
-        if (compact || !isAdmin) return;
+        if (compact || !canEditPlan) return;
         e.preventDefault();
         e.stopPropagation();
         openEditModal();
       }}
       onPointerDown={(e) => {
-        if (!isAdmin || done || compact || e.button !== 0) return;
+        if (!canEditPlan || done || compact || e.button !== 0) return;
         pointerDragRef.current = { startX: e.clientX, startY: e.clientY, active: false };
       }}
       onPointerMove={(e) => {
@@ -80,7 +80,7 @@ export default function PlanActivityChip({
         pointerDragRef.current = null;
       }}
       onTouchStart={() => {
-        if (!coarsePointer || !isAdmin || compact) return;
+        if (!coarsePointer || !canEditPlan || compact) return;
         longPressTriggeredRef.current = false;
         clearLongPressTimer();
         longPressTimerRef.current = setTimeout(() => {
@@ -105,7 +105,7 @@ export default function PlanActivityChip({
         gap: compact ? 0 : 4,
         WebkitPrintColorAdjust: 'exact',
         printColorAdjust: 'exact',
-        cursor: compact ? 'default' : coarsePointer ? 'pointer' : isAdmin ? (done ? 'pointer' : 'grab') : 'default',
+        cursor: compact ? 'default' : coarsePointer ? 'pointer' : canEditPlan ? (done ? 'pointer' : 'grab') : 'default',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as api from './api';
-import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow, buildPermittedScopeTabs, normalizeProgrammeScopeTabs } from './constants';
+import { actColor, dateKey, formatShort, toHtmlDateInputValue, drawingTabLabel, drawingTabForScope, scopeForRow, buildPermittedScopeTabs, normalizeProgrammeScopeTabs, MODULE_PROGRAMME_TAB } from './constants';
 import { T, S } from './uiTheme';
 import PageHeader, { PageFooterHint } from './PageHeader';
 import { useRefreshOnFocus, usePollingWhenVisible, formatLastRefreshed } from './useRefreshOnFocus';
@@ -242,7 +242,7 @@ function zoneCatalogueScope(z, selectedTabs, fallbackTab) {
   return fallbackTab || 'groundworks';
 }
 
-export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, selectedTabs, onSelectedTabsChange }) {
+export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, scopeLocked = false, canTick, userName, selectedTabs, onSelectedTabsChange }) {
   const [rows, setRows] = useState([]);
   const [comp, setComp] = useState({});
   const [activities, setActivities] = useState([]);
@@ -386,6 +386,10 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   );
 
   useEffect(() => {
+    if (scopeLocked) {
+      onSelectedTabsChange([MODULE_PROGRAMME_TAB]);
+      return;
+    }
     if (!permittedTabs.length) return;
     onSelectedTabsChange((prev) => {
       const normPrev = normalizeProgrammeScopeTabs(prev);
@@ -393,7 +397,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [permittedTabs[0]];
     });
-  }, [permittedTabs, onSelectedTabsChange]);
+  }, [permittedTabs, onSelectedTabsChange, scopeLocked]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
@@ -976,7 +980,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
   }
 
   useEffect(() => {
-    if (!dragState || !isAdmin) {
+    if (!dragState || !canEditPlan) {
       setDragHover(null);
       setDragPointer(null);
       return undefined;
@@ -1041,7 +1045,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
-  }, [dragState, isAdmin]);
+  }, [dragState, canEditPlan]);
 
   const addScopeOptions = useMemo(() => {
     const fromSelected = [...selectedTabs].filter((t) => permittedTabs.includes(t));
@@ -1312,6 +1316,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
         comp={comp}
         canTick={canTick}
         userName={userName}
+        canEditSchedule={canEditPlan}
         isAdmin={isAdmin}
         pickerOptions={dependencyPickerOptions}
         onCompletionChange={reloadCompletions}
@@ -1412,7 +1417,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                 EXPORT DATA
               </button>
             )}
-            {isAdmin && undoState && (
+            {canEditPlan && undoState && (
               <button
                 type="button"
                 onClick={async () => {
@@ -1481,6 +1486,14 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
             </div>
 
             {permittedTabs.length > 0 && (
+              scopeLocked ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
+                  <span className="page-header__filter-label">Scope</span>
+                  <span style={{ ...S.btn, ...S.btnAct, padding: '6px 12px', fontSize: 11, cursor: 'default' }}>
+                    {drawingTabLabel(MODULE_PROGRAMME_TAB)}
+                  </span>
+                </div>
+              ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', width: '100%' }}>
                 <span className="page-header__filter-label">Scope</span>
                 <span style={{ fontSize: 10, color: T.muted }}>Tick any combination:</span>
@@ -1519,6 +1532,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                   );
                 })}
               </div>
+              )
             )}
 
             {towersInView.length > 0 && (
@@ -1583,7 +1597,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
               </div>
             )}
 
-            {isAdmin && (
+            {canEditPlan && (
               <div className="plan-header-undo" style={{ marginTop: 4, padding: '8px 10px', borderRadius: 8, border: `1px solid ${T.hairline}`, background: 'rgba(66,133,244,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', width: '100%' }}>
                 <div style={{ minWidth: 140 }}>
                   <div style={{ fontSize: 9, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
@@ -1928,7 +1942,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canTick, userName, se
                                           z={z}
                                           dk={dk}
                                           shiftKey={shiftKey}
-                                          isAdmin={isAdmin}
+                                          canEditPlan={canEditPlan}
                                           done={done}
                                           completionAt={printLayout ? undefined : compInfo ? [compInfo.date, compInfo.at].filter(Boolean).join(' ') : undefined}
                                           isMobile={isMobile}

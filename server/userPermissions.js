@@ -1,8 +1,12 @@
 /**
  * Role-based access for API enforcement.
- * Roles: admin | site_editor | gw_subbie | int_subbie | board_viewer | programme_viewer
+ * Roles: admin | site_editor | modules-editor | gw_subbie | int_subbie | board_viewer | programme_viewer
  * Legacy: editor → treated as site_editor
  */
+
+function isModulesEditorRole(role) {
+  return role === 'modules-editor';
+}
 
 function isSiteEditorRole(role) {
   return role === 'site_editor' || role === 'editor';
@@ -20,14 +24,26 @@ function isIntSubbieRole(role) {
   return role === 'int_subbie';
 }
 
-/** Update / completions POST — admin + site only (subbies use Plan/Gantt; no tick-offs). */
+/** Update / completions POST — admin + site + modules-editor (modules scope). */
 function canTickCompletions(role) {
-  return isAdminRole(role) || isSiteEditorRole(role);
+  return isAdminRole(role) || isSiteEditorRole(role) || isModulesEditorRole(role);
 }
 
-/** Zone/drawing upload/programme-item mutations — admin only (site team uses Plan/Gantt read APIs). */
+/** Zone/drawing upload/programme screen mutations — admin only. */
 function canEditProgrammeAndZones(role) {
   return isAdminRole(role);
+}
+
+/** Plan programme item moves (drag/edit) — admin + modules-editor. */
+function canEditPlanProgramme(role) {
+  return isAdminRole(role) || isModulesEditorRole(role);
+}
+
+function planProgrammeEditor(req, res, next) {
+  if (!canEditPlanProgramme(req.user.role)) {
+    return res.status(403).json({ error: 'Not permitted for this role' });
+  }
+  next();
 }
 
 /** Programme screen API — admin only (site + subbies use Plan/Gantt). */
@@ -71,7 +87,7 @@ function scheduleDayCompletionKeys(dayData) {
 function completionKeyAllowedForUser(db, user, dateStr, key) {
   const role = user.role;
   const tabCandidates = [];
-  if (isAdminRole(role) || isSiteEditorRole(role)) {
+  if (isAdminRole(role) || isSiteEditorRole(role) || isModulesEditorRole(role)) {
     tabCandidates.push(...normalizeUserTabsArray(user.tabs));
   } else if (isGwSubbieRole(role) || isIntSubbieRole(role)) {
     tabCandidates.push(...normalizeUserTabsArray(user.tabs));
@@ -166,7 +182,7 @@ function filterZonesAllForUser(db, user, rows) {
 }
 
 function filterCompletionsForUser(db, user, completionsObj) {
-  if (isAdminRole(user.role) || isSiteEditorRole(user.role)) return completionsObj || {};
+  if (isAdminRole(user.role) || isSiteEditorRole(user.role) || isModulesEditorRole(user.role)) return completionsObj || {};
   /** Board + shared programme viewer: read-only full completions for Plan colouring. */
   if (isBoardViewer(user.role) || isProgrammeViewerRole(user.role)) return completionsObj || {};
   const out = {};
@@ -189,11 +205,14 @@ function filterTemplatesForUser(user, rows) {
 
 module.exports = {
   isSiteEditorRole,
+  isModulesEditorRole,
   isAdminRole,
   isGwSubbieRole,
   isIntSubbieRole,
   canTickCompletions,
   canEditProgrammeAndZones,
+  canEditPlanProgramme,
+  planProgrammeEditor,
   canReadProgrammeItemsApi,
   programmeItemsReader,
   isBoardViewer,

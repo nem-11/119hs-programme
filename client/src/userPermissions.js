@@ -1,7 +1,11 @@
-/** Mirrors server roles: admin | site_editor | editor (legacy) | gw_subbie | int_subbie | board_viewer | programme_viewer */
+/** Mirrors server roles: admin | site_editor | modules-editor | editor (legacy) | gw_subbie | int_subbie | board_viewer | programme_viewer */
 
 export function isAdmin(role) {
   return role === 'admin';
+}
+
+export function isModulesEditor(role) {
+  return role === 'modules-editor';
 }
 
 export function isSiteEditor(role) {
@@ -30,9 +34,19 @@ export function canEditZonesProgramme(role) {
   return isAdmin(role);
 }
 
-/** Update / tick-offs — admin + site only. */
+/** Plan drag / schedule edit — admin + modules-editor. */
+export function canEditPlan(role) {
+  return isAdmin(role) || isModulesEditor(role);
+}
+
+/** Scope tab picker locked to Modules only. */
+export function isScopeLocked(role) {
+  return isModulesEditor(role);
+}
+
+/** Update / tick-offs — admin + site + modules-editor. */
 export function canTick(role) {
-  return isAdmin(role) || isSiteEditor(role);
+  return isAdmin(role) || isSiteEditor(role) || isModulesEditor(role);
 }
 
 /** Module Handover setup (upload drawing, draw modules, set stages) — admin + site. Board views only. */
@@ -50,6 +64,10 @@ export function bottomNavItemsForRole(role) {
   const tpl = { id: 'templates', label: 'Templates', icon: '⧉' };
   const sett = { id: 'settings', label: 'Settings', icon: '⚙' };
   const mod = { id: 'modhandover', label: 'Modules', icon: '⬚' };
+
+  if (isModulesEditor(role)) {
+    return [plan, mod];
+  }
 
   if (isBoardViewer(role)) {
     return [dash, plan, zones, mod];

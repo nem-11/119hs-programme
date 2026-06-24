@@ -56,4 +56,11 @@ exports.DEFAULT_BOOTSTRAP_USERS = [
     role: 'programme_viewer',
     tabs: ['groundworks', 'internals', 'project_programme', 'module_programme'],
   },
+  {
+    username: 'ryan',
+    passwordPlain: 'module1',
+    name: 'Ryan',
+    role: 'modules-editor',
+    tabs: ['module_programme'],
+  },
 ];

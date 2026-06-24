@@ -564,7 +564,7 @@ app.get('/api/programme-items/zone/:zid', auth, perm.programmeItemsReader, (req,
   if (!chk.ok) return res.status(403).json({ error: 'Zone not permitted' });
   res.json(db.getProgrammeItemsByZone(req.params.zid));
 });
-app.post('/api/programme-items', auth, programmeEditor, (req, res) => {
+app.post('/api/programme-items', auth, perm.planProgrammeEditor, (req, res) => {
   const { zone_id, activity_id, start_date, end_date, status, notes, shift } = req.body;
   if (!zone_id || !activity_id || !start_date || !end_date) return res.status(400).json({ error: 'Missing fields' });
   const zchk = perm.assertZoneTabAllowed(db, req.user, zone_id);
@@ -572,7 +572,7 @@ app.post('/api/programme-items', auth, programmeEditor, (req, res) => {
   const r = db.addProgrammeItem(zone_id, activity_id, start_date, end_date, status, notes, shift);
   res.json({ ok: true, id: r.lastInsertRowid });
 });
-app.put('/api/programme-items/:id', auth, programmeEditor, (req, res) => {
+app.put('/api/programme-items/:id', auth, perm.planProgrammeEditor, (req, res) => {
   const old = db.getProgrammeItemById(req.params.id);
   if (!old) return res.status(404).json({ error: 'Not found' });
   const oldChk = perm.assertZoneTabAllowed(db, req.user, old.zone_id);
@@ -608,7 +608,7 @@ app.delete('/api/dependencies/:id', auth, admin, (req, res) => {
   if (!ok) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });
-app.delete('/api/programme-items/:id', auth, programmeEditor, (req, res) => {
+app.delete('/api/programme-items/:id', auth, perm.planProgrammeEditor, (req, res) => {
   const old = db.getProgrammeItemById(req.params.id);
   if (!old) return res.status(404).json({ error: 'Not found' });
   const zchk = perm.assertZoneTabAllowed(db, req.user, old.zone_id);
@@ -732,7 +732,7 @@ app.post('/api/admin/set-zone-anchors', auth, admin, (req, res) => {
     res.status(500).json({ error: e.message || 'Set zone anchors failed' });
   }
 });
-app.put('/api/plan/admin/zone/:zoneId/items', auth, admin, (req, res) => {
+app.put('/api/plan/admin/zone/:zoneId/items', auth, perm.planProgrammeEditor, (req, res) => {
   const zoneId = Number(req.params.zoneId);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   const out = db.replaceZoneProgrammeItems(zoneId, rows);

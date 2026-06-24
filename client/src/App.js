@@ -7,11 +7,14 @@ import {
   bottomNavItemsForRole,
   allowedPageIdsForRole,
   canTick as roleCanTick,
+  canEditPlan as roleCanEditPlan,
   canEditZonesProgramme,
   isAdmin as roleIsAdmin,
   isBoardViewer as roleIsBoardViewer,
   isProgrammeViewer as roleIsProgrammeViewer,
   isSiteEditor as roleIsSiteEditor,
+  isModulesEditor as roleIsModulesEditor,
+  isScopeLocked as roleIsScopeLocked,
   canManageModules as roleCanManageModules,
 } from './userPermissions';
 import {T,S,shadowCard,grad} from './uiTheme';
@@ -2922,9 +2925,13 @@ function MainApp({user,onLogout,onUserUpdate}){
     }).catch(()=>{});
     return()=>{cancelled=true;};
   },[]);
-  const[tab,setTab]=useState(()=>pickInitialScopeTab(user.tabs));
+  const[tab,setTab]=useState(()=>{
+    if(roleIsModulesEditor(user.role))return MODULE_PROGRAMME_TAB;
+    return pickInitialScopeTab(user.tabs);
+  });
   const[page,setPage]=useState(()=>bottomNavItemsForRole(user.role)[0]?.id||'plan');const[date,setDate]=useState(()=>new Date());
   const[selectedScopeTabs,setSelectedScopeTabs]=useState(()=>{
+    if(roleIsModulesEditor(user.role))return [MODULE_PROGRAMME_TAB];
     const base=normalizeProgrammeScopeTabs(Array.isArray(user.tabs)&&user.tabs.length?user.tabs:['groundworks','internals']);
     const stored=readStoredSelectedTabs();
     if(stored?.length){
@@ -2981,10 +2988,20 @@ function MainApp({user,onLogout,onUserUpdate}){
   useEffect(()=>{void loadData()},[page,loadData]);
   useEffect(()=>{
     if(!selectedScopeTabs.length)return;
+    if(roleIsModulesEditor(user.role))return;
     try{
       localStorage.setItem(SELECTED_TABS_KEY,JSON.stringify(normalizeProgrammeScopeTabs(selectedScopeTabs)));
     }catch(_){}
-  },[selectedScopeTabs]);
+  },[selectedScopeTabs,user.role]);
+  useEffect(()=>{
+    if(!roleIsModulesEditor(user.role))return;
+    setTab(MODULE_PROGRAMME_TAB);
+    setSelectedScopeTabs([MODULE_PROGRAMME_TAB]);
+  },[user.role]);
+  const handleSelectedScopeTabsChange=useCallback((next)=>{
+    if(roleIsModulesEditor(user.role))return;
+    setSelectedScopeTabs(next);
+  },[user.role]);
   const navItems=useMemo(()=>bottomNavItemsForRole(user.role),[user.role]);
   useEffect(()=>{
     if(!allowedPageIds.has(page)){
@@ -2998,6 +3015,9 @@ function MainApp({user,onLogout,onUserUpdate}){
   const userTabsSafe=normalizeProgrammeScopeTabs(user.tabs);
   const canSee=t=>userTabsSafe.includes(t);
   const isAdmin=roleIsAdmin(user.role);
+  const isModulesEditor=roleIsModulesEditor(user.role);
+  const scopeLocked=roleIsScopeLocked(user.role);
+  const canEditPlan=roleCanEditPlan(user.role);
   const canTick=roleCanTick(user.role);
   const canEditZp=canEditZonesProgramme(user.role);
   const showDateNav=['update','lookahead'].includes(page);
@@ -3006,7 +3026,8 @@ function MainApp({user,onLogout,onUserUpdate}){
   return<div className="app-root-shell">
     <div className="app-header-bar">
       <div style={{display:'flex',alignItems:'center',gap:10}}><Wordmark119HS variant="nav"/>
-        {page!=='plan'&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}</div>
+        {page!=='plan'&&!isModulesEditor&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3,flexWrap:'wrap'}}>{MAIN_HEADER_TAB_ORDER.filter(canSee).map(t=><button key={t} onClick={()=>setTab(t)} style={{...S.btn,...(tab===t?S.btnAct:{}),padding:'6px 14px',fontSize:12}}>{drawingTabLabel(t)}</button>)}</div>}
+        {page!=='plan'&&isModulesEditor&&<div style={{display:'flex',gap:2,background:'rgba(26,26,46,0.05)',borderRadius:8,padding:3}}><span style={{...S.btn,...S.btnAct,padding:'6px 14px',fontSize:12,cursor:'default'}}>{drawingTabLabel(MODULE_PROGRAMME_TAB)}</span></div>}</div>
       <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:10,color:T.faint}}>{user.name}</span><button onClick={onLogout} style={{...S.btn,fontSize:10,padding:'4px 10px'}}>Logout</button></div>
     </div>
     {showDateNav&&<div className="app-date-nav">
@@ -3014,9 +3035,9 @@ function MainApp({user,onLogout,onUserUpdate}){
     </div>}
     <div className="app-main-content">
       {page==='dashboard'&&<DashPage gw={gw} int_s={int_s} project_s={project_s} comp={comp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)} userTabs={user.tabs} onActivate={loadData} liveDataErr={liveDataErr}/>}
-      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
+      {page==='update'&&!roleIsBoardViewer(user.role)&&canTick&&<UpdPage date={date} comp={comp} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} onSubmitted={loadData} onRefreshLiveData={loadData} selectedTabs={selectedScopeTabs} onSelectedTabsChange={handleSelectedScopeTabsChange} scopeLocked={scopeLocked}/>}
       {page==='lookahead'&&!roleIsBoardViewer(user.role)&&<LAPage planRows={planRows} comp={comp} date={date} tab={tab} onRefreshLiveData={loadData}/>}
-      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={setSelectedScopeTabs}/>}
+      {page==='plan'&&<PlanPage tab={tab} userTabs={user.tabs} isAdmin={isAdmin} canEditPlan={canEditPlan} scopeLocked={scopeLocked} canTick={canTick} userName={user.name} selectedTabs={selectedScopeTabs} onSelectedTabsChange={handleSelectedScopeTabsChange}/>}
       {page==='zones'&&<ZoneSetupPage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} isBoardViewer={roleIsBoardViewer(user.role)}/>}
       {page==='modhandover'&&allowedPageIds.has('modhandover')&&<ModuleHandoverPage canManage={roleCanManageModules(user.role)}/>}
       {page==='programme'&&allowedPageIds.has('programme')&&<ProgrammePage tab={tab} canEdit={canEditZp} isAdmin={isAdmin} onScheduleChanged={loadData} zoneSetupAvailable={canEditZp} onGoToZoneSetup={()=>setPage('zones')}/>}
