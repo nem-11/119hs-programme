@@ -2240,7 +2240,7 @@ function readStoredSelectedTabs() {
   }
 }
 
-function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted, onRefreshLiveData, selectedTabs, onSelectedTabsChange }) {
+function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted, onRefreshLiveData, selectedTabs, onSelectedTabsChange, scopeLocked = false }) {
   const k = dateKey(date);
   const nonWorkingDay = isNonWorkingPlanDayKey(k);
   const [planRows, setPlanRows] = useState([]);
@@ -2282,6 +2282,10 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
   );
 
   useEffect(() => {
+    if (scopeLocked) {
+      onSelectedTabsChange([MODULE_PROGRAMME_TAB]);
+      return;
+    }
     if (!permittedTabs.length) return;
     onSelectedTabsChange((prev) => {
       const normPrev = normalizeProgrammeScopeTabs(prev);
@@ -2289,7 +2293,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
       if (kept.length) return permittedTabs.filter((t) => kept.includes(t));
       return [...permittedTabs];
     });
-  }, [permittedTabs, onSelectedTabsChange]);
+  }, [permittedTabs, onSelectedTabsChange, scopeLocked]);
 
   const selectedSet = useMemo(() => new Set(selectedTabs), [selectedTabs]);
 
@@ -2438,6 +2442,14 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
         }
         filters={
           permittedTabs.length > 0 ? (
+            scopeLocked ? (
+              <>
+                <span className="page-header__filter-label">Scope</span>
+                <span style={{ ...S.btn, ...S.btnAct, padding: '6px 12px', fontSize: 11, cursor: 'default' }}>
+                  {drawingTabLabel(MODULE_PROGRAMME_TAB)}
+                </span>
+              </>
+            ) : (
             <>
               <span className="page-header__filter-label">Show tabs</span>
               {permittedTabs.length > 1 && (
@@ -2474,6 +2486,7 @@ function UpdPage({ date, comp, userTabs, isAdmin, canTick, userName, onSubmitted
                 );
               })}
             </>
+            )
           ) : null
         }
       />

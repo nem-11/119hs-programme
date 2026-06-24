@@ -289,9 +289,16 @@ app.get('/api/drawings/:id', auth, (req, res) => {
 app.get('/api/activities', auth, (req, res) =>
   res.json(perm.filterActivitiesForUser(req.user, db.getActivities()))
 );
-app.post('/api/activities', auth, admin, (req, res) => {
+app.post('/api/activities', auth, (req, res) => {
   const { name, type } = req.body || {};
   if (!name || !type) return res.status(400).json({ error: 'name and type required' });
+  if (perm.isModulesEditorRole(req.user.role)) {
+    if (String(type) !== 'module_programme') {
+      return res.status(403).json({ error: 'Modules editor can only add module programme activities' });
+    }
+  } else if (!perm.isAdminRole(req.user.role)) {
+    return res.status(403).json({ error: 'Admin only' });
+  }
   const out = db.addActivity(name, type);
   if (out?.error === 'duplicate') return res.status(409).json({ error: 'Activity already exists' });
   if (out?.error) return res.status(400).json(out);

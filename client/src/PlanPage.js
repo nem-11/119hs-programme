@@ -1317,6 +1317,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, 
         canTick={canTick}
         userName={userName}
         canEditSchedule={canEditPlan}
+        canDeleteActivity={canEditPlan}
         isAdmin={isAdmin}
         pickerOptions={dependencyPickerOptions}
         onCompletionChange={reloadCompletions}
@@ -1843,7 +1844,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, 
                               }}
                             >
                               <span title={printLayout ? zoneRowLabel(z) : undefined}>{zoneRowLabel(z)}</span>
-                              {isAdmin && !printLayout && (
+                              {canEditPlan && !printLayout && (
                                 <span style={{ display: 'flex', gap: 4 }}>
                                   <button
                                     type="button"
@@ -1853,6 +1854,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, 
                                   >
                                     ＋
                                   </button>
+                                  {isAdmin && (
                                   <button
                                     type="button"
                                     title="Delete zone"
@@ -1876,6 +1878,7 @@ export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, 
                                   >
                                     ✕
                                   </button>
+                                  )}
                                 </span>
                               )}
                             </div>
@@ -2121,7 +2124,8 @@ export default function PlanPage({ tab, userTabs, isAdmin, canEditPlan = false, 
           {viewMode === 'grid'
             ? ' ← → step days; click a date header to jump the window.'
             : ' Scroll to zoom; drag to pan the drawing.'}
-          {isAdmin ? ' Admin: on drop, choose one item only or shift programme. Drag target highlights in blue. Double-click (long press) to edit. Add (+) picks scope.' : ''}
+          {canEditPlan ? ' Drag to move (choose one item or shift programme on drop). Double-click to edit. Add (+) inserts on Modules scope only.' : ''}
+          {isAdmin && canEditPlan ? ' Admin-only: export data, delete zones, dependencies.' : ''}
         </PageFooterHint>
       )}
       </div>

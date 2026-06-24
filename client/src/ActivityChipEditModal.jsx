@@ -185,6 +185,7 @@ export default function ActivityChipEditModal({
   onSaveSchedule,
   isAdmin,
   canEditSchedule = false,
+  canDeleteActivity = false,
   pickerOptions,
   onDependenciesChange,
   onCompletionChange,
@@ -632,7 +633,7 @@ export default function ActivityChipEditModal({
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {isAdmin && (
+          {canDeleteActivity && (
             <button
               type="button"
               disabled={deleting || depBusy || compBusy || saveBusy}

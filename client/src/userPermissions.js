@@ -66,7 +66,7 @@ export function bottomNavItemsForRole(role) {
   const mod = { id: 'modhandover', label: 'Modules', icon: '⬚' };
 
   if (isModulesEditor(role)) {
-    return [plan, mod];
+    return [plan, upd, mod];
   }
 
   if (isBoardViewer(role)) {
