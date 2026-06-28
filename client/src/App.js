@@ -26,7 +26,7 @@ import PlanPage from './PlanPage';
 import ModuleHandoverPage from './ModuleHandoverPage';
 import ZoneDrawingCanvas from './ZoneDrawingCanvas';
 import { COMPLETION_BUCKETS, greenShadeForPct } from './completionColors';
-import { zoneCompletionsAsOf, programmeCompletionBreakdown } from './completionStats';
+import { drawingLevelCompletionAsOf, floorLabelFromDrawing, programmeCompletionBreakdown } from './completionStats';
 import { MODULE_STAGES, MODULE_SEQUENCE, moduleStageMeta, moduleCompletionSummary } from './moduleHandover';
 import { clearPrintPageSize, setPrintPageSize } from './printPage';
 import { alignTemplateDurations, addCalendarDays } from './programmeSchedule';
@@ -340,7 +340,7 @@ function activityCompletionForScope(planRows, comp, scopeTab) {
   return { total, done };
 }
 
-function DashboardBreakdownBars({ items, accent }) {
+function DashboardBreakdownBars({ items, accent, showFinishedDate }) {
   if (!items?.length) {
     return <p style={{ margin: 0, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>No programme activities yet.</p>;
   }
@@ -348,9 +348,12 @@ function DashboardBreakdownBars({ items, accent }) {
     <div key={row.label} style={{ marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: T.text }}>{row.label}</span>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <span style={{ fontSize: 12, fontWeight: 800, color: `rgba(${accent},0.95)` }}>{row.pct}%</span>
           <span style={{ fontSize: 10, color: T.muted }}>{row.done}/{row.total}</span>
+          {showFinishedDate && row.lastFinishedDate && (
+            <span style={{ fontSize: 10, color: T.muted, fontWeight: 600 }}>Finished {row.lastFinishedDate}</span>
+          )}
         </div>
       </div>
       <div style={{ height: 6, borderRadius: 3, background: 'rgba(26,26,46,0.07)', overflow: 'hidden' }}>
@@ -1067,12 +1070,13 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   }, [playing, mode, replayDays]);
 
   const asOfDate = mode === 'today' ? todayKey : mode === 'date' ? manualDate : replayDays[replayIndex] || todayKey;
-  const zoneStats = useMemo(
-    () => zoneCompletionsAsOf(asOfDate, zones, rowsInScope, comp),
-    [asOfDate, zones, rowsInScope, comp]
+  const levelStat = useMemo(
+    () => drawingLevelCompletionAsOf(asOfDate, drawing, zones, rowsInScope, comp),
+    [asOfDate, drawing, zones, rowsInScope, comp]
   );
 
   const drawingLabel = scopeDrawings.find((d) => String(d.id) === String(drawingId))?.name || 'No drawing';
+  const levelLabel = drawing ? floorLabelFromDrawing(drawing) : '';
 
   function runCompletionPrint() {
     setPrintOpen(false);
@@ -1085,13 +1089,11 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
     });
   }
 
-  function labelForZone(z) {
-    const stat = zoneStats.get(Number(z.id));
-    const zn = String(z.name || '').trim();
-    if (!stat || stat.pct == null) return zn.length > 10 ? `${zn.slice(0, 9)}...` : zn;
-    const pct = Math.round(stat.pct * 100);
-    const short = zn.length > 10 ? `${zn.slice(0, 9)}...` : zn;
-    return `${short}\n${pct}%`;
+  function labelForZone() {
+    if (!levelLabel) return '';
+    if (levelStat?.pct == null) return levelLabel;
+    const pct = Math.round(levelStat.pct * 100);
+    return `${levelLabel}\n${pct}%`;
   }
 
   const legend = (
@@ -1148,7 +1150,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
           <div style={{ fontSize: 10, fontWeight: 700, color: T.faint, textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: 6 }}>Completion</div>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>Completion drawing</div>
           <div style={{ fontSize: 11, color: T.muted, marginTop: 4, lineHeight: 1.45 }}>
-            Zones shade green as activities are ticked off. Pick a drawing, scope, and date.
+            Each drawing level shades green from programme ticks across all pour areas (A, B, C…) on that floor. Pick a drawing, scope, and date.
           </div>
         </div>
         <button type="button" onClick={() => setPrintOpen(true)} className="dashboard-completion-no-print" style={{ ...S.btn, padding: '6px 12px', fontSize: 11 }}>
@@ -1206,7 +1208,8 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
 
       {loadErr && <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 10 }}>{loadErr}</div>}
       <div style={{ fontSize: 10, color: T.faint, marginBottom: 10 }}>
-        {drawingLabel} · as of {asOfDate}
+        {drawingLabel}{levelLabel ? ` · ${levelLabel}` : ''} · as of {asOfDate}
+        {levelStat?.lastFinishedDate ? ` · level finished ${levelStat.lastFinishedDate}` : ''}
       </div>
       {legend}
       <div style={{ borderRadius: 14, overflow: 'hidden', border: `1px solid ${T.hairline}`, background: '#ececf1' }}>
@@ -1217,12 +1220,9 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
           maxHeight="min(56vh, 520px)"
           horizontalLabels
           emptyMessage="No drawing selected for this scope."
-          styleForZone={(z) => greenShadeForPct(zoneStats.get(Number(z.id))?.pct ?? null)}
+          styleForZone={() => greenShadeForPct(levelStat?.pct ?? null)}
           labelForZone={labelForZone}
-          labelActiveForZone={(z) => {
-            const stat = zoneStats.get(Number(z.id));
-            return Boolean(stat && stat.pct != null);
-          }}
+          labelActiveForZone={() => Boolean(levelStat && levelStat.pct != null)}
         />
       </div>
       {printOpen && (
@@ -1883,10 +1883,10 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
         boxShadow:shadowCard,
       }}>
         <div style={{marginBottom:12}}>
-          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>By tower &amp; floor</div>
-          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by zone level</div>
+          <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>By tower &amp; level</div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by level</div>
           <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.45}}>
-            Each zone is 100% when every activity in that zone is ticked. Adding activities later extends the finish line and updates these figures automatically.
+            Each tower level (ground, 1st floor, etc.) rolls up all pour areas on that floor. 100% when every activity on the level is ticked; the finish date is the last programme tick on that level.
           </div>
         </div>
         {sectionBreakdowns.map((sec, idx)=>(
@@ -1894,8 +1894,8 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
             <div style={{fontSize:11,fontWeight:800,color:`rgba(${sec.accent},0.92)`,textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:10}}>{sec.label}</div>
             <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:6}}>By tower</div>
             <DashboardBreakdownBars items={sec.towers} accent={sec.accent}/>
-            <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.1em',margin:'12px 0 6px'}}>By floor</div>
-            <DashboardBreakdownBars items={sec.floors} accent={sec.accent}/>
+            <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.1em',margin:'12px 0 6px'}}>By level</div>
+            <DashboardBreakdownBars items={sec.levels} accent={sec.accent} showFinishedDate/>
           </div>
         ))}
       </section>
