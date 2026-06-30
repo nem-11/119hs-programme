@@ -1,7 +1,91 @@
 import { completionKeyFromProgrammeRow, scheduleDateKeysBetween, isProgrammeRowFullyDone } from './planUtils';
 
+const UNKNOWN_FLOOR = 999;
+
 function normaliseDayKey(dayKey) {
   return String(dayKey || '').trim();
+}
+
+function isGenericDrawingFloor(floor) {
+  const f = String(floor || '').trim().toLowerCase();
+  return !f || f === 'ground' || f === 'gf' || f === 'g/f' || f === 'g';
+}
+
+/**
+ * Parse a numeric floor rank from a label.
+ * Internals zones use "T1 A 1" (tower · zone letter · floor number at end).
+ */
+function floorRankFromLabel(text) {
+  const s = String(text || '').trim();
+  if (!s) return UNKNOWN_FLOOR;
+  const lower = s.toLowerCase();
+
+  if (lower.includes('basement')) return -1;
+  if (lower.includes('ground') || /\bgf\b/.test(lower)) return 0;
+
+  const namedFloor =
+    lower.match(/(?:^|\b)(\d+)\s*(?:st|nd|rd|th)\s*floor\b/)
+    || lower.match(/\bfloor\s*(\d+)\b/);
+  if (namedFloor) return parseInt(namedFloor[1], 10);
+
+  // Internals plan labels: T1 A 1, T2 D 2, T1 L 1 — trailing digit is the floor.
+  const towerZoneFloor = s.match(/^T\d+\s+[A-Z]+\s+(\d+)\s*$/i);
+  if (towerZoneFloor) return parseInt(towerZoneFloor[1], 10);
+
+  return UNKNOWN_FLOOR;
+}
+
+/** Floor rank for a programme row — zone name first, then drawing name (not generic drawing.floor). */
+export function floorRankFromRow(row) {
+  const zoneRank = floorRankFromLabel(row?.zone_name);
+  if (zoneRank !== UNKNOWN_FLOOR) return zoneRank;
+
+  const drawingNameRank = floorRankFromLabel(row?.drawing_name);
+  if (drawingNameRank !== UNKNOWN_FLOOR) return drawingNameRank;
+
+  if (!isGenericDrawingFloor(row?.drawing_floor)) {
+    const flRank = floorRankFromLabel(row?.drawing_floor);
+    if (flRank !== UNKNOWN_FLOOR) return flRank;
+  }
+
+  const dn = String(row?.drawing_name || '').toLowerCase();
+  if (dn.includes('basement')) return -1;
+  if (dn.includes('ground')) return 0;
+
+  return UNKNOWN_FLOOR;
+}
+
+/** Numeric floor rank from drawing + zones on that plan. */
+export function floorRankFromDrawing(drawing, zones) {
+  for (const z of zones || []) {
+    const r = floorRankFromRow({
+      zone_name: z?.name,
+      tower: z?.tower,
+      drawing_name: drawing?.name,
+      drawing_floor: drawing?.floor,
+    });
+    if (r !== UNKNOWN_FLOOR) return r;
+  }
+  const nameRank = floorRankFromLabel(drawing?.name);
+  if (nameRank !== UNKNOWN_FLOOR) return nameRank;
+  if (!isGenericDrawingFloor(drawing?.floor)) {
+    const flRank = floorRankFromLabel(drawing?.floor);
+    if (flRank !== UNKNOWN_FLOOR) return flRank;
+  }
+  const dn = String(drawing?.name || '').toLowerCase();
+  if (dn.includes('basement')) return -1;
+  if (dn.includes('ground')) return 0;
+  return UNKNOWN_FLOOR;
+}
+
+export function floorLabelFromRank(rank) {
+  if (rank === -1) return 'Basement';
+  if (rank === 0) return 'Ground floor';
+  if (rank >= 1 && rank < UNKNOWN_FLOOR) {
+    const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
+    return `${rank}${suffix} floor`;
+  }
+  return '—';
 }
 
 /** Ground → numeric floors → basement/other. */
@@ -13,41 +97,24 @@ export function floorSortRank(floor) {
   return m ? parseInt(m[1], 10) : 999;
 }
 
-/** Numeric floor rank from drawing floor + name (matches server moduleBulkSchedule). */
-export function floorRankFromDrawing(drawing) {
-  const parts = [drawing?.floor, drawing?.name].filter(Boolean).map((x) => String(x).toLowerCase());
-  const s = parts.join(' ');
-  if (s.includes('basement')) return -1;
-  if (s.includes('ground') || /\bgf\b/.test(s)) return 0;
-  const m = s.match(/(\d+)\s*(?:st|nd|rd|th)?\s*floor/) || s.match(/floor\s*(\d+)/) || s.match(/(\d+)/);
-  if (m) return parseInt(m[1], 10);
-  return 999;
-}
-
-/** Human-readable floor label derived from drawing metadata. */
-export function floorLabelFromDrawing(drawing) {
-  const rank = floorRankFromDrawing(drawing);
-  if (rank === -1) return 'Basement';
-  if (rank === 0) return 'Ground floor';
-  if (rank >= 1 && rank < 999) {
-    const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
-    return `${rank}${suffix} floor`;
-  }
-  const raw = String(drawing?.floor || '').trim();
-  if (raw) return raw;
-  return String(drawing?.name || '').trim() || '—';
+/** Human-readable floor label derived from drawing metadata and zones. */
+export function floorLabelFromDrawing(drawing, zones) {
+  const rank = floorRankFromDrawing(drawing, zones);
+  if (rank !== UNKNOWN_FLOOR) return floorLabelFromRank(rank);
+  const raw = String(drawing?.name || drawing?.floor || '').trim();
+  return raw || '—';
 }
 
 export function floorLabelFromRow(row) {
-  return floorLabelFromDrawing({
-    floor: row?.drawing_floor,
-    name: row?.drawing_name,
-  });
+  const rank = floorRankFromRow(row);
+  if (rank !== UNKNOWN_FLOOR) return floorLabelFromRank(rank);
+  const raw = String(row?.drawing_name || row?.drawing_floor || '').trim();
+  return raw || '—';
 }
 
 export function levelKeyFromRow(row) {
   const tw = String(row?.tower || '').trim() || '—';
-  const rank = floorRankFromDrawing({ floor: row?.drawing_floor, name: row?.drawing_name });
+  const rank = floorRankFromRow(row);
   return `${tw}|${rank}`;
 }
 
@@ -120,7 +187,7 @@ function levelCompletionForRows(rows, comp, asOfDate) {
 }
 
 function programmeRowsForDrawingLevel(drawing, zones, programmeRows) {
-  const rank = floorRankFromDrawing(drawing);
+  const rank = floorRankFromDrawing(drawing, zones);
   const towers = new Set((zones || []).map((z) => String(z.tower || '').trim()).filter(Boolean));
   const out = [];
   for (const row of programmeRows || []) {
@@ -129,7 +196,7 @@ function programmeRowsForDrawingLevel(drawing, zones, programmeRows) {
     const act = String(row?.activity_name || '').trim();
     if (!tw || !zn || !act) continue;
     if (!String(row.start_date || '').trim() || !String(row.end_date || '').trim()) continue;
-    if (floorRankFromDrawing({ floor: row.drawing_floor, name: row.drawing_name }) !== rank) continue;
+    if (floorRankFromRow(row) !== rank) continue;
     if (towers.size && !towers.has(tw)) continue;
     out.push(row);
   }
@@ -147,14 +214,14 @@ export function drawingLevelCompletionAsOf(asOfDate, drawing, zones, programmeRo
   const stats = levelCompletionForRows(rows, comp, asOfDate);
   return {
     ...stats,
-    label: floorLabelFromDrawing(drawing),
+    label: floorLabelFromDrawing(drawing, zones),
     levelLabel: levelLabelFromRow(rows[0]),
   };
 }
 
 /**
  * Per-tower and per-level completion for a programme scope.
- * Level = tower + floor from drawing metadata; all pour zones on that floor share one finish line.
+ * Level = tower + floor from zone/drawing labels; all zones on that floor share one finish line.
  */
 export function programmeCompletionBreakdown(planRows, comp, rowMatches) {
   const byTower = new Map();
@@ -167,7 +234,7 @@ export function programmeCompletionBreakdown(planRows, comp, rowMatches) {
     if (!zn || !act) continue;
     if (!String(r.start_date || '').trim() || !String(r.end_date || '').trim()) continue;
     const lk = levelKeyFromRow(r);
-    const rank = floorRankFromDrawing({ floor: r.drawing_floor, name: r.drawing_name });
+    const rank = floorRankFromRow(r);
     if (!byTower.has(tw)) byTower.set(tw, { label: tw, total: 0, done: 0 });
     if (!byLevel.has(lk)) {
       byLevel.set(lk, {

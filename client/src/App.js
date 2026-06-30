@@ -1076,7 +1076,7 @@ function DashboardCompletionSection({ userTabs, isAdmin, planRows, comp }) {
   );
 
   const drawingLabel = scopeDrawings.find((d) => String(d.id) === String(drawingId))?.name || 'No drawing';
-  const levelLabel = drawing ? floorLabelFromDrawing(drawing) : '';
+  const levelLabel = drawing ? floorLabelFromDrawing(drawing, zones) : '';
 
   function runCompletionPrint() {
     setPrintOpen(false);
@@ -1689,18 +1689,6 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
         accent: '142,68,173',
         ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => String(r.drawing_tab || '') === 'internals'),
       },
-      {
-        key: 'proj',
-        label: 'Project programme',
-        accent: '230,126,34',
-        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => String(r.drawing_tab || '') === PROJECT_PROGRAMME_TAB),
-      },
-      {
-        key: 'mod',
-        label: 'Modules',
-        accent: '46,178,96',
-        ...programmeCompletionBreakdown(metricPlanRows, comp, (r) => scopeForRow(r) === MODULE_PROGRAMME_TAB),
-      },
     ],
     [metricPlanRows, comp]
   );
@@ -1886,7 +1874,7 @@ function DashPage({gw,int_s,project_s,comp,isAdmin,isBoardViewer,userTabs,onActi
           <div style={{fontSize:10,fontWeight:700,color:T.faint,textTransform:'uppercase',letterSpacing:'0.16em',marginBottom:4}}>By tower &amp; level</div>
           <div style={{fontSize:14,fontWeight:700,color:T.text}}>Completion by level</div>
           <div style={{fontSize:11,color:T.muted,marginTop:4,lineHeight:1.45}}>
-            Each tower level (ground, 1st floor, etc.) rolls up all pour areas on that floor. 100% when every activity on the level is ticked; the finish date is the last programme tick on that level.
+            Each tower level rolls up all zones on that floor (e.g. T1 A/B/C on floor 1 from labels like T1 A 1). 100% when every activity on the level is ticked; the finish date is the last programme tick on that level.
           </div>
         </div>
         {sectionBreakdowns.map((sec, idx)=>(
